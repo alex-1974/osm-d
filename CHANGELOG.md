@@ -14,3 +14,4 @@ stable release.
 - Performance and benchmark contracts.
 - Architecture documentation and initial ADR set.
 - Minimal DUB library package root.
+- Verified OSM specification/implementation compatibility matrix and reference catalogue.
