@@ -29,10 +29,11 @@ enum size_t maxBlobHeaderSize = 64 * 1024;
 enum size_t recommendedUncompressedBlobSize = 16 * 1024 * 1024;
 
 /**
- * Hard upper bound for an uncompressed block payload.
+ * Exclusive hard upper bound for an uncompressed block payload.
  *
- * Enforcement belongs to the Blob/decompression layer; it is defined here so
- * every stage uses the same limit.
+ * A payload length or declared `raw_size` greater than or equal to this value
+ * is rejected. The PBF format specifies that an uncompressed Blob must be
+ * smaller than 32 MiB.
  */
 enum size_t maxUncompressedBlobSize = 32 * 1024 * 1024;
 
