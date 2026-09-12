@@ -20,8 +20,9 @@ __dummy.html
 # dub test runner
 /d-osm-test-library
 
-# Local benchmark data and results
+# Local benchmark data, generated executables and results
 benchmark/data/
+benchmark/bin/
 benchmark/results/
 
 # Shared workspace context. Managed only by tools/link-workspace-docs.sh

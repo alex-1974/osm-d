@@ -1,0 +1,16 @@
+name "d-osm-benchmarks"
+description "Reproducible micro- and end-to-end benchmarks for d-osm"
+authors "Alexander Bernardi"
+copyright "Copyright © 2026 Alexander Bernardi"
+license "MIT"
+
+dependency "d-osm" path=".."
+
+configuration "varint" {
+    targetType "executable"
+    targetName "d-osm-bench-varint"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/varint.d"
+}

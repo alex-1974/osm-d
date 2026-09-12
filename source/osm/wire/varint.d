@@ -4,7 +4,9 @@
  * The decoder accepts legal non-minimal encodings up to the protobuf 64-bit
  * maximum of ten bytes. It rejects truncation and values whose tenth byte
  * contains bits outside bit zero. The common one-byte case has an explicit
- * fast path.
+ * fast path. The 64-bit decoder is explicitly marked for cross-module inlining
+ * because controlled LDC benchmarks found the library boundary otherwise
+ * dominates this hot path.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
@@ -33,6 +35,7 @@ import osm.wire.zigzag : decodeZigZag32, decodeZigZag64;
  *   reset to zero, while the cursor remains advanced to the point at which the
  *   failure was detected.
  */
+pragma(inline, true)
 bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
     @safe nothrow @nogc
 {

@@ -1,14 +1,14 @@
 /**
- * Bounded cursor over immutable protobuf input bytes.
+ * Bounded slice-backed cursor over immutable protobuf input bytes.
  *
- * Pointer arithmetic is intentionally confined to this module. Construction
- * starts from a D slice and every read, take, or skip operation checks the
- * tracked remaining byte count before dereferencing or constructing a returned
- * slice.
+ * `WireCursor` keeps the unread portion of its borrowed input as a normal D
+ * slice. Reads, skips, and takes advance that slice only after checking that
+ * enough bytes remain. No raw pointer is stored by the cursor.
  *
- * The constructor is `@system` because the cursor stores a borrowed raw pointer
- * whose lifetime cannot be expressed by the type itself. Individual operations
- * are exposed through narrowly reviewed `@trusted` methods after bounds checks.
+ * The benchmark-critical accessors and byte-read primitive are explicitly
+ * marked for cross-module inlining. Controlled LDC measurements showed that
+ * this is required to avoid a large library-boundary penalty in the varint hot
+ * path. See `docs/adr/0008-slice-backed-wire-cursor.md`.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
@@ -20,14 +20,18 @@ module osm.wire.cursor;
 /**
  * Mutable read cursor over one borrowed immutable wire buffer.
  *
- * A `WireCursor` never allocates and never owns the underlying memory. It must
- * not outlive the slice used to construct it.
+ * The cursor never allocates and never owns the underlying bytes. Slices
+ * returned by `take` refer to the same caller-owned storage.
+ *
+ * Notes:
+ *   The caller must keep the original storage alive while the cursor or a
+ *   slice returned by `take` is used. The cursor itself contains a D slice, so
+ *   ordinary bounds and memory-safety rules remain available to `@safe` code.
  */
 struct WireCursor
 {
 private:
-    const(ubyte)* _ptr;
-    size_t _remaining;
+    const(ubyte)[] _remaining;
     size_t _offset;
 
 public:
@@ -35,26 +39,23 @@ public:
      * Construct a cursor over `input`.
      *
      * Params:
-     *   input = Immutable byte range borrowed for the lifetime of the cursor.
-     *
-     * Safety:
-     *   The caller must ensure that `input` remains alive and unmoved for every
-     *   operation performed through this cursor.
+     *   input = Immutable bytes borrowed by the cursor.
      */
-    this(const(ubyte)[] input) @system nothrow @nogc
+    this(const(ubyte)[] input) @safe pure nothrow @nogc
     {
-        _ptr = input.ptr;
-        _remaining = input.length;
+        _remaining = input;
         _offset = 0;
     }
 
     /** Returns `true` when no unread bytes remain. */
+    pragma(inline, true)
     @property bool empty() const @safe pure nothrow @nogc
     {
-        return _remaining == 0;
+        return _remaining.length == 0;
     }
 
     /** Returns the number of bytes consumed from the original input. */
+    pragma(inline, true)
     @property size_t offset() const @safe pure nothrow @nogc
     {
         return _offset;
@@ -63,7 +64,7 @@ public:
     /** Returns the number of unread bytes. */
     @property size_t remaining() const @safe pure nothrow @nogc
     {
-        return _remaining;
+        return _remaining.length;
     }
 
     /**
@@ -73,15 +74,16 @@ public:
      *   value = Receives the byte on success.
      *
      * Returns:
-     *   `true` if a byte was available; `false` at end of input.
+     *   `true` when one byte was available; `false` at end of input.
      */
-    bool readByte(out ubyte value) @trusted nothrow @nogc
+    pragma(inline, true)
+    bool readByte(out ubyte value) @safe nothrow @nogc
     {
-        if (_remaining == 0)
+        if (_remaining.length == 0)
             return false;
 
-        value = *_ptr++;
-        --_remaining;
+        value = _remaining[0];
+        _remaining = _remaining[1 .. $];
         ++_offset;
         return true;
     }
@@ -95,14 +97,12 @@ public:
      * Returns:
      *   `true` if `count` bytes were available; `false` otherwise.
      */
-    bool skip(size_t count) @trusted nothrow @nogc
+    bool skip(size_t count) @safe nothrow @nogc
     {
-        if (count > _remaining)
+        if (count > _remaining.length)
             return false;
 
-        if (count != 0)
-            _ptr += count;
-        _remaining -= count;
+        _remaining = _remaining[count .. $];
         _offset += count;
         return true;
     }
@@ -118,12 +118,12 @@ public:
      *   `true` if `count` bytes were available; `false` otherwise.
      *
      * Notes:
-     *   The returned slice has the same lifetime constraints as this cursor and
-     *   does not own or copy its bytes.
+     *   The returned slice owns no memory and is valid only while the original
+     *   input storage remains valid.
      */
-    bool take(size_t count, out const(ubyte)[] bytes) @trusted nothrow @nogc
+    bool take(size_t count, out const(ubyte)[] bytes) @safe nothrow @nogc
     {
-        if (count > _remaining)
+        if (count > _remaining.length)
         {
             bytes = null;
             return false;
@@ -135,9 +135,8 @@ public:
             return true;
         }
 
-        bytes = _ptr[0 .. count];
-        _ptr += count;
-        _remaining -= count;
+        bytes = _remaining[0 .. count];
+        _remaining = _remaining[count .. $];
         _offset += count;
         return true;
     }
