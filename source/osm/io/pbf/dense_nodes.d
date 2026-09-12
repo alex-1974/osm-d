@@ -1,11 +1,11 @@
 /**
- * Streaming decode of validated OSMPBF DenseNodes ID and coordinate columns.
+ * Streaming decode of validated OSMPBF DenseNodes coordinates and tags.
  *
  * Dense node IDs, latitudes and longitudes are delta-coded sint64 streams.
  * This module consumes a previously validated `PrimitiveGroupLayout`, performs
- * exact checked nanodegree coordinate conversion, and emits borrowed-value
- * node views through a statically dispatched sink. Tags and DenseInfo remain
- * outside this first DenseNodes semantic slice.
+ * exact checked nanodegree coordinate conversion, validates the complete
+ * dense tag stream, and emits borrowed-value node views through a statically
+ * dispatched sink. DenseInfo remains outside this semantic slice.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
@@ -14,9 +14,15 @@
  */
 module osm.io.pbf.dense_nodes;
 
+import osm.io.pbf.dense_tags :
+    DenseTagNodeCursor,
+    DenseTagRange,
+    DenseTagValidationSummary,
+    validateDenseTags;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.primitive_block : PrimitiveBlockLayout;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
+import osm.io.pbf.string_table : StringTableView;
 import osm.util.checked : checkedAdd, checkedMulAdd;
 import osm.wire.cursor : WireCursor;
 import osm.wire.error : WireStatus;
@@ -37,6 +43,8 @@ struct DenseNodeView
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
+    /// Borrowed ordered tags for this node.
+    DenseTagRange tags;
 }
 
 /** Summary of one completed DenseNodes decode operation. */
@@ -44,15 +52,19 @@ struct DenseNodeDecodeSummary
 {
     /// Number of nodes delivered to the sink.
     size_t nodeCount;
+    /// Number of ordered tags exposed across all emitted nodes.
+    size_t tagCount;
 }
 
 /**
- * Decode validated DenseNodes coordinates into a statically dispatched sink.
+ * Decode validated DenseNodes coordinates and tags into a static sink.
  *
- * `group` must have been produced by `decodePrimitiveGroupLayout`. Before the
- * first sink call, coordinate conversion is preflighted against the validated
- * cumulative latitude/longitude extrema, so a coordinate overflow cannot be
- * discovered only after a prefix of nodes has already been emitted.
+ * `group` must have been produced by `decodePrimitiveGroupLayout`, and
+ * `table` must be the StringTable view built from the same PrimitiveBlock.
+ * Before the first sink call, coordinate conversion and the complete dense
+ * tag stream are preflighted, so malformed tag structure, invalid string IDs,
+ * or coordinate overflow cannot be discovered only after a node prefix was
+ * already emitted.
  *
  * The sink must provide `void put(DenseNodeView)` and itself satisfy the
  * `@safe nothrow @nogc` contract required by this function instantiation.
@@ -60,6 +72,7 @@ struct DenseNodeDecodeSummary
  * Params:
  *   block = Validated PrimitiveBlock layout providing granularity and offsets.
  *   group = Validated PrimitiveGroup layout containing DenseNodes data.
+ *   table = Indexed StringTable belonging to `block`.
  *   sink = Consumer receiving nodes in merged protobuf column order.
  *   summary = Receives the number of emitted nodes.
  *   status = Receives success or a checked arithmetic/defensive wire failure.
@@ -70,6 +83,7 @@ struct DenseNodeDecodeSummary
 bool decodeDenseNodes(Sink)(
     ref const PrimitiveBlockLayout block,
     ref const PrimitiveGroupLayout group,
+    StringTableView table,
     ref Sink sink,
     out DenseNodeDecodeSummary summary,
     out PbfStatus status)
@@ -93,6 +107,11 @@ bool decodeDenseNodes(Sink)(
     if (!preflightCoordinates(block, group, status))
         return false;
 
+    DenseTagValidationSummary tagValidation;
+    if (!validateDenseTags(group, table, tagValidation, status))
+        return false;
+
+    DenseTagNodeCursor tagNodes = DenseTagNodeCursor(group, table);
     DenseColumnCursor ids = DenseColumnCursor(group.raw, 1);
     DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
     DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
@@ -157,7 +176,12 @@ bool decodeDenseNodes(Sink)(
             return false;
         }
 
-        sink.put(DenseNodeView(id, latNano, lonNano));
+        DenseTagRange tags;
+        if (!tagNodes.nextNode(tags, status))
+            return false;
+
+        summary.tagCount += tags.length;
+        sink.put(DenseNodeView(id, latNano, lonNano, tags));
         ++summary.nodeCount;
     }
 
@@ -182,6 +206,14 @@ bool decodeDenseNodes(Sink)(
     if (hasExtra)
     {
         status = PbfStatus.failure(PbfError.denseNodeColumnLengthMismatch, 0, 9);
+        return false;
+    }
+
+    if (!tagNodes.finish(status))
+        return false;
+    if (summary.tagCount != tagValidation.tagCount)
+    {
+        status = PbfStatus.failure(PbfError.denseTagNodeCountMismatch, 0, 10);
         return false;
     }
 
@@ -376,6 +408,11 @@ unittest
     block.latOffset = 1000;
     block.lonOffset = -1000;
 
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(stringBytes, stringRefs[]);
+
     struct Sink
     {
         DenseNodeView[3] nodes;
@@ -389,13 +426,15 @@ unittest
 
     Sink sink;
     DenseNodeDecodeSummary summary;
-    assert(decodeDenseNodes(block, group, sink, summary, status));
+    assert(decodeDenseNodes(block, group, table, sink, summary, status));
     assert(status.ok);
     assert(summary.nodeCount == 3);
+    assert(summary.tagCount == 0);
     assert(sink.used == 3);
-    assert(sink.nodes[0] == DenseNodeView(100, 2000, 1000));
-    assert(sink.nodes[1] == DenseNodeView(102, 2100, 900));
-    assert(sink.nodes[2] == DenseNodeView(101, 1900, 1200));
+    assert(sink.nodes[0].id == 100 && sink.nodes[0].latNano == 2000 && sink.nodes[0].lonNano == 1000);
+    assert(sink.nodes[1].id == 102 && sink.nodes[1].latNano == 2100 && sink.nodes[1].lonNano == 900);
+    assert(sink.nodes[2].id == 101 && sink.nodes[2].latNano == 1900 && sink.nodes[2].lonNano == 1200);
+    assert(sink.nodes[0].tags.empty && sink.nodes[1].tags.empty && sink.nodes[2].tags.empty);
 }
 
 unittest
@@ -417,6 +456,11 @@ unittest
     block.granularity = 2;
     block.latOffset = long.max;
 
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(stringBytes, stringRefs[]);
+
     struct CountingSink
     {
         size_t used;
@@ -425,7 +469,116 @@ unittest
 
     CountingSink sink;
     DenseNodeDecodeSummary summary;
-    assert(!decodeDenseNodes(block, group, sink, summary, status));
+    assert(!decodeDenseNodes(block, group, table, sink, summary, status));
     assert(status.error == PbfError.denseNodeCoordinateOverflow);
+    assert(sink.used == 0);
+}
+
+
+unittest
+{
+    // Tags are prevalidated and exposed in original key/value order.
+    const(ubyte)[] groupBytes = [
+        0x12, 0x14,
+        0x0a, 0x02, 0x02, 0x02,
+        0x42, 0x02, 0x02, 0x02,
+        0x4a, 0x02, 0x02, 0x02,
+        0x52, 0x06, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus status;
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, status));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0, 'a', '1', 'b', '2'];
+    StringRef[5] refs = [
+        StringRef(0, 0),
+        StringRef(1, 1),
+        StringRef(2, 1),
+        StringRef(3, 1),
+        StringRef(4, 1),
+    ];
+    StringTableView table = StringTableView(stringBytes, refs[]);
+
+    struct Sink
+    {
+        size_t used;
+        size_t firstNodeTags;
+        const(ubyte)[] firstKey;
+        const(ubyte)[] secondKey;
+
+        void put(DenseNodeView node) @safe nothrow @nogc
+        {
+            if (used == 0)
+            {
+                auto tags = node.tags;
+                firstNodeTags = tags.length;
+                if (!tags.empty)
+                {
+                    firstKey = tags.front.key;
+                    tags.popFront();
+                }
+                if (!tags.empty)
+                    secondKey = tags.front.key;
+            }
+            else
+                assert(node.tags.empty);
+            ++used;
+        }
+    }
+
+    Sink sink;
+    DenseNodeDecodeSummary summary;
+    assert(decodeDenseNodes(block, group, table, sink, summary, status));
+    assert(summary.nodeCount == 2);
+    assert(summary.tagCount == 2);
+    assert(sink.used == 2);
+    assert(sink.firstNodeTags == 2);
+    const(ubyte)[] a = ['a'];
+    const(ubyte)[] b = ['b'];
+    assert(sink.firstKey == a);
+    assert(sink.secondKey == b);
+}
+
+
+unittest
+{
+    // Tag preflight failure occurs before the sink receives a node.
+    const(ubyte)[] groupBytes = [
+        0x12, 0x0e,
+        0x0a, 0x01, 0x02,
+        0x42, 0x01, 0x02,
+        0x4a, 0x01, 0x02,
+        0x52, 0x03, 0x03, 0x02, 0x00,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus status;
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, status));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0, 'k', 'v'];
+    StringRef[3] refs = [StringRef(0, 0), StringRef(1, 1), StringRef(2, 1)];
+    StringTableView table = StringTableView(stringBytes, refs[]);
+
+    struct CountingSink
+    {
+        size_t used;
+        void put(DenseNodeView) @safe nothrow @nogc { ++used; }
+    }
+
+    CountingSink sink;
+    DenseNodeDecodeSummary summary;
+    assert(!decodeDenseNodes(block, group, table, sink, summary, status));
+    assert(status.error == PbfError.denseTagStringIdOutOfRange);
     assert(sink.used == 0);
 }
