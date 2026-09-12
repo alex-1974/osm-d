@@ -226,3 +226,57 @@ Warm-cache and cold-cache measurements must be identified separately.
 Performance changes above a threshold to be fixed after the baseline suite is
 stable require investigation. Correctness regressions always block release;
 performance never overrides integrity.
+
+## DenseNodes hot-path baseline
+
+`benchmark/micro/dense_nodes.d` is the first entity-level production
+microbenchmark. It measures the public `decodeDenseNodes` path, not a
+benchmark-only decoder. PrimitiveBlock layout discovery, PrimitiveGroup layout
+discovery and StringTable index construction are completed once before timing;
+DenseNodes preflight, checked delta/coordinate decoding, per-node tag-range
+construction and the selected sink work are timed.
+
+Four deterministic synthetic profiles separate major workload shapes:
+
+| Profile | Tags per node | Purpose |
+| --- | ---: | --- |
+| `tagless` | 0 | coordinate/delta baseline and empty-`keys_vals` fast path |
+| `typical` | 2 | common lightly tagged node workload |
+| `rich` | 8 | tag traversal and StringTable pressure |
+| `mixed` | 0–4 | deterministic branch/length diversity |
+
+Three sink paths answer different questions:
+
+| Path | Sink work |
+| --- | --- |
+| `coordinates` | consume node ID and exact nanodegree coordinates only |
+| `tag-ids` | additionally traverse every borrowed tag and consume key/value SIDs |
+| `tag-bytes` | additionally touch borrowed key/value string bytes |
+
+The decoder itself always performs production tag preflight. Consequently,
+`coordinates` on a tagged profile is **not** a tag-free alternate decoder; the
+`tagless` + `coordinates` result is the cleanest core baseline. This deliberate
+choice prevents a benchmark-only fast path from influencing architecture.
+
+When all sink paths are run together, their order rotates through all six
+permutations across samples to reduce thermal/cache ordering bias. The same
+min/p10/p50/p90/max and Δ80 rules used by the varint benchmark apply.
+
+Run a controlled baseline with LDC as the architectural reference compiler:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-dense-nodes.sh
+```
+
+Run DMD as a useful development comparison, but do not choose hot-path
+representations from DMD alone. Before adding explicit `pragma(inline, true)`
+or changing data representation, repeat suspicious results in a separate
+process/path selection and confirm the effect with LDC.
+
+The benchmark reports ns/node, Mnodes/s and `MiB/s(group)`. The byte-throughput
+number uses serialized in-memory PrimitiveGroup bytes and must never be
+presented as compressed PBF I/O or whole-parser throughput.

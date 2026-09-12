@@ -100,3 +100,59 @@ OSM parsing.
 `benchmark/data/`, `benchmark/results/` and `benchmark/bin/` are intentionally
 ignored. Dataset metadata and hashes belong in a future tracked `datasets.toml`;
 large extracts do not belong in Git.
+
+## DenseNodes microbenchmark
+
+`micro/dense_nodes.d` measures the production `decodeDenseNodes` path after
+PrimitiveBlock/PrimitiveGroup layout discovery and StringTable indexing have
+already completed. This isolates the entity hot path while retaining production
+preflight, checked coordinate conversion and tag semantics.
+
+Run both installed reference compilers:
+
+```bash
+./benchmark/run-dense-nodes.sh
+```
+
+For architecture decisions, use the same controlled environment as the varint
+benchmark. On the current development laptop a typical controlled run is:
+
+```bash
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-dense-nodes.sh
+```
+
+The deterministic synthetic profiles are:
+
+- `tagless`: no `keys_vals` stream;
+- `typical`: two tags per node;
+- `rich`: eight tags per node;
+- `mixed`: deterministic 0/1/2/3/4-tag mixture.
+
+The sink paths are:
+
+- `coordinates`: consume only ID and exact nanodegree coordinates;
+- `tag-ids`: additionally traverse every tag and consume StringTable IDs;
+- `tag-bytes`: additionally touch borrowed key/value bytes.
+
+`decodeDenseNodes` always performs its normal full preflight. Therefore the
+`coordinates` path on a tagged workload still includes validation and creation
+of per-node tag ranges; use the `tagless`/`coordinates` combination as the
+cleanest coordinate-core baseline.
+
+When all three paths are measured in one process, sample order rotates through
+all six permutations. Reported `MiB/s(group)` is serialized in-memory
+PrimitiveGroup throughput, not compressed-file or end-to-end PBF throughput.
+
+Examples:
+
+```bash
+./benchmark/run-dense-nodes.sh --profile=tagless --path=coordinates
+./benchmark/run-dense-nodes.sh --profile=typical --path=all
+./benchmark/run-dense-nodes.sh --nodes=500000 --iterations=8 --samples=40
+```
+
+Workload generation, structural layout decoding, StringTable index allocation,
+correctness validation, sorting and reporting are outside the timed region.

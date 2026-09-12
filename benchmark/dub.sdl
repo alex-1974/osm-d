@@ -14,3 +14,12 @@ configuration "varint" {
     importPaths "micro"
     mainSourceFile "micro/varint.d"
 }
+
+configuration "dense-nodes" {
+    targetType "executable"
+    targetName "d-osm-bench-dense-nodes"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/dense_nodes.d"
+}
