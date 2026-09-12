@@ -15,3 +15,4 @@ stable release.
 - Architecture documentation and initial ADR set.
 - Minimal DUB library package root.
 - Verified OSM specification/implementation compatibility matrix and reference catalogue.
+- Allocation-free checked integer helpers and initial protobuf wire primitives: bounded cursor, varint/ZigZag decoding, field-key parsing and primitive field skipping.
