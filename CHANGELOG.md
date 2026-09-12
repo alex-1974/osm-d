@@ -16,6 +16,7 @@ stable release.
 - Marked the experimental library slice varint hot path for explicit cross-module inlining to isolate the library-boundary performance effect.
 - Marked the production pointer varint hot path with the same explicit cross-module inlining hints for a fair final cursor comparison.
 - Adopted a slice-backed production `WireCursor` after the fair inline benchmark showed performance parity with the pointer design; removed the experimental wire modules and recorded the decision in ADR 0008.
+- Added zero-copy OSMPBF BlobHeader decoding and transactional file-block framing with hard resource limits and malformed/truncated-input tests.
 
 
 ### Added
