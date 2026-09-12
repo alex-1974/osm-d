@@ -1,7 +1,7 @@
 /**
  * Allocation-free errors for the OSMPBF storage layer.
  *
- * Framing, BlobHeader, Blob, HeaderBlock, PrimitiveBlock, StringTable, and
+ * Framing, BlobHeader, Blob, HeaderBlock, PrimitiveBlock, PrimitiveGroup, DenseNodes, StringTable, and
  * decompression code use compact status values
  * so malformed or hostile input can be rejected in `@nogc` paths. When a
  * protobuf wire decoder caused the failure, `wireError` preserves the lower-
@@ -95,6 +95,20 @@ enum PbfError : ubyte
     stringTableWorkspaceTooSmall,
     /// A defensive StringTable rescan did not reproduce the validated entry count.
     stringTableCountMismatch,
+    /// The PrimitiveGroup contains malformed or unsupported protobuf wire data.
+    invalidPrimitiveGroupWire,
+    /// One PrimitiveGroup contains more than one OSMPBF primitive kind.
+    mixedPrimitiveGroupTypes,
+    /// A DenseNodes message contains malformed or unsupported protobuf wire data.
+    invalidDenseNodesWire,
+    /// A DenseInfo message contains malformed or unsupported protobuf wire data.
+    invalidDenseInfoWire,
+    /// DenseNodes ID, latitude and longitude columns have different lengths.
+    denseNodeColumnLengthMismatch,
+    /// Delta accumulation for a DenseNodes ID/coordinate column overflowed.
+    denseNodeDeltaOverflow,
+    /// Exact nanodegree coordinate conversion overflowed signed 64-bit range.
+    denseNodeCoordinateOverflow,
 }
 
 /**
@@ -206,6 +220,27 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidStringTableWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure into a PrimitiveGroup decoding failure. */
+    static PbfStatus fromPrimitiveGroupWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidPrimitiveGroupWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure inside a DenseNodes message. */
+    static PbfStatus fromDenseNodesWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidDenseNodesWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure inside a DenseInfo message. */
+    static PbfStatus fromDenseInfoWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidDenseInfoWire, wire, baseOffset);
+    }
+
 private:
     static PbfStatus fromWireAs(
         PbfError error,
@@ -253,4 +288,16 @@ unittest
     status = PbfStatus.fromStringTableWire(wire, 60);
     assert(status.error == PbfError.invalidStringTableWire);
     assert(status.offset == 63);
+
+    status = PbfStatus.fromPrimitiveGroupWire(wire, 70);
+    assert(status.error == PbfError.invalidPrimitiveGroupWire);
+    assert(status.offset == 73);
+
+    status = PbfStatus.fromDenseNodesWire(wire, 80);
+    assert(status.error == PbfError.invalidDenseNodesWire);
+    assert(status.offset == 83);
+
+    status = PbfStatus.fromDenseInfoWire(wire, 90);
+    assert(status.error == PbfError.invalidDenseInfoWire);
+    assert(status.offset == 93);
 }
