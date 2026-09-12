@@ -19,6 +19,7 @@ stable release.
 - Added zero-copy OSMPBF BlobHeader decoding and transactional file-block framing with hard resource limits and malformed/truncated-input tests.
 - Added validated OSMPBF Blob decoding plus zero-copy raw and bounded zlib payload materialization into caller-owned buffers; optional codecs are recognized and fail explicitly until backends are configured.
 - Added zero-copy OSMPBF HeaderBlock/HeaderBBox decoding, lazy ordered feature ranges, and explicit required-feature capability validation.
+- Added allocation-free PrimitiveBlock first-pass layout decoding, borrowed PrimitiveGroup ranges, and caller-buffered O(1) StringTable indexing.
 
 
 ### Added

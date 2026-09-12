@@ -1,7 +1,8 @@
 /**
  * Allocation-free errors for the OSMPBF storage layer.
  *
- * Framing, BlobHeader, Blob, HeaderBlock, and decompression code use compact status values
+ * Framing, BlobHeader, Blob, HeaderBlock, PrimitiveBlock, StringTable, and
+ * decompression code use compact status values
  * so malformed or hostile input can be rejected in `@nogc` paths. When a
  * protobuf wire decoder caused the failure, `wireError` preserves the lower-
  * level reason.
@@ -78,6 +79,22 @@ enum PbfError : ubyte
     missingHeaderBBoxBottom,
     /// The active reader policy does not understand a required HeaderBlock feature.
     unsupportedRequiredFeature,
+    /// PrimitiveBlock payload reaches or exceeds the hard uncompressed block limit.
+    primitiveBlockTooLarge,
+    /// The PrimitiveBlock contains malformed or unsupported protobuf wire data.
+    invalidPrimitiveBlockWire,
+    /// The required PrimitiveBlock `stringtable` message is absent.
+    missingPrimitiveBlockStringTable,
+    /// A StringTable message contains malformed or unsupported protobuf wire data.
+    invalidStringTableWire,
+    /// The merged StringTable has no index-zero entry.
+    missingStringTableZeroEntry,
+    /// The merged StringTable index-zero entry is not empty.
+    nonEmptyStringTableZeroEntry,
+    /// Caller-owned StringRef storage is smaller than the validated table size.
+    stringTableWorkspaceTooSmall,
+    /// A defensive StringTable rescan did not reproduce the validated entry count.
+    stringTableCountMismatch,
 }
 
 /**
@@ -175,6 +192,20 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidHeaderBBoxWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure into a PrimitiveBlock decoding failure. */
+    static PbfStatus fromPrimitiveBlockWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidPrimitiveBlockWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure inside a StringTable message. */
+    static PbfStatus fromStringTableWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidStringTableWire, wire, baseOffset);
+    }
+
 private:
     static PbfStatus fromWireAs(
         PbfError error,
@@ -214,4 +245,12 @@ unittest
     status = PbfStatus.fromHeaderBBoxWire(wire, 40);
     assert(status.error == PbfError.invalidHeaderBBoxWire);
     assert(status.offset == 43);
+
+    status = PbfStatus.fromPrimitiveBlockWire(wire, 50);
+    assert(status.error == PbfError.invalidPrimitiveBlockWire);
+    assert(status.offset == 53);
+
+    status = PbfStatus.fromStringTableWire(wire, 60);
+    assert(status.error == PbfError.invalidStringTableWire);
+    assert(status.offset == 63);
 }
