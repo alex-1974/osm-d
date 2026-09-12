@@ -1,0 +1,31 @@
+.dub/
+docs.json
+__dummy.html
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.lst
+*.map
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
+# Local benchmark data and results
+benchmark/data/
+benchmark/results/
+
+# Shared workspace context. Managed only by tools/link-workspace-docs.sh
+.workspace/
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*~

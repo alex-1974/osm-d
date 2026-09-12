@@ -1,0 +1,7 @@
+name "d-osm"
+description "Safe, loss-aware and high-performance OpenStreetMap data library for D"
+authors "Alexander Bernardi"
+copyright "Copyright © 2026 Alexander Bernardi"
+license "MIT"
+targetType "library"
+sourcePaths "source"
