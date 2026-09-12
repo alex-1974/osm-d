@@ -1,7 +1,7 @@
 /**
  * Allocation-free errors for the OSMPBF storage layer.
  *
- * Framing, BlobHeader, Blob, and decompression code use compact status values
+ * Framing, BlobHeader, Blob, HeaderBlock, and decompression code use compact status values
  * so malformed or hostile input can be rejected in `@nogc` paths. When a
  * protobuf wire decoder caused the failure, `wireError` preserves the lower-
  * level reason.
@@ -64,6 +64,20 @@ enum PbfError : ubyte
     decompressedSizeMismatch,
     /// Bytes remain after the end of the single expected compressed stream.
     trailingCompressedData,
+    /// The HeaderBlock contains malformed or unsupported protobuf wire data.
+    invalidHeaderBlockWire,
+    /// An embedded HeaderBBox contains malformed or unsupported protobuf wire data.
+    invalidHeaderBBoxWire,
+    /// A present HeaderBBox is missing required field `left`.
+    missingHeaderBBoxLeft,
+    /// A present HeaderBBox is missing required field `right`.
+    missingHeaderBBoxRight,
+    /// A present HeaderBBox is missing required field `top`.
+    missingHeaderBBoxTop,
+    /// A present HeaderBBox is missing required field `bottom`.
+    missingHeaderBBoxBottom,
+    /// The active reader policy does not understand a required HeaderBlock feature.
+    unsupportedRequiredFeature,
 }
 
 /**
@@ -147,6 +161,20 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidBlobWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure into a HeaderBlock decoding failure. */
+    static PbfStatus fromHeaderBlockWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidHeaderBlockWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure inside an embedded HeaderBBox. */
+    static PbfStatus fromHeaderBBoxWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidHeaderBBoxWire, wire, baseOffset);
+    }
+
 private:
     static PbfStatus fromWireAs(
         PbfError error,
@@ -178,4 +206,12 @@ unittest
     status = PbfStatus.fromBlobWire(wire, 20);
     assert(status.error == PbfError.invalidBlobWire);
     assert(status.offset == 23);
+
+    status = PbfStatus.fromHeaderBlockWire(wire, 30);
+    assert(status.error == PbfError.invalidHeaderBlockWire);
+    assert(status.offset == 33);
+
+    status = PbfStatus.fromHeaderBBoxWire(wire, 40);
+    assert(status.error == PbfError.invalidHeaderBBoxWire);
+    assert(status.offset == 43);
 }
