@@ -36,6 +36,8 @@ benchmark. Parser-format changes must include conformance or regression tests.
 - Avoid heap ownership in borrowed view APIs.
 - Avoid abstraction in the inner loop unless generated code and benchmarks show
   that it is free enough.
+- Add Ddoc/DDox documentation when introducing or changing public modules and
+  APIs; do not defer API documentation to a later cleanup pass.
 
 ## Tests
 

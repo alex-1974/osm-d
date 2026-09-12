@@ -3,7 +3,13 @@
  *
  * The decoder accepts legal non-minimal encodings up to the protobuf 64-bit
  * maximum of ten bytes. It rejects truncation and values whose tenth byte
- * contains bits outside bit zero.
+ * contains bits outside bit zero. The common one-byte case has an explicit
+ * fast path.
+ *
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-12
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm.wire.varint;
 
@@ -11,6 +17,22 @@ import osm.wire.cursor : WireCursor;
 import osm.wire.error : WireError, WireStatus;
 import osm.wire.zigzag : decodeZigZag32, decodeZigZag64;
 
+/**
+ * Decode one unsigned 64-bit protobuf varint.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the first byte of the varint.
+ *   value = Receives the decoded value on success.
+ *   status = Receives success or a precise wire-decoding failure.
+ *
+ * Returns:
+ *   `true` on success; `false` for truncated or overflowing encodings.
+ *
+ * Notes:
+ *   Legal non-minimal protobuf encodings are accepted. On failure `value` is
+ *   reset to zero, while the cursor remains advanced to the point at which the
+ *   failure was detected.
+ */
 bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
     @safe nothrow @nogc
 {
@@ -78,6 +100,17 @@ bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
     return true;
 }
 
+/**
+ * Decode one unsigned 32-bit protobuf varint.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the first byte of the varint.
+ *   value = Receives the decoded value on success.
+ *   status = Receives success or a wire-decoding failure.
+ *
+ * Returns:
+ *   `true` when the encoded value fits in `uint`; `false` otherwise.
+ */
 bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
     @safe nothrow @nogc
 {
@@ -100,6 +133,17 @@ bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
     return true;
 }
 
+/**
+ * Decode one protobuf `sint64` value.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the first byte of the encoded varint.
+ *   value = Receives the ZigZag-decoded signed value on success.
+ *   status = Receives success or a wire-decoding failure.
+ *
+ * Returns:
+ *   `true` on success; `false` if the underlying varint is invalid.
+ */
 bool readSVarint64(ref WireCursor cursor, out long value, out WireStatus status)
     @safe nothrow @nogc
 {
@@ -114,6 +158,18 @@ bool readSVarint64(ref WireCursor cursor, out long value, out WireStatus status)
     return true;
 }
 
+/**
+ * Decode one protobuf `sint32` value.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the first byte of the encoded varint.
+ *   value = Receives the ZigZag-decoded signed value on success.
+ *   status = Receives success or a wire-decoding failure.
+ *
+ * Returns:
+ *   `true` on success; `false` if the underlying varint is invalid or exceeds
+ *   the supported 32-bit encoded width.
+ */
 bool readSVarint32(ref WireCursor cursor, out int value, out WireStatus status)
     @safe nothrow @nogc
 {

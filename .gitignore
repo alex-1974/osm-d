@@ -17,6 +17,9 @@ __dummy.html
 *.profraw
 *.profdata
 
+# dub test runner
+/d-osm-test-library
+
 # Local benchmark data and results
 benchmark/data/
 benchmark/results/

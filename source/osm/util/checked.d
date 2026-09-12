@@ -1,13 +1,31 @@
 /**
- * Checked integer arithmetic used by codecs and coordinate decoding.
+ * Checked integer arithmetic for codecs and exact coordinate decoding.
  *
- * The functions in this module never rely on overflowing an integer value.
- * They return `false` when the requested operation is not representable in
- * the result type and leave no partially computed value behind.
+ * All helpers reject unrepresentable results before executing an overflowing
+ * operation. On failure they return `false`; callers must treat the output
+ * parameter as unspecified unless the function returned `true`.
+ *
+ * These helpers are intended for untrusted encoded input and therefore form
+ * part of the data-integrity boundary.
+ *
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-12
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm.util.checked;
 
-/// Add two signed 64-bit values without overflowing.
+/**
+ * Add two signed 64-bit values without overflow.
+ *
+ * Params:
+ *   a = Left operand.
+ *   b = Right operand.
+ *   result = Receives the exact sum when the operation succeeds.
+ *
+ * Returns:
+ *   `true` when `a + b` is representable as `long`; `false` otherwise.
+ */
 bool checkedAdd(long a, long b, out long result) @safe pure nothrow @nogc
 {
     if (b > 0 && a > long.max - b)
@@ -19,7 +37,17 @@ bool checkedAdd(long a, long b, out long result) @safe pure nothrow @nogc
     return true;
 }
 
-/// Subtract two signed 64-bit values without overflowing.
+/**
+ * Subtract two signed 64-bit values without overflow.
+ *
+ * Params:
+ *   a = Minuend.
+ *   b = Subtrahend.
+ *   result = Receives the exact difference when the operation succeeds.
+ *
+ * Returns:
+ *   `true` when `a - b` is representable as `long`; `false` otherwise.
+ */
 bool checkedSub(long a, long b, out long result) @safe pure nothrow @nogc
 {
     if (b > 0 && a < long.min + b)
@@ -31,7 +59,17 @@ bool checkedSub(long a, long b, out long result) @safe pure nothrow @nogc
     return true;
 }
 
-/// Multiply two signed 64-bit values without overflowing.
+/**
+ * Multiply two signed 64-bit values without overflow.
+ *
+ * Params:
+ *   a = Left operand.
+ *   b = Right operand.
+ *   result = Receives the exact product when the operation succeeds.
+ *
+ * Returns:
+ *   `true` when `a * b` is representable as `long`; `false` otherwise.
+ */
 bool checkedMul(long a, long b, out long result) @safe pure nothrow @nogc
 {
     if (a == 0 || b == 0)
@@ -76,7 +114,22 @@ bool checkedMul(long a, long b, out long result) @safe pure nothrow @nogc
     return true;
 }
 
-/// Compute `base + factor * value` without overflowing.
+/**
+ * Compute `base + factor * value` without overflow.
+ *
+ * This helper is intended for exact affine transformations such as PBF
+ * coordinate reconstruction.
+ *
+ * Params:
+ *   base = Additive base value.
+ *   factor = Multiplicative factor.
+ *   value = Value to multiply by `factor`.
+ *   result = Receives the exact result when the operation succeeds.
+ *
+ * Returns:
+ *   `true` when both multiplication and addition are representable as `long`;
+ *   `false` otherwise.
+ */
 bool checkedMulAdd(long base, long factor, long value, out long result)
     @safe pure nothrow @nogc
 {

@@ -1,7 +1,13 @@
 /**
- * d-osm public package root.
+ * Public package root for `d-osm`.
  *
- * The public API is intentionally minimal while the data model and codec
- * contracts are being fixed by ADR and conformance tests.
+ * `d-osm` provides loss-aware, high-performance OpenStreetMap data handling.
+ * The public surface is intentionally kept small while the canonical data
+ * model, codecs, validation rules, and streaming contracts are established.
+ *
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-12
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm;

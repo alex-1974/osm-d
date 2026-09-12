@@ -34,6 +34,33 @@ General direction:
   small `@system` implementation;
 - raw pointer arithmetic stays isolated in the wire/memory boundary.
 
+## Ddoc/DDox documentation
+
+Documentation is written together with the code, not as a cleanup pass. Every
+public module starts with a Ddoc module comment immediately before the `module`
+declaration. Module documentation includes at least:
+
+- a concise purpose and contract;
+- `Authors:`;
+- `Date:` (the original module creation date, ISO `YYYY-MM-DD`);
+- `Copyright:`;
+- `License:`.
+
+Every public type, enum, field whose meaning is not self-evident, and callable
+API is documented. Callable APIs use Ddoc/DDox sections where applicable:
+
+- `Params:` for all parameters;
+- `Returns:` for non-`void` return contracts;
+- `Throws:` only for exceptions that are part of the API contract;
+- `See_Also:` for materially related public APIs;
+- `Notes:` or `Safety:` when lifetime, ownership, `@trusted`, or other integrity
+  constraints would otherwise be easy to miss.
+
+Hot-path code is not exempt from documentation. In particular, borrowed
+lifetimes, ownership, cursor advancement on failure, integer-overflow behavior,
+and fail-closed decisions must be explicit in Ddoc. Git remains the source of
+truth for change history; `Date:` is not manually bumped on every edit.
+
 ## Performance work
 
 Do not optimize from intuition alone. For performance-sensitive changes:

@@ -2,11 +2,27 @@
  * Bounded cursor over immutable protobuf input bytes.
  *
  * Pointer arithmetic is intentionally confined to this module. Construction
- * starts from a D slice and every read/take/skip operation checks the tracked
- * remaining byte count before dereferencing or constructing a returned slice.
+ * starts from a D slice and every read, take, or skip operation checks the
+ * tracked remaining byte count before dereferencing or constructing a returned
+ * slice.
+ *
+ * The constructor is `@system` because the cursor stores a borrowed raw pointer
+ * whose lifetime cannot be expressed by the type itself. Individual operations
+ * are exposed through narrowly reviewed `@trusted` methods after bounds checks.
+ *
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-12
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm.wire.cursor;
 
+/**
+ * Mutable read cursor over one borrowed immutable wire buffer.
+ *
+ * A `WireCursor` never allocates and never owns the underlying memory. It must
+ * not outlive the slice used to construct it.
+ */
 struct WireCursor
 {
 private:
@@ -15,6 +31,16 @@ private:
     size_t _offset;
 
 public:
+    /**
+     * Construct a cursor over `input`.
+     *
+     * Params:
+     *   input = Immutable byte range borrowed for the lifetime of the cursor.
+     *
+     * Safety:
+     *   The caller must ensure that `input` remains alive and unmoved for every
+     *   operation performed through this cursor.
+     */
     this(const(ubyte)[] input) @system nothrow @nogc
     {
         _ptr = input.ptr;
@@ -22,21 +48,33 @@ public:
         _offset = 0;
     }
 
+    /** Returns `true` when no unread bytes remain. */
     @property bool empty() const @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
+    /** Returns the number of bytes consumed from the original input. */
     @property size_t offset() const @safe pure nothrow @nogc
     {
         return _offset;
     }
 
+    /** Returns the number of unread bytes. */
     @property size_t remaining() const @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
+    /**
+     * Read one byte and advance the cursor.
+     *
+     * Params:
+     *   value = Receives the byte on success.
+     *
+     * Returns:
+     *   `true` if a byte was available; `false` at end of input.
+     */
     bool readByte(out ubyte value) @trusted nothrow @nogc
     {
         if (_remaining == 0)
@@ -48,6 +86,15 @@ public:
         return true;
     }
 
+    /**
+     * Advance the cursor by `count` bytes without reading them.
+     *
+     * Params:
+     *   count = Number of bytes to skip.
+     *
+     * Returns:
+     *   `true` if `count` bytes were available; `false` otherwise.
+     */
     bool skip(size_t count) @trusted nothrow @nogc
     {
         if (count > _remaining)
@@ -60,6 +107,20 @@ public:
         return true;
     }
 
+    /**
+     * Borrow the next `count` bytes and advance the cursor.
+     *
+     * Params:
+     *   count = Number of bytes to borrow.
+     *   bytes = Receives a slice into the original input on success.
+     *
+     * Returns:
+     *   `true` if `count` bytes were available; `false` otherwise.
+     *
+     * Notes:
+     *   The returned slice has the same lifetime constraints as this cursor and
+     *   does not own or copy its bytes.
+     */
     bool take(size_t count, out const(ubyte)[] bytes) @trusted nothrow @nogc
     {
         if (count > _remaining)

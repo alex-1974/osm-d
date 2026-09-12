@@ -7,6 +7,10 @@ stable release.
 
 ## Unreleased
 
+- Added Ddoc/DDox documentation policy and documented the initial wire API.
+- Ignore the generated `d-osm-test-library` dub test runner.
+
+
 ### Added
 
 - Initial repository structure.

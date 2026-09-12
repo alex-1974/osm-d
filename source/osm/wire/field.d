@@ -2,7 +2,13 @@
  * Protobuf field-key and primitive field-value handling.
  *
  * This module deliberately stops below generated-message semantics. It knows
- * protobuf wire types, not OSM or OSMPBF message schemas.
+ * protobuf field numbers and wire types, but nothing about OSM or OSMPBF
+ * message schemas.
+ *
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-12
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm.wire.field;
 
@@ -10,25 +16,45 @@ import osm.wire.cursor : WireCursor;
 import osm.wire.error : WireError, WireStatus;
 import osm.wire.varint : readVarint64;
 
-/// Protobuf wire types encoded in the low three bits of a field key.
+/** Protobuf wire types encoded in the low three bits of a field key. */
 enum WireType : ubyte
 {
+    /// Base-128 varint.
     varint = 0,
+    /// Little-endian 64-bit fixed-width value.
     fixed64 = 1,
+    /// Length-prefixed byte sequence, embedded message, string, or packed data.
     lengthDelimited = 2,
+    /// Start of a deprecated protobuf group.
     startGroup = 3,
+    /// End of a deprecated protobuf group.
     endGroup = 4,
+    /// Little-endian 32-bit fixed-width value.
     fixed32 = 5,
 }
 
+/** Decoded protobuf field key together with its source offset. */
 struct FieldHeader
 {
+    /// Protobuf field number in the inclusive range `1 .. 2^29 - 1`.
     uint number;
+    /// Wire representation used by the field value.
     WireType wireType;
+    /// Byte offset at which the field key started.
     size_t offset;
 }
 
-/** Decode one protobuf field key. */
+/**
+ * Decode one protobuf field key.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the first byte of a field key.
+ *   header = Receives the validated field number, wire type, and source offset.
+ *   status = Receives success or a field-key decoding failure.
+ *
+ * Returns:
+ *   `true` when a valid protobuf field key was decoded; `false` otherwise.
+ */
 bool readFieldHeader(ref WireCursor cursor, out FieldHeader header, out WireStatus status)
     @safe nothrow @nogc
 {
@@ -73,8 +99,19 @@ bool readFieldHeader(ref WireCursor cursor, out FieldHeader header, out WireStat
 /**
  * Read a length-delimited field payload as a borrowed slice.
  *
- * The cursor must point at the length varint, i.e. directly after the field
- * key. Returned bytes borrow the cursor's original input buffer.
+ * The cursor must point at the length varint, directly after the field key.
+ * Returned bytes borrow the cursor's original input buffer and are never
+ * copied.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the field's encoded length.
+ *   fieldNumber = Field number used for error reporting.
+ *   bytes = Receives the borrowed payload slice on success.
+ *   status = Receives success or a length/payload decoding failure.
+ *
+ * Returns:
+ *   `true` when the complete payload is present and its length fits `size_t`;
+ *   `false` otherwise.
  */
 bool readLengthDelimited(
     ref WireCursor cursor,
@@ -114,11 +151,20 @@ bool readLengthDelimited(
 }
 
 /**
- * Skip a primitive protobuf field value.
+ * Skip one primitive protobuf field value.
  *
  * Groups are recognized by `readFieldHeader`, but intentionally not skipped
  * yet because correct group skipping requires matching nested end-group field
- * numbers and a bounded nesting policy. OSMPBF schemas do not use groups.
+ * numbers and a bounded nesting policy. Current OSMPBF schemas do not use
+ * groups, so encountering one fails closed instead of silently discarding it.
+ *
+ * Params:
+ *   cursor = Cursor positioned immediately after the field key.
+ *   header = Previously decoded field header.
+ *   status = Receives success or the reason the value could not be skipped.
+ *
+ * Returns:
+ *   `true` if the complete field value was safely skipped; `false` otherwise.
  */
 bool skipFieldValue(
     ref WireCursor cursor,
