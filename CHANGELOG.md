@@ -23,6 +23,7 @@ stable release.
 - Added allocation-free PrimitiveGroup/DenseNodes validation plus streaming ID/coordinate decoding with packed/unpacked compatibility, checked delta accumulation, and exact nanodegree conversion.
 - Added preflighted zero-copy DenseNodes tag decoding with packed/unpacked `keys_vals` compatibility, strict delimiter/StringTable validation, and borrowed per-node tag ranges.
 - Added a reproducible DenseNodes microbenchmark covering tagless, typical-tag, tag-rich and mixed profiles with coordinate-only, tag-ID and tag-byte sink paths.
+- Added allocation-free DenseInfo decoding with independently optional metadata columns, packed/unpacked compatibility, checked delta/timestamp arithmetic, StringTable-validated usernames, and per-node metadata views.
 
 
 ### Added

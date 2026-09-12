@@ -2,7 +2,7 @@
  * Allocation-free errors for the OSMPBF storage layer.
  *
  * Framing, BlobHeader, Blob, HeaderBlock, PrimitiveBlock, PrimitiveGroup,
- * DenseNodes, DenseTags, StringTable, and decompression code use compact
+ * DenseNodes, DenseInfo, DenseTags, StringTable, and decompression code use compact
  * status values
  * so malformed or hostile input can be rejected in `@nogc` paths. When a
  * protobuf wire decoder caused the failure, `wireError` preserves the lower-
@@ -110,6 +110,16 @@ enum PbfError : ubyte
     denseNodeDeltaOverflow,
     /// Exact nanodegree coordinate conversion overflowed signed 64-bit range.
     denseNodeCoordinateOverflow,
+    /// A present DenseInfo column does not contain one value per dense node.
+    denseInfoColumnLengthMismatch,
+    /// DenseInfo delta accumulation overflowed signed 64-bit range.
+    denseInfoDeltaOverflow,
+    /// Timestamp scaling by date_granularity overflowed signed 64-bit range.
+    denseInfoTimestampOverflow,
+    /// A cumulative DenseInfo uid cannot be represented by schema int32.
+    denseInfoUidOutOfRange,
+    /// A cumulative DenseInfo user_sid does not reference the indexed StringTable.
+    denseInfoUserStringIdOutOfRange,
     /// A non-zero DenseNodes `keys_vals` entry cannot denote a positive int32 StringTable ID.
     invalidDenseTagStringId,
     /// A DenseNodes tag references a StringTable ID outside the indexed table.
