@@ -156,3 +156,53 @@ Examples:
 
 Workload generation, structural layout decoding, StringTable index allocation,
 correctness validation, sorting and reporting are outside the timed region.
+
+### Semantically matched C++ reference
+
+`reference/dense_nodes_cpp.cpp` is a C++20 reference for the same canonical
+no-DenseInfo workloads used by `micro/dense_nodes.d`. It intentionally performs
+the same integrity work that materially affects the timed D hot path: complete
+`keys_vals` preflight before emission, checked delta accumulation, checked exact
+coordinate conversion, per-node tag partitioning, borrowed StringTable lookup,
+and the same three observable checksum sinks.
+
+The reference is deliberately **not** libosmium. Its purpose is to answer the
+narrow compiler/language question before an implementation-level comparison is
+made. A faster implementation that performs less validation would not establish
+that C++ is faster than D for the same contract.
+
+Run Clang and GCC if both are installed:
+
+```bash
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-dense-nodes-cpp.sh
+```
+
+For the primary language comparison, use LDC versus Clang with their normal
+release optimization levels and **without** architecture-specific flags:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-dense-nodes.sh
+
+D_OSM_CPP_COMPILERS=clang++ \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-dense-nodes-cpp.sh
+```
+
+For every compared profile/path, verify that `nodes`, `tags`, `group-bytes` and
+`checksum` match. The first performance target is `D p50 / C++ p50 <= 1.0`.
+Differences must be investigated before changing representation or adding
+benchmark-only fast paths.
+
+The initial C++ reference intentionally refuses DenseInfo-bearing workloads.
+Once the D benchmark gains metadata profiles, the C++ reference must implement
+the same DenseInfo preflight and emission contract before those profiles may be
+compared.

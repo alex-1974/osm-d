@@ -280,3 +280,45 @@ process/path selection and confirm the effect with LDC.
 The benchmark reports ns/node, Mnodes/s and `MiB/s(group)`. The byte-throughput
 number uses serialized in-memory PrimitiveGroup bytes and must never be
 presented as compressed PBF I/O or whole-parser throughput.
+
+## DenseNodes D versus C++ semantic reference
+
+The entity hot path has an explicit cross-language performance target: on an
+equivalent workload and integrity contract, the LDC build should reach at least
+C++ performance. The first quantitative criterion is:
+
+```text
+D p50 / C++ p50 <= 1.0
+```
+
+`benchmark/reference/dense_nodes_cpp.cpp` exists to make that statement
+meaningful. It is a benchmark-local C++20 implementation of the same canonical
+no-DenseInfo DenseNodes workload contract rather than a wrapper around a
+third-party parser. It mirrors the work that materially contributes to the
+production D benchmark's timed region:
+
+- full dense-tag preflight before the first emitted node;
+- packed/unpacked-capable protobuf cursors over the group/dense columns;
+- checked delta accumulation;
+- checked `offset + granularity * coordinate` conversion;
+- explicit node/tag-count exhaustion checks;
+- per-node borrowed tag ranges;
+- StringTable ID validation and borrowed byte lookup;
+- identical coordinate, tag-ID and tag-byte checksum sinks.
+
+Workload generation, group layout discovery and StringTable indexing remain
+outside the timed region in both languages. The deterministic workload builder
+is duplicated intentionally; a valid comparison requires identical reported
+node count, tag count, serialized group byte count and checksum for every
+profile/path.
+
+Use LDC versus Clang as the primary language/compiler comparison. Do not add
+`-march=native`, LTO, PGO or language-specific tuning to only one candidate.
+Such experiments are valuable later, but they answer a different question.
+Run each candidate after compilation with the same CPU affinity, cooldown and
+sample parameters, and repeat with reversed whole-process order if the result
+is close or thermally noisy.
+
+libosmium/protozero remains the separate production-implementation reference.
+Its results should not be interpreted as a pure D-versus-C++ language result
+unless the measured semantic work is first shown to be equivalent.
