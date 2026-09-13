@@ -325,3 +325,65 @@ A focused run can select one profile or stage:
 
 Use the stage benchmark to test cost hypotheses before changing `decodeNodes`.
 Do not quote benchmark-local mirror stages as production throughput.
+
+## Regular Way microbenchmark
+
+`micro/regular_ways.d` measures the production `decodeWays` path after
+PrimitiveBlock/PrimitiveGroup layout discovery and StringTable indexing have
+already completed. The benchmark deliberately preserves the correctness-first
+architecture of commit `476319d`: every Way is fully preflighted before any
+sink call, then the group is parsed again for borrowed range construction and
+WayView emission.
+
+Run both installed reference compilers:
+
+```bash
+./benchmark/run-regular-ways.sh
+```
+
+For controlled LDC measurements use the same environment as the Node and
+DenseNodes baselines:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-regular-ways.sh
+```
+
+The deterministic profiles are:
+
+- `ref-only`: eight delta-coded node refs per Way, no tags, Info, or locations;
+- `typical`: eight refs plus two tags;
+- `typical-info`: eight refs, two tags, and full Info metadata;
+- `locations`: the `typical-info` workload plus eight aligned
+  `LocationsOnWays` latitude/longitude pairs;
+- `rich`: 32 refs, eight tags, full Info, and 32 aligned locations.
+
+All sink paths consume Way identity, Info when present, and every absolute node
+reference. This makes `refs` the common observable baseline. Additional work is:
+
+- `refs`: consume only the absolute node-reference range;
+- `tag-ids`: additionally traverse tags and consume StringTable IDs;
+- `tag-bytes`: additionally touch borrowed tag key/value bytes;
+- `locations`: additionally traverse exact nanodegree `LocationsOnWays` values.
+
+When all four paths are measured, sample order rotates through all 24
+permutations. Reported `MiB/s(group)` is serialized in-memory PrimitiveGroup
+throughput, not compressed-file or end-to-end PBF/editor throughput.
+
+Examples:
+
+```bash
+./benchmark/run-regular-ways.sh --profile=ref-only --path=refs
+./benchmark/run-regular-ways.sh --profile=locations --path=locations
+./benchmark/run-regular-ways.sh --ways=200000 --iterations=3 --samples=40
+```
+
+Workload generation, structural layout decoding, StringTable index allocation,
+initial correctness validation, sorting and reporting are outside the timed
+region. This benchmark is the performance baseline for the correctness-first
+regular-Way decoder at commit `476319d`; it must not introduce a prevalidated
+second pass, cached representation, geometry construction, node resolution, or
+other production fast path. Those require measurement against this baseline.

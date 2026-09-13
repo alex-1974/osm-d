@@ -60,3 +60,12 @@ configuration "regular-node-stages" {
     mainSourceFile "micro/regular_nodes.d"
     versions "RegularNodeStageBenchmark"
 }
+
+configuration "regular-ways" {
+    targetType "executable"
+    targetName "d-osm-bench-regular-ways"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/regular_ways.d"
+}
