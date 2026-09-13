@@ -128,6 +128,33 @@ enum PbfError : ubyte
     denseTagMissingValue,
     /// A non-empty DenseNodes tag stream has too few or too many node delimiters.
     denseTagNodeCountMismatch,
+
+    /// A regular Node message contains malformed or unsupported protobuf wire data.
+    invalidNodeWire,
+    /// A regular Info message contains malformed or unsupported protobuf wire data.
+    invalidInfoWire,
+    /// A normal element tag scan encountered malformed protobuf wire data.
+    invalidTagWire,
+    /// A regular Node is missing required field `id`.
+    missingNodeId,
+    /// A regular Node is missing required field `lat`.
+    missingNodeLat,
+    /// A regular Node is missing required field `lon`.
+    missingNodeLon,
+    /// Exact regular-Node nanodegree coordinate conversion overflowed signed 64-bit range.
+    nodeCoordinateOverflow,
+    /// Regular element key/value arrays have different logical lengths.
+    tagColumnLengthMismatch,
+    /// StringTable index zero was used as a normal element tag key or value.
+    invalidTagStringId,
+    /// A normal element tag references a StringTable ID outside the indexed table.
+    tagStringIdOutOfRange,
+    /// Info timestamp scaling by date_granularity overflowed signed 64-bit range.
+    infoTimestampOverflow,
+    /// Info user_sid does not reference the indexed StringTable.
+    infoUserStringIdOutOfRange,
+    /// A defensive regular-Node rescan disagreed with the validated group node count.
+    nodeCountMismatch,
 }
 
 /**
@@ -260,6 +287,27 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidDenseInfoWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure inside a regular Node message. */
+    static PbfStatus fromNodeWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidNodeWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure inside an Info message. */
+    static PbfStatus fromInfoWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidInfoWire, wire, baseOffset);
+    }
+
+    /** Translate a generic wire failure while traversing normal element tags. */
+    static PbfStatus fromTagWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidTagWire, wire, baseOffset);
+    }
+
 private:
     static PbfStatus fromWireAs(
         PbfError error,
@@ -319,4 +367,16 @@ unittest
     status = PbfStatus.fromDenseInfoWire(wire, 90);
     assert(status.error == PbfError.invalidDenseInfoWire);
     assert(status.offset == 93);
+
+    status = PbfStatus.fromNodeWire(wire, 100);
+    assert(status.error == PbfError.invalidNodeWire);
+    assert(status.offset == 103);
+
+    status = PbfStatus.fromInfoWire(wire, 110);
+    assert(status.error == PbfError.invalidInfoWire);
+    assert(status.offset == 113);
+
+    status = PbfStatus.fromTagWire(wire, 120);
+    assert(status.error == PbfError.invalidTagWire);
+    assert(status.offset == 123);
 }
