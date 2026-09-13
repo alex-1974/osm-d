@@ -155,6 +155,19 @@ enum PbfError : ubyte
     infoUserStringIdOutOfRange,
     /// A defensive regular-Node rescan disagreed with the validated group node count.
     nodeCountMismatch,
+
+    /// A regular Way message contains malformed or unsupported protobuf wire data.
+    invalidWayWire,
+    /// A regular Way is missing required field `id`.
+    missingWayId,
+    /// Checked accumulation of a delta-coded Way node reference overflowed int64.
+    wayRefOverflow,
+    /// Optional Way location columns do not align one-to-one with `refs`.
+    wayLocationColumnLengthMismatch,
+    /// Way location delta accumulation or exact coordinate conversion overflowed int64.
+    wayCoordinateOverflow,
+    /// A defensive regular-Way rescan disagreed with the validated group summary.
+    wayCountMismatch,
 }
 
 /**
@@ -294,6 +307,13 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidNodeWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure inside a regular Way message. */
+    static PbfStatus fromWayWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidWayWire, wire, baseOffset);
+    }
+
     /** Translate a generic wire failure inside an Info message. */
     static PbfStatus fromInfoWire(WireStatus wire, size_t baseOffset = 0)
         @safe pure nothrow @nogc
@@ -371,6 +391,10 @@ unittest
     status = PbfStatus.fromNodeWire(wire, 100);
     assert(status.error == PbfError.invalidNodeWire);
     assert(status.offset == 103);
+
+    status = PbfStatus.fromWayWire(wire, 105);
+    assert(status.error == PbfError.invalidWayWire);
+    assert(status.offset == 108);
 
     status = PbfStatus.fromInfoWire(wire, 110);
     assert(status.error == PbfError.invalidInfoWire);
