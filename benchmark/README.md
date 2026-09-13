@@ -387,3 +387,57 @@ region. This benchmark is the performance baseline for the correctness-first
 regular-Way decoder at commit `476319d`; it must not introduce a prevalidated
 second pass, cached representation, geometry construction, node resolution, or
 other production fast path. Those require measurement against this baseline.
+
+### Regular Way stage diagnostics
+
+`regular-way-stages` is a diagnostic companion to the regular-Way baseline. It
+changes no production code. The benchmark build enables benchmark-local mirrors
+of the current private Way message traversal and semantic preflight, plus a
+candidate second pass that assumes the immutable bytes have already passed the
+complete group preflight.
+
+The four stages are:
+
+- `group-scan`: locate every regular Way payload in the PrimitiveGroup without
+  parsing Way fields;
+- `semantic-preflight`: mirror one complete current `parseWay` pass, including
+  required ID, merged/finalized Info, tag validation, checked delta-coded refs,
+  and full `LocationsOnWays` accumulation plus exact coordinate validation;
+- `prevalidated-emission`: re-decode output values and repeated-column counts,
+  construct borrowed tag/ref/location ranges and consume the refs sink, while
+  skipping duplicate tag StringTable validation, checked ref accumulation and
+  complete location accumulation/nanodegree validation already proved by the
+  semantic preflight;
+- `full-decode`: call production `decodeWays` and consume the normal refs sink.
+
+The candidate deliberately does not cache per-Way summaries and does not
+allocate. It models the smallest two-pass optimization compatible with the
+existing guarantee that the complete PrimitiveGroup is semantically valid
+before the first observable sink call. `WayView` remains OSM-topological;
+node resolution and geometry construction stay outside this benchmark.
+
+Run with the same controlled environment as the Way production baseline:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-regular-way-stages.sh
+```
+
+Focused examples:
+
+```bash
+./benchmark/run-regular-way-stages.sh \
+    --profile=locations --stage=all
+
+./benchmark/run-regular-way-stages.sh \
+    --profile=rich --stage=prevalidated-emission
+```
+
+Derived `parse+validate`, `current-post`, `candidate-total` and `potential`
+values subtract separately measured p50 medians. They are diagnostic estimates,
+not independently timed production stages. The production `full-decode` result
+remains the plausibility anchor and should stay comparable with the committed
+regular-Way baseline before an architecture change is accepted.

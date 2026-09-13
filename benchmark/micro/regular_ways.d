@@ -21,8 +21,25 @@
  */
 module benchmark.micro.regular_ways;
 
-import osm.io.pbf.error : PbfStatus;
-import osm.io.pbf.info : InfoView;
+import osm.io.pbf.error : PbfError, PbfStatus;
+import osm.io.pbf.info :
+    InfoView,
+    finalizeInfo,
+    mergeInfoMessage;
+import osm.io.pbf.tags :
+    TagRange,
+    TagValidationSummary,
+    buildTagRange,
+    validateTags;
+import osm.wire.cursor : WireCursor;
+import osm.wire.error : WireStatus;
+import osm.wire.field :
+    FieldHeader,
+    WireType,
+    readFieldHeader,
+    readLengthDelimited,
+    skipFieldValue;
+import osm.wire.varint : readSVarint64, readVarint32, readVarint64;
 import osm.io.pbf.primitive_block :
     PrimitiveBlockLayout,
     decodePrimitiveBlockLayout;
@@ -35,8 +52,16 @@ import osm.io.pbf.string_table :
     buildStringTableView;
 import osm.io.pbf.way :
     WayDecodeSummary,
+    WayLocationRange,
+    WayLocationValidationSummary,
+    WayRefRange,
+    WayRefValidationSummary,
     WayView,
-    decodeWays;
+    buildWayLocationRange,
+    buildWayRefRange,
+    decodeWays,
+    validateWayLocations,
+    validateWayRefs;
 
 import std.algorithm.sorting : sort;
 import std.datetime.stopwatch : AutoStart, StopWatch;
@@ -104,6 +129,104 @@ private struct Workload
     ulong tagIdChecksum;
     ulong tagByteChecksum;
     ulong locationChecksum;
+}
+
+
+version (RegularWayStageBenchmark)
+{
+    private enum StageKind
+    {
+        groupScan,
+        semanticPreflight,
+        prevalidatedEmission,
+        fullDecode,
+    }
+
+    private struct StageRun
+    {
+        ulong checksum;
+        size_t wayCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+        bool ok;
+    }
+
+    private struct StageWayMessageRef
+    {
+        const(ubyte)[] bytes;
+        size_t rawOffset;
+    }
+
+    private struct StageParsedWay
+    {
+        long id;
+        InfoView info;
+        TagValidationSummary tags;
+        WayRefValidationSummary refs;
+        WayLocationValidationSummary locations;
+    }
+
+    /** Benchmark-local mirror of the private production WayMessageCursor. */
+    private struct StageWayMessageCursor
+    {
+    private:
+        WireCursor _group;
+
+    public:
+        this(const(ubyte)[] group) @safe nothrow @nogc
+        {
+            _group = WireCursor(group);
+        }
+
+        bool next(
+            out StageWayMessageRef way,
+            out bool hasWay,
+            out PbfStatus status)
+            @safe nothrow @nogc
+        {
+            way = StageWayMessageRef.init;
+            hasWay = false;
+
+            while (!_group.empty)
+            {
+                FieldHeader field;
+                WireStatus wire;
+                if (!readFieldHeader(_group, field, wire))
+                {
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
+                    return false;
+                }
+
+                if (field.number == 3 && field.wireType == WireType.lengthDelimited)
+                {
+                    const(ubyte)[] payload;
+                    if (!readLengthDelimited(_group, field.number, payload, wire))
+                    {
+                        status = PbfStatus.fromPrimitiveGroupWire(wire);
+                        return false;
+                    }
+
+                    way = StageWayMessageRef(
+                        payload,
+                        _group.offset - payload.length);
+                    hasWay = true;
+                    status = PbfStatus.init;
+                    return true;
+                }
+
+                if (!skipFieldValue(_group, field, wire))
+                {
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
+                    return false;
+                }
+            }
+
+            status = PbfStatus.init;
+            return true;
+        }
+    }
 }
 
 pragma(inline, true)
@@ -1168,7 +1291,7 @@ private bool runWorkload(
 }
 
 /** Run the regular-Way production microbenchmark. */
-int main(string[] args) @system
+private int runRegularMain(string[] args) @system
 {
     size_t wayCount = 100_000;
     uint iterations = 3;
@@ -1290,4 +1413,1235 @@ int main(string[] args) @system
         return 3;
     }
     return 0;
+}
+
+version (RegularWayStageBenchmark)
+{
+    pragma(inline, true)
+    private bool stageInfoPresent(ref const InfoView info)
+        @safe pure nothrow @nogc
+    {
+        return info.hasVersion || info.hasTimestamp || info.hasChangeset ||
+            info.hasUid || info.hasUser || info.hasVisible;
+    }
+
+    private bool stageParseWay(
+        ref const PrimitiveBlockLayout block,
+        StageWayMessageRef wayRef,
+        StringTableView table,
+        out StageParsedWay parsed,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        parsed = StageParsedWay.init;
+        auto cursor = WireCursor(wayRef.bytes);
+        bool hasId;
+
+        while (!cursor.empty)
+        {
+            FieldHeader field;
+            WireStatus wire;
+            if (!readFieldHeader(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            if (field.number == 1 && field.wireType == WireType.varint)
+            {
+                ulong raw;
+                if (!readVarint64(cursor, raw, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+                parsed.id = cast(long)raw;
+                hasId = true;
+                continue;
+            }
+
+            if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] infoBytes;
+                if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+                {
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+
+                const infoOffset =
+                    wayRef.rawOffset + cursor.offset - infoBytes.length;
+                if (!mergeInfoMessage(
+                    infoBytes,
+                    infoOffset,
+                    parsed.info,
+                    status))
+                    return false;
+                continue;
+            }
+
+            if (!skipFieldValue(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+        }
+
+        if (!hasId)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingWayId,
+                wayRef.rawOffset,
+                1);
+            return false;
+        }
+
+        if (!finalizeInfo(block, table, parsed.info, status))
+            return false;
+
+        if (!validateTags(
+            wayRef.bytes,
+            wayRef.rawOffset,
+            table,
+            parsed.tags,
+            status))
+            return false;
+
+        if (!validateWayRefs(
+            wayRef.bytes,
+            wayRef.rawOffset,
+            parsed.refs,
+            status))
+            return false;
+
+        if (!validateWayLocations(
+            block,
+            wayRef.bytes,
+            wayRef.rawOffset,
+            parsed.refs.refCount,
+            parsed.locations,
+            status))
+            return false;
+
+        status = PbfStatus.init;
+        return true;
+    }
+
+    pragma(inline, true)
+    private bool stageCountPackedUInt32(
+        const(ubyte)[] packedBytes,
+        size_t packedBase,
+        uint fieldNumber,
+        ref size_t count,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        auto packed = WireCursor(packedBytes);
+        while (!packed.empty)
+        {
+            uint ignored;
+            WireStatus wire;
+            if (!readVarint32(packed, ignored, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = fieldNumber;
+                status = PbfStatus.fromTagWire(wire, packedBase);
+                return false;
+            }
+            ++count;
+        }
+        status = PbfStatus.init;
+        return true;
+    }
+
+    pragma(inline, true)
+    private bool stageCountPackedSInt64(
+        const(ubyte)[] packedBytes,
+        size_t packedBase,
+        uint fieldNumber,
+        ref size_t count,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        auto packed = WireCursor(packedBytes);
+        while (!packed.empty)
+        {
+            long ignored;
+            WireStatus wire;
+            if (!readSVarint64(packed, ignored, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = fieldNumber;
+                status = PbfStatus.fromWayWire(wire, packedBase);
+                return false;
+            }
+            ++count;
+        }
+        status = PbfStatus.init;
+        return true;
+    }
+
+    /**
+     * Benchmark-local model of a second pass over an already prevalidated Way.
+     *
+     * Values needed for the public WayView are still reconstructed. The pass
+     * counts already-valid repeated columns while scanning the message, but it
+     * does not repeat StringTable tag validation, checked ref accumulation, or
+     * complete LocationsOnWays accumulation/nanodegree validation. Borrowed
+     * ranges are then built from the counts established on immutable bytes.
+     */
+    private bool stageDecodePrevalidatedWay(
+        ref const PrimitiveBlockLayout block,
+        StageWayMessageRef wayRef,
+        StringTableView table,
+        out WayView way,
+        out size_t tagCount,
+        out size_t refCount,
+        out size_t locationCount,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        way = WayView.init;
+        tagCount = 0;
+        refCount = 0;
+        locationCount = 0;
+
+        auto cursor = WireCursor(wayRef.bytes);
+        bool hasId;
+        long id;
+        InfoView info;
+        size_t latCount;
+        size_t lonCount;
+
+        while (!cursor.empty)
+        {
+            FieldHeader field;
+            WireStatus wire;
+            if (!readFieldHeader(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            if (field.number == 1 && field.wireType == WireType.varint)
+            {
+                ulong raw;
+                if (!readVarint64(cursor, raw, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+                id = cast(long)raw;
+                hasId = true;
+                continue;
+            }
+
+            if (field.number == 2 && field.wireType == WireType.varint)
+            {
+                uint ignored;
+                if (!readVarint32(cursor, ignored, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromTagWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+                ++tagCount;
+                continue;
+            }
+
+            if (field.number == 2 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] packedBytes;
+                if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+                {
+                    status = PbfStatus.fromTagWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+                const packedBase =
+                    wayRef.rawOffset + cursor.offset - packedBytes.length;
+                if (!stageCountPackedUInt32(
+                    packedBytes,
+                    packedBase,
+                    2,
+                    tagCount,
+                    status))
+                    return false;
+                continue;
+            }
+
+            if ((field.number == 8 || field.number == 9 || field.number == 10) &&
+                field.wireType == WireType.varint)
+            {
+                long ignored;
+                if (!readSVarint64(cursor, ignored, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+
+                if (field.number == 8)
+                    ++refCount;
+                else if (field.number == 9)
+                    ++latCount;
+                else
+                    ++lonCount;
+                continue;
+            }
+
+            if ((field.number == 8 || field.number == 9 || field.number == 10) &&
+                field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] packedBytes;
+                if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+                {
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+                const packedBase =
+                    wayRef.rawOffset + cursor.offset - packedBytes.length;
+
+                if (field.number == 8)
+                {
+                    if (!stageCountPackedSInt64(
+                        packedBytes,
+                        packedBase,
+                        8,
+                        refCount,
+                        status))
+                        return false;
+                }
+                else if (field.number == 9)
+                {
+                    if (!stageCountPackedSInt64(
+                        packedBytes,
+                        packedBase,
+                        9,
+                        latCount,
+                        status))
+                        return false;
+                }
+                else
+                {
+                    if (!stageCountPackedSInt64(
+                        packedBytes,
+                        packedBase,
+                        10,
+                        lonCount,
+                        status))
+                        return false;
+                }
+                continue;
+            }
+
+            if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] infoBytes;
+                if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+                {
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+
+                const infoOffset =
+                    wayRef.rawOffset + cursor.offset - infoBytes.length;
+                if (!mergeInfoMessage(
+                    infoBytes,
+                    infoOffset,
+                    info,
+                    status))
+                    return false;
+                continue;
+            }
+
+            if (!skipFieldValue(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+        }
+
+        if (!hasId)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingWayId,
+                wayRef.rawOffset,
+                1);
+            return false;
+        }
+
+        if ((latCount != 0 || lonCount != 0) &&
+            (latCount != refCount || lonCount != refCount))
+        {
+            status = PbfStatus.failure(
+                PbfError.wayLocationColumnLengthMismatch,
+                wayRef.rawOffset,
+                latCount != refCount ? 9 : 10);
+            return false;
+        }
+
+        if (!finalizeInfo(block, table, info, status))
+            return false;
+
+        TagValidationSummary tagSummary;
+        tagSummary.keyCount = tagCount;
+        tagSummary.valueCount = tagCount;
+
+        TagRange tags;
+        if (!buildTagRange(
+            wayRef.bytes,
+            wayRef.rawOffset,
+            table,
+            tagSummary,
+            tags,
+            status))
+            return false;
+
+        WayRefValidationSummary refSummary;
+        refSummary.refCount = refCount;
+        WayRefRange refs;
+        if (!buildWayRefRange(
+            wayRef.bytes,
+            wayRef.rawOffset,
+            refSummary,
+            refs,
+            status))
+            return false;
+
+        WayLocationValidationSummary locationSummary;
+        locationSummary.latCount = latCount;
+        locationSummary.lonCount = lonCount;
+        WayLocationRange locations;
+        if (!buildWayLocationRange(
+            block,
+            wayRef.bytes,
+            wayRef.rawOffset,
+            locationSummary,
+            locations,
+            status))
+            return false;
+
+        locationCount = latCount;
+        way = WayView(
+            id,
+            tags,
+            refs,
+            locations,
+            info,
+            wayRef.bytes,
+            wayRef.rawOffset);
+        status = PbfStatus.init;
+        return true;
+    }
+
+    private StageRun runGroupScan(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        size_t wayCount;
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return StageRun.init;
+            if (!hasWay)
+                break;
+            ++wayCount;
+        }
+
+        const ok = wayCount == workload.group.wayOccurrences;
+        return StageRun(
+            mix(0, cast(ulong)wayCount),
+            wayCount,
+            0,
+            0,
+            0,
+            0,
+            ok);
+    }
+
+    private StageRun runSemanticPreflight(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        size_t wayCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return StageRun.init;
+            if (!hasWay)
+                break;
+
+            StageParsedWay parsed;
+            if (!stageParseWay(
+                workload.block,
+                wayRef,
+                workload.table,
+                parsed,
+                status))
+                return StageRun.init;
+
+            ++wayCount;
+            tagCount += parsed.tags.tagCount;
+            refCount += parsed.refs.refCount;
+            if (parsed.locations.hasLocations)
+                locationCount += parsed.locations.latCount;
+            if (stageInfoPresent(parsed.info))
+                ++infoCount;
+        }
+
+        const ok = wayCount == workload.wayCount &&
+            tagCount == workload.tagCount &&
+            refCount == workload.refCount &&
+            locationCount == workload.locationCount &&
+            infoCount == workload.infoCount;
+        ulong checksum;
+        checksum = mix(checksum, cast(ulong)wayCount);
+        checksum = mix(checksum, cast(ulong)tagCount);
+        checksum = mix(checksum, cast(ulong)refCount);
+        checksum = mix(checksum, cast(ulong)locationCount);
+        checksum = mix(checksum, cast(ulong)infoCount);
+        return StageRun(
+            checksum,
+            wayCount,
+            tagCount,
+            refCount,
+            locationCount,
+            infoCount,
+            ok);
+    }
+
+    private StageRun runPrevalidatedEmission(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        RefSink sink;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return StageRun.init;
+            if (!hasWay)
+                break;
+
+            WayView way;
+            size_t wayTags;
+            size_t wayRefs;
+            size_t wayLocations;
+            if (!stageDecodePrevalidatedWay(
+                workload.block,
+                wayRef,
+                workload.table,
+                way,
+                wayTags,
+                wayRefs,
+                wayLocations,
+                status))
+                return StageRun.init;
+
+            sink.put(way);
+            tagCount += wayTags;
+            refCount += wayRefs;
+            locationCount += wayLocations;
+        }
+
+        const ok = sink.wayCount == workload.wayCount &&
+            tagCount == workload.tagCount &&
+            refCount == workload.refCount &&
+            sink.refCount == workload.refCount &&
+            locationCount == workload.locationCount &&
+            sink.infoCount == workload.infoCount;
+        return StageRun(
+            sink.checksum,
+            sink.wayCount,
+            tagCount,
+            refCount,
+            locationCount,
+            sink.infoCount,
+            ok);
+    }
+
+    private StageRun runFullDecode(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        const decoded = decodeRefs(workload);
+        return StageRun(
+            decoded.checksum,
+            decoded.wayCount,
+            decoded.tagCount,
+            decoded.refCount,
+            decoded.locationCount,
+            decoded.infoCount,
+            decoded.ok);
+    }
+
+    private StageRun runStage(ref const Workload workload, StageKind stage)
+        @safe nothrow @nogc
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return runGroupScan(workload);
+        case StageKind.semanticPreflight:
+            return runSemanticPreflight(workload);
+        case StageKind.prevalidatedEmission:
+            return runPrevalidatedEmission(workload);
+        case StageKind.fullDecode:
+            return runFullDecode(workload);
+        }
+    }
+
+    private ulong expectedStageChecksum(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return mix(0, cast(ulong)workload.wayCount);
+        case StageKind.semanticPreflight:
+            return mix(
+                mix(
+                    mix(
+                        mix(
+                            mix(0, cast(ulong)workload.wayCount),
+                            cast(ulong)workload.tagCount),
+                        cast(ulong)workload.refCount),
+                    cast(ulong)workload.locationCount),
+                cast(ulong)workload.infoCount);
+        case StageKind.prevalidatedEmission:
+        case StageKind.fullDecode:
+            return workload.refsChecksum;
+        }
+    }
+
+    private size_t expectedStageTags(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.groupScan ? 0 : workload.tagCount;
+    }
+
+    private size_t expectedStageRefs(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.groupScan ? 0 : workload.refCount;
+    }
+
+    private size_t expectedStageLocations(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.groupScan ? 0 : workload.locationCount;
+    }
+
+    private size_t expectedStageInfo(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.groupScan ? 0 : workload.infoCount;
+    }
+
+    private bool validateStageRun(
+        ref const Workload workload,
+        StageKind stage,
+        const StageRun run)
+        @safe pure nothrow @nogc
+    {
+        return run.ok &&
+            run.wayCount == workload.wayCount &&
+            run.tagCount == expectedStageTags(workload, stage) &&
+            run.refCount == expectedStageRefs(workload, stage) &&
+            run.locationCount == expectedStageLocations(workload, stage) &&
+            run.infoCount == expectedStageInfo(workload, stage) &&
+            run.checksum == expectedStageChecksum(workload, stage);
+    }
+
+    private bool warmupStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations)
+        @safe nothrow @nogc
+    {
+        foreach (_; 0 .. iterations)
+        {
+            const run = runStage(workload, stage);
+            if (!validateStageRun(workload, stage, run))
+                return false;
+        }
+        return true;
+    }
+
+    private long timeStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        out ulong observableChecksum)
+        @system
+    {
+        auto stopwatch = StopWatch(AutoStart.yes);
+        ulong aggregateChecksum;
+        size_t aggregateWays;
+        size_t aggregateTags;
+        size_t aggregateRefs;
+        size_t aggregateLocations;
+        size_t aggregateInfo;
+        bool ok = true;
+
+        foreach (_; 0 .. iterations)
+        {
+            const run = runStage(workload, stage);
+            aggregateChecksum += run.checksum;
+            aggregateWays += run.wayCount;
+            aggregateTags += run.tagCount;
+            aggregateRefs += run.refCount;
+            aggregateLocations += run.locationCount;
+            aggregateInfo += run.infoCount;
+            ok = ok && run.ok;
+        }
+
+        stopwatch.stop();
+        observableChecksum = aggregateChecksum;
+
+        const aggregate = StageRun(
+            aggregateChecksum,
+            aggregateWays,
+            aggregateTags,
+            aggregateRefs,
+            aggregateLocations,
+            aggregateInfo,
+            ok);
+        const expected = StageRun(
+            expectedStageChecksum(workload, stage) * iterations,
+            workload.wayCount * cast(size_t)iterations,
+            expectedStageTags(workload, stage) * cast(size_t)iterations,
+            expectedStageRefs(workload, stage) * cast(size_t)iterations,
+            expectedStageLocations(workload, stage) * cast(size_t)iterations,
+            expectedStageInfo(workload, stage) * cast(size_t)iterations,
+            true);
+        if (!aggregate.ok ||
+            aggregate.checksum != expected.checksum ||
+            aggregate.wayCount != expected.wayCount ||
+            aggregate.tagCount != expected.tagCount ||
+            aggregate.refCount != expected.refCount ||
+            aggregate.locationCount != expected.locationCount ||
+            aggregate.infoCount != expected.infoCount)
+            return -1;
+
+        return stopwatch.peek.total!"nsecs";
+    }
+
+    private string stageName(StageKind stage) @safe pure nothrow
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return "group-scan";
+        case StageKind.semanticPreflight:
+            return "semantic-preflight";
+        case StageKind.prevalidatedEmission:
+            return "prevalidated-emission";
+        case StageKind.fullDecode:
+            return "full-decode";
+        }
+    }
+
+    private bool parseStage(string name, out StageKind stage)
+        @safe pure nothrow
+    {
+        switch (name)
+        {
+        case "group-scan":
+        case "scan":
+            stage = StageKind.groupScan;
+            return true;
+        case "semantic-preflight":
+        case "preflight":
+            stage = StageKind.semanticPreflight;
+            return true;
+        case "prevalidated-emission":
+        case "emission":
+            stage = StageKind.prevalidatedEmission;
+            return true;
+        case "full-decode":
+        case "full":
+            stage = StageKind.fullDecode;
+            return true;
+        default:
+            stage = StageKind.init;
+            return false;
+        }
+    }
+
+    private bool recordStageSample(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        uint sample,
+        long[] scanTimings,
+        long[] preflightTimings,
+        long[] emissionTimings,
+        long[] fullTimings,
+        ref ulong scanChecksum,
+        ref ulong preflightChecksum,
+        ref ulong emissionChecksum,
+        ref ulong fullChecksum)
+        @system
+    {
+        ulong observed;
+        const elapsed = timeStage(workload, stage, iterations, observed);
+        if (elapsed < 0)
+            return false;
+
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            scanTimings[sample] = elapsed;
+            scanChecksum += observed ^ cast(ulong)sample;
+            break;
+        case StageKind.semanticPreflight:
+            preflightTimings[sample] = elapsed;
+            preflightChecksum += observed ^ cast(ulong)sample;
+            break;
+        case StageKind.prevalidatedEmission:
+            emissionTimings[sample] = elapsed;
+            emissionChecksum += observed ^ cast(ulong)sample;
+            break;
+        case StageKind.fullDecode:
+            fullTimings[sample] = elapsed;
+            fullChecksum += observed ^ cast(ulong)sample;
+            break;
+        }
+        return true;
+    }
+
+    private bool measureAllStages(
+        ref const Workload workload,
+        uint iterations,
+        uint samples,
+        uint warmupIterations,
+        out BenchResult scan,
+        out BenchResult preflight,
+        out BenchResult emission,
+        out BenchResult full)
+        @system
+    {
+        if (!warmupStage(workload, StageKind.groupScan, warmupIterations) ||
+            !warmupStage(workload, StageKind.semanticPreflight, warmupIterations) ||
+            !warmupStage(workload, StageKind.prevalidatedEmission, warmupIterations) ||
+            !warmupStage(workload, StageKind.fullDecode, warmupIterations))
+            return false;
+
+        auto scanTimings = new long[samples];
+        auto preflightTimings = new long[samples];
+        auto emissionTimings = new long[samples];
+        auto fullTimings = new long[samples];
+        ulong scanChecksum;
+        ulong preflightChecksum;
+        ulong emissionChecksum;
+        ulong fullChecksum;
+
+        static immutable StageKind[4][24] orders = [
+            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.fullDecode],
+            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode, StageKind.prevalidatedEmission],
+            [StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.fullDecode],
+            [StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.semanticPreflight],
+            [StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight, StageKind.prevalidatedEmission],
+            [StageKind.groupScan, StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.semanticPreflight],
+            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.fullDecode],
+            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode, StageKind.prevalidatedEmission],
+            [StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.fullDecode],
+            [StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.groupScan],
+            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan, StageKind.prevalidatedEmission],
+            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.groupScan],
+            [StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode],
+            [StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight],
+            [StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode],
+            [StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan],
+            [StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight],
+            [StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan],
+            [StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight, StageKind.prevalidatedEmission],
+            [StageKind.fullDecode, StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.semanticPreflight],
+            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan, StageKind.prevalidatedEmission],
+            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.groupScan],
+            [StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.semanticPreflight],
+            [StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.groupScan],
+        ];
+
+        foreach (sample; 0 .. samples)
+        {
+            const order = orders[sample % orders.length];
+            foreach (stage; order)
+            {
+                if (!recordStageSample(
+                    workload,
+                    stage,
+                    iterations,
+                    sample,
+                    scanTimings,
+                    preflightTimings,
+                    emissionTimings,
+                    fullTimings,
+                    scanChecksum,
+                    preflightChecksum,
+                    emissionChecksum,
+                    fullChecksum))
+                    return false;
+            }
+        }
+
+        scan = summarize(scanTimings, scanChecksum);
+        preflight = summarize(preflightTimings, preflightChecksum);
+        emission = summarize(emissionTimings, emissionChecksum);
+        full = summarize(fullTimings, fullChecksum);
+        return scan.ok && preflight.ok && emission.ok && full.ok;
+    }
+
+    private BenchResult measureSingleStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        uint samples,
+        uint warmupIterations)
+        @system
+    {
+        if (!warmupStage(workload, stage, warmupIterations))
+            return BenchResult.init;
+
+        auto timings = new long[samples];
+        ulong observableChecksum;
+        foreach (sample; 0 .. samples)
+        {
+            ulong observed;
+            const elapsed = timeStage(workload, stage, iterations, observed);
+            if (elapsed < 0)
+                return BenchResult.init;
+            timings[sample] = elapsed;
+            observableChecksum += observed ^ cast(ulong)sample;
+        }
+        return summarize(timings, observableChecksum);
+    }
+
+    private void reportStage(
+        StageKind stage,
+        ref const Workload workload,
+        uint iterations,
+        const BenchResult result)
+    {
+        const totalWays = cast(double)workload.wayCount * iterations;
+        const totalGroupBytes = cast(double)workload.group.raw.length * iterations;
+        const medianSeconds = cast(double)result.timings.medianNanoseconds /
+            1_000_000_000.0;
+        const medianNsPerWay = cast(double)result.timings.medianNanoseconds / totalWays;
+        const p10NsPerWay = cast(double)result.timings.p10Nanoseconds / totalWays;
+        const p90NsPerWay = cast(double)result.timings.p90Nanoseconds / totalWays;
+        const minNsPerWay = cast(double)result.timings.minimumNanoseconds / totalWays;
+        const maxNsPerWay = cast(double)result.timings.maximumNanoseconds / totalWays;
+        const megaWaysPerSecond = totalWays / medianSeconds / 1_000_000.0;
+        const mebiGroupBytesPerSecond =
+            totalGroupBytes / medianSeconds / (1024.0 * 1024.0);
+        const spreadPercent = result.timings.medianNanoseconds == 0
+            ? 0.0
+            : cast(double)(
+                result.timings.p90Nanoseconds - result.timings.p10Nanoseconds) /
+                result.timings.medianNanoseconds * 100.0;
+
+        writefln(
+            "%-13s %-21s p50=%8.3f ns/way %7.2f Mway/s %8.2f MiB/s(group)  " ~
+            "p10=%8.3f p90=%8.3f Δ80=%5.1f%%  min=%8.3f max=%8.3f  checksum=%016x",
+            workload.name,
+            stageName(stage),
+            medianNsPerWay,
+            megaWaysPerSecond,
+            mebiGroupBytesPerSecond,
+            p10NsPerWay,
+            p90NsPerWay,
+            spreadPercent,
+            minNsPerWay,
+            maxNsPerWay,
+            result.checksum);
+    }
+
+    private void reportDerivedStageCosts(
+        ref const Workload workload,
+        uint iterations,
+        const BenchResult scan,
+        const BenchResult preflight,
+        const BenchResult emission,
+        const BenchResult full)
+    {
+        const totalWays = cast(double)workload.wayCount * iterations;
+        const scanNs = cast(double)scan.timings.medianNanoseconds / totalWays;
+        const preflightNs = cast(double)preflight.timings.medianNanoseconds / totalWays;
+        const emissionNs = cast(double)emission.timings.medianNanoseconds / totalWays;
+        const fullNs = cast(double)full.timings.medianNanoseconds / totalWays;
+        const candidateNs = preflightNs + emissionNs;
+        const potentialNs = fullNs - candidateNs;
+        const potentialPercent = fullNs == 0.0
+            ? 0.0
+            : potentialNs / fullNs * 100.0;
+
+        writefln(
+            "%-13s derived: parse+validate≈%8.3f  current-post≈%8.3f  " ~
+            "prevalidated-emission=%8.3f  candidate-total≈%8.3f ns/way  " ~
+            "potential≈%+8.3f (%+5.1f%%)",
+            workload.name,
+            preflightNs - scanNs,
+            fullNs - preflightNs,
+            emissionNs,
+            candidateNs,
+            potentialNs,
+            potentialPercent);
+    }
+
+    private bool runStageWorkload(
+        ref const Workload workload,
+        bool allStages,
+        StageKind selectedStage,
+        uint iterations,
+        uint samples,
+        uint warmupIterations)
+        @system
+    {
+        writefln(
+            "profile=%s ways=%s refs=%s refs/way=%.3f tags=%s tags/way=%.3f " ~
+            "info-ways=%s locations=%s locations/way=%.3f group-bytes=%s",
+            workload.name,
+            workload.wayCount,
+            workload.refCount,
+            workload.wayCount == 0
+                ? 0.0
+                : cast(double)workload.refCount / workload.wayCount,
+            workload.tagCount,
+            workload.wayCount == 0
+                ? 0.0
+                : cast(double)workload.tagCount / workload.wayCount,
+            workload.infoCount,
+            workload.locationCount,
+            workload.wayCount == 0
+                ? 0.0
+                : cast(double)workload.locationCount / workload.wayCount,
+            workload.group.raw.length);
+
+        if (allStages)
+        {
+            BenchResult scan;
+            BenchResult preflight;
+            BenchResult emission;
+            BenchResult full;
+            if (!measureAllStages(
+                workload,
+                iterations,
+                samples,
+                warmupIterations,
+                scan,
+                preflight,
+                emission,
+                full))
+                return false;
+
+            reportStage(StageKind.groupScan, workload, iterations, scan);
+            reportStage(StageKind.semanticPreflight, workload, iterations, preflight);
+            reportStage(StageKind.prevalidatedEmission, workload, iterations, emission);
+            reportStage(StageKind.fullDecode, workload, iterations, full);
+            reportDerivedStageCosts(
+                workload,
+                iterations,
+                scan,
+                preflight,
+                emission,
+                full);
+            return true;
+        }
+
+        const result = measureSingleStage(
+            workload,
+            selectedStage,
+            iterations,
+            samples,
+            warmupIterations);
+        if (!result.ok)
+            return false;
+        reportStage(selectedStage, workload, iterations, result);
+        return true;
+    }
+
+    private int runStageMain(string[] args) @system
+    {
+        size_t wayCount = 20_000;
+        uint iterations = 3;
+        uint samples = 30;
+        uint warmupIterations = 2;
+        string selectedProfile = "all";
+        string selectedStageName = "all";
+
+        auto options = getopt(
+            args,
+            "ways", "Regular Ways generated for each workload", &wayCount,
+            "iterations", "Complete stage runs per timed sample", &iterations,
+            "samples", "Timed samples; robust quantiles are reported", &samples,
+            "warmup", "Untimed stage runs before measurement", &warmupIterations,
+            "profile", "all|ref-only|typical|typical-info|locations|rich", &selectedProfile,
+            "stage", "all|group-scan|semantic-preflight|prevalidated-emission|full-decode", &selectedStageName);
+
+        if (options.helpWanted)
+        {
+            defaultGetoptPrinter(
+                "d-osm regular Way stage benchmark",
+                options.options);
+            return 0;
+        }
+
+        if (wayCount == 0 || iterations == 0 || samples == 0)
+        {
+            stderr.writeln("ways, iterations and samples must all be greater than zero");
+            return 2;
+        }
+        if (samples > 100_000)
+        {
+            stderr.writeln("samples is unreasonably large");
+            return 2;
+        }
+
+        const allStages = selectedStageName == "all";
+        StageKind selectedStage;
+        if (!allStages && !parseStage(selectedStageName, selectedStage))
+        {
+            stderr.writefln("unknown stage: %s", selectedStageName);
+            return 2;
+        }
+
+        writeln("d-osm regular Way stage benchmark");
+        writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
+        writefln(
+            "ways/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",
+            wayCount,
+            iterations,
+            samples,
+            warmupIterations);
+        if (allStages)
+            writeln("ordering: rotating all 24 permutations of the four stages");
+        else
+            writefln("ordering: single stage (%s)", selectedStageName);
+        writeln("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50");
+        writeln("group-scan: benchmark-local mirror of private WayMessageCursor traversal");
+        writeln("semantic-preflight: benchmark-local mirror of the current private first parse/validation pass");
+        writeln("prevalidated-emission: benchmark-local second pass that rebuilds borrowed ranges while skipping duplicate tag/ref/location semantic validation");
+        writeln("full-decode: production decodeWays with the refs sink");
+        writeln("derived values subtract medians and are diagnostic, not independently timed stages");
+        writeln("excluded: workload generation, block/group layout, StringTable indexing, sorting and reporting");
+        writeln();
+
+        static immutable WorkloadProfile[5] allProfiles = [
+            WorkloadProfile.refOnly,
+            WorkloadProfile.typical,
+            WorkloadProfile.typicalInfo,
+            WorkloadProfile.locations,
+            WorkloadProfile.rich,
+        ];
+
+        if (selectedProfile == "all")
+        {
+            foreach (profile; allProfiles)
+            {
+                Workload workload;
+                if (!buildWorkload(profile, wayCount, workload))
+                {
+                    stderr.writefln(
+                        "failed to build/validate profile: %s",
+                        profileName(profile));
+                    return 3;
+                }
+                if (!runStageWorkload(
+                    workload,
+                    allStages,
+                    selectedStage,
+                    iterations,
+                    samples,
+                    warmupIterations))
+                {
+                    stderr.writefln(
+                        "stage benchmark consistency failure: %s",
+                        workload.name);
+                    return 3;
+                }
+                writeln();
+            }
+            return 0;
+        }
+
+        WorkloadProfile profile;
+        if (!parseProfile(selectedProfile, profile))
+        {
+            stderr.writefln("unknown profile: %s", selectedProfile);
+            return 2;
+        }
+
+        Workload workload;
+        if (!buildWorkload(profile, wayCount, workload))
+        {
+            stderr.writefln(
+                "failed to build/validate profile: %s",
+                selectedProfile);
+            return 3;
+        }
+        if (!runStageWorkload(
+            workload,
+            allStages,
+            selectedStage,
+            iterations,
+            samples,
+            warmupIterations))
+        {
+            stderr.writefln(
+                "stage benchmark consistency failure: %s",
+                workload.name);
+            return 3;
+        }
+        return 0;
+    }
+}
+
+version (RegularWayStageBenchmark)
+{
+    int main(string[] args) @system
+    {
+        return runStageMain(args);
+    }
+}
+else
+{
+    int main(string[] args) @system
+    {
+        return runRegularMain(args);
+    }
 }

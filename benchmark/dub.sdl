@@ -69,3 +69,13 @@ configuration "regular-ways" {
     importPaths "micro"
     mainSourceFile "micro/regular_ways.d"
 }
+
+configuration "regular-way-stages" {
+    targetType "executable"
+    targetName "d-osm-bench-regular-way-stages"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/regular_ways.d"
+    versions "RegularWayStageBenchmark"
+}
