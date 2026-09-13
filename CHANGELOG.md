@@ -7,6 +7,11 @@ stable release.
 
 ## Unreleased
 
+- Added allocation-free DenseInfo decoding with independently optional metadata columns, packed/unpacked compatibility, checked delta/timestamp arithmetic, StringTable-validated usernames, and explicit presence semantics.
+- Added compile-time-specialized DenseNodes emission, a scalar sink fast path for tag-/metadata-free groups, and targeted hot-path inlining without weakening preflight validation.
+- Added a specialized DenseNodes dispatch boundary that keeps all four tag/DenseInfo variants out of the public decoder while preserving inlining inside the selected hot loop.
+- Added semantic C++ DenseNodes reference, coordinate-stage and varint-core performance diagnostics, and documented the 2026-09-13 LDC baseline.
+
 - Added Ddoc/DDox documentation policy and documented the initial wire API.
 - Ignore the generated `d-osm-test-library` dub test runner.
 - Added the first reproducible varint microbenchmark with pointer-vs-slice comparison and DMD/LDC runner.

@@ -322,3 +322,65 @@ is close or thermally noisy.
 libosmium/protozero remains the separate production-implementation reference.
 Its results should not be interpreted as a pure D-versus-C++ language result
 unless the measured semantic work is first shown to be equivalent.
+
+## DenseNodes reference baseline (2026-09-13)
+
+DenseNodes is a production hot path and has a dedicated semantic reference
+benchmark. The comparison must perform equivalent work: complete structural
+preflight, checked delta accumulation, exact coordinate conversion, StringTable
+validation, and the same sink/checksum semantics. A faster decoder that omits
+these checks is not an equivalent reference.
+
+Reference environment for this baseline:
+
+```text
+D compiler:       LDC 1.41.0 (DMD frontend 2.111.0, LLVM 19.1.7)
+C++ compiler:     Clang 21.1.8
+CPU protocol:     benchmark pinned to logical CPU 4
+SMT protocol:     sibling CPU 10 offline during measurement
+D workload:       200,000 nodes/profile, 5 iterations/sample,
+                  30 samples, 2 warm-up iterations
+Statistic:        p50 ns/node; p10/p90 and Delta80 retained for stability checks
+```
+
+The repository does not hard-code an LLVMgold location. LTO is an optional
+machine-local benchmark choice; when required, supply it through `DFLAGS`, for
+example on a host where the plugin path is known:
+
+```text
+DFLAGS="-flto=full -flto-binary=/path/to/LLVMgold.so" ./run-dense-nodes.sh ...
+```
+
+Final D baseline with the specialized dispatch boundary:
+
+| Profile / sink | D p50 ns/node | C++ p50 ns/node | D vs C++ |
+| --- | ---: | ---: | ---: |
+| tagless / coordinates | 27.310 | 16.311 | +67.4% |
+| tagless / tag IDs | 27.592 | 15.356 | +79.7% |
+| tagless / tag bytes | 26.580 | 15.455 | +72.0% |
+| typical / coordinates | 80.375 | 76.895 | +4.5% |
+| typical / tag IDs | 102.187 | 99.971 | +2.2% |
+| typical / tag bytes | 112.276 | 107.988 | +4.0% |
+| rich / coordinates | 160.502 | 195.440 | -17.9% |
+| rich / tag IDs | 230.828 | 291.842 | -20.9% |
+| rich / tag bytes | 270.930 | 326.731 | -17.1% |
+| mixed / coordinates | 70.449 | 70.248 | +0.3% |
+| mixed / tag IDs | 87.987 | 91.776 | -4.1% |
+| mixed / tag bytes | 95.380 | 97.781 | -2.5% |
+
+Negative percentages mean that D is faster. The realistic tagged profiles are
+therefore at C++ reference performance or better overall; the deliberately
+minimal tagless case remains slower and is tracked as a known microbenchmark
+outlier rather than being allowed to distort the general decoder architecture.
+
+The final code-generation boundary is deliberate: `decodeDenseNodes` performs
+validation and runtime capability selection, then calls a non-inlined
+compile-time-specialized dispatch wrapper. The selected `emitDenseNodes`
+specialization is inlined into that wrapper. This prevents all four
+`HasTags`/`HasInfo` variants from being expanded into one dispatcher while
+retaining full optimization of the selected per-node hot loop.
+
+Permanent diagnostic microbenchmarks retain the coordinate-stage and varint-core
+probes because they isolate reusable wire/coordinate costs. The temporary
+E0--E4 tagless breakdown and disassembly probe are not part of the maintained
+benchmark suite.
