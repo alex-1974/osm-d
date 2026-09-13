@@ -206,3 +206,75 @@ The initial C++ reference intentionally refuses DenseInfo-bearing workloads.
 Once the D benchmark gains metadata profiles, the C++ reference must implement
 the same DenseInfo preflight and emission contract before those profiles may be
 compared.
+
+## Regular Node microbenchmark
+
+`micro/regular_nodes.d` measures the production `decodeNodes` path after
+PrimitiveBlock/PrimitiveGroup layout discovery and StringTable indexing have
+already completed. The timed path deliberately retains the current correctness
+architecture: every regular Node in the group is semantically preflighted before
+any sink call, then the group is parsed a second time for TagRange construction
+and NodeView emission.
+
+Run both installed reference compilers:
+
+```bash
+./benchmark/run-regular-nodes.sh
+```
+
+For architecture decisions, use the same controlled environment as DenseNodes.
+For the primary LDC baseline on the current development laptop:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-regular-nodes.sh
+```
+
+When LDC-specific `DFLAGS` such as full LTO are supplied, select `ldc2`
+explicitly so those flags are not passed to DMD.
+
+The deterministic synthetic profiles are:
+
+- `tagless`: no tags and no Info metadata;
+- `typical`: two tags per Node, no Info metadata;
+- `typical-info`: two tags plus version/timestamp/changeset/uid/user/visible;
+- `rich`: eight tags plus the same Info metadata.
+
+Regular Node IDs and coordinates are direct `sint64` values rather than DenseNodes
+deltas. The generated values intentionally have realistic multi-byte varint
+widths; coordinates are converted by the production granularity/offset logic.
+Tags use canonical packed `keys` and `vals` arrays. Metadata uses one canonical
+Info occurrence per metadata-bearing Node; protobuf merge/alternate-wire-form
+coverage remains a correctness-test concern rather than a benchmark workload.
+
+The sink paths match the DenseNodes benchmark:
+
+- `coordinates`: consume ID and exact nanodegree coordinates;
+- `tag-ids`: additionally traverse every tag and consume StringTable IDs;
+- `tag-bytes`: additionally touch borrowed key/value bytes.
+
+For metadata-bearing profiles every sink also consumes the decoded Info fields
+and borrowed username bytes. This keeps metadata observable without adding a
+fourth sink path.
+
+When all three paths are measured in one process, sample order rotates through
+all six permutations. Reported `MiB/s(group)` is serialized in-memory
+PrimitiveGroup throughput, not compressed-file or end-to-end PBF throughput.
+
+Examples:
+
+```bash
+./benchmark/run-regular-nodes.sh --profile=tagless --path=coordinates
+./benchmark/run-regular-nodes.sh --profile=typical-info --path=all
+./benchmark/run-regular-nodes.sh --nodes=200000 --iterations=3 --samples=40
+```
+
+Workload generation, structural layout decoding, StringTable index allocation,
+initial correctness validation, sorting and reporting are outside the timed
+region. The initial benchmark is a baseline for commit `eab2f9d`; it must not
+introduce a scalar fast path, cached first-pass representation or specialized
+regular-Node emitter. Those are separate architecture changes that require
+measurement against this baseline.

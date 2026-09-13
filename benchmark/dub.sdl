@@ -24,6 +24,15 @@ configuration "dense-nodes" {
     mainSourceFile "micro/dense_nodes.d"
 }
 
+configuration "regular-nodes" {
+    targetType "executable"
+    targetName "d-osm-bench-regular-nodes"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/regular_nodes.d"
+}
+
 configuration "dense-coordinate-stages" {
     targetType "executable"
     targetName "d-osm-bench-dense-coordinate-stages"
