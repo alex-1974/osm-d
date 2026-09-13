@@ -682,11 +682,15 @@ struct DecodeSummary {
 struct CoordinateSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
-    void put(DenseNodeView node) noexcept {
-        checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
-        checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
-        checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
+    void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
+                                std::int64_t lon_nano) noexcept {
+        checksum = mix(checksum, static_cast<std::uint64_t>(id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lat_nano));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lon_nano));
         ++node_count;
+    }
+    void put(DenseNodeView node) noexcept {
+        put_dense_node_scalars(node.id, node.lat_nano, node.lon_nano);
     }
 };
 
@@ -694,7 +698,14 @@ struct TagIdSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
-    void put(DenseNodeView node) noexcept {
+    void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
+                                std::int64_t lon_nano) noexcept {
+        checksum = mix(checksum, static_cast<std::uint64_t>(id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lat_nano));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lon_nano));
+        ++node_count;
+    }
+    void put(DenseNodeView& node) noexcept {
         checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
@@ -714,7 +725,14 @@ struct TagByteSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
-    void put(DenseNodeView node) noexcept {
+    void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
+                                std::int64_t lon_nano) noexcept {
+        checksum = mix(checksum, static_cast<std::uint64_t>(id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lat_nano));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lon_nano));
+        ++node_count;
+    }
+    void put(DenseNodeView& node) noexcept {
         checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
@@ -740,6 +758,95 @@ struct TagByteSink {
     }
 };
 
+template <bool HasTags, typename Sink>
+bool emit_dense_nodes(const BlockLayout& block, const GroupLayout& group,
+                      const StringTableView& table,
+                      const DenseTagValidationSummary& tag_validation,
+                      Sink& sink, DecodeSummary& summary) noexcept {
+    if constexpr (HasTags) {
+        DenseTagNodeCursor tag_nodes(group, table);
+        DenseColumnCursor ids(group.raw, 1);
+        DenseColumnCursor lats(group.raw, 8);
+        DenseColumnCursor lons(group.raw, 9);
+
+        std::int64_t id = 0, lat = 0, lon = 0;
+        for (std::size_t i = 0; i < group.dense.node_count; ++i) {
+            std::int64_t id_delta = 0, lat_delta = 0, lon_delta = 0;
+            bool has_id = false, has_lat = false, has_lon = false;
+            if (!ids.next(id_delta, has_id) || !lats.next(lat_delta, has_lat) ||
+                !lons.next(lon_delta, has_lon)) return false;
+            if (!has_id || !has_lat || !has_lon) return false;
+
+            std::int64_t next_id = 0, next_lat = 0, next_lon = 0;
+            if (!checked_add(id, id_delta, next_id) ||
+                !checked_add(lat, lat_delta, next_lat) ||
+                !checked_add(lon, lon_delta, next_lon)) return false;
+            id = next_id; lat = next_lat; lon = next_lon;
+
+            std::int64_t lat_nano = 0, lon_nano = 0;
+            const auto factor = static_cast<std::int64_t>(block.granularity);
+            if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
+                !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
+
+            DenseTagRange tags;
+            if (!tag_nodes.next_node(tags)) return false;
+            summary.tag_count += tags.length();
+            DenseNodeView node{id, lat_nano, lon_nano, tags};
+            sink.put(node);
+            ++summary.node_count;
+        }
+
+        std::int64_t extra = 0;
+        bool has_extra = false;
+        if (!ids.next(extra, has_extra) || has_extra) return false;
+        if (!lats.next(extra, has_extra) || has_extra) return false;
+        if (!lons.next(extra, has_extra) || has_extra) return false;
+        if (!tag_nodes.finish()) return false;
+        return summary.tag_count == tag_validation.tag_count;
+    } else {
+        DenseColumnCursor ids(group.raw, 1);
+        DenseColumnCursor lats(group.raw, 8);
+        DenseColumnCursor lons(group.raw, 9);
+
+        std::int64_t id = 0, lat = 0, lon = 0;
+        for (std::size_t i = 0; i < group.dense.node_count; ++i) {
+            std::int64_t id_delta = 0, lat_delta = 0, lon_delta = 0;
+            bool has_id = false, has_lat = false, has_lon = false;
+            if (!ids.next(id_delta, has_id) || !lats.next(lat_delta, has_lat) ||
+                !lons.next(lon_delta, has_lon)) return false;
+            if (!has_id || !has_lat || !has_lon) return false;
+
+            std::int64_t next_id = 0, next_lat = 0, next_lon = 0;
+            if (!checked_add(id, id_delta, next_id) ||
+                !checked_add(lat, lat_delta, next_lat) ||
+                !checked_add(lon, lon_delta, next_lon)) return false;
+            id = next_id; lat = next_lat; lon = next_lon;
+
+            std::int64_t lat_nano = 0, lon_nano = 0;
+            const auto factor = static_cast<std::int64_t>(block.granularity);
+            if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
+                !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
+
+            if constexpr (requires {
+                sink.put_dense_node_scalars(id, lat_nano, lon_nano);
+            }) {
+                sink.put_dense_node_scalars(id, lat_nano, lon_nano);
+            } else {
+                DenseNodeView node{id, lat_nano, lon_nano, DenseTagRange{}};
+                sink.put(node);
+            }
+            ++summary.node_count;
+        }
+
+        std::int64_t extra = 0;
+        bool has_extra = false;
+        if (!ids.next(extra, has_extra) || has_extra) return false;
+        if (!lats.next(extra, has_extra) || has_extra) return false;
+        if (!lons.next(extra, has_extra) || has_extra) return false;
+        return summary.tag_count == tag_validation.tag_count;
+    }
+}
+
 template <typename Sink>
 bool decode_dense_nodes(const BlockLayout& block, const GroupLayout& group,
                         const StringTableView& table, Sink& sink,
@@ -760,54 +867,20 @@ bool decode_dense_nodes(const BlockLayout& block, const GroupLayout& group,
             !checked_mul_add(block.lon_offset, factor, group.dense.max_lon, ignored)) return false;
     }
 
-    // Current comparison workloads carry no DenseInfo, matching the existing D
-    // benchmark profiles. Refuse accidental asymmetric work instead of silently
-    // comparing different semantics.
+    // Current comparison workloads carry no DenseInfo. Refuse accidental
+    // asymmetric work until both reference implementations benchmark the same
+    // DenseInfo profiles.
     if (group.dense.has_dense_info) return false;
 
     DenseTagValidationSummary tag_validation;
     if (!validate_dense_tags(group, table, tag_validation)) return false;
 
-    EmptyDenseInfoNodeCursor info_nodes(group.dense.node_count);
-    DenseTagNodeCursor tag_nodes(group, table);
-    DenseColumnCursor ids(group.raw, 1);
-    DenseColumnCursor lats(group.raw, 8);
-    DenseColumnCursor lons(group.raw, 9);
-
-    std::int64_t id = 0, lat = 0, lon = 0;
-    for (std::size_t i = 0; i < group.dense.node_count; ++i) {
-        std::int64_t id_delta = 0, lat_delta = 0, lon_delta = 0;
-        bool has_id = false, has_lat = false, has_lon = false;
-        if (!ids.next(id_delta, has_id) || !lats.next(lat_delta, has_lat) ||
-            !lons.next(lon_delta, has_lon)) return false;
-        if (!has_id || !has_lat || !has_lon) return false;
-
-        std::int64_t next_id = 0, next_lat = 0, next_lon = 0;
-        if (!checked_add(id, id_delta, next_id) ||
-            !checked_add(lat, lat_delta, next_lat) ||
-            !checked_add(lon, lon_delta, next_lon)) return false;
-        id = next_id; lat = next_lat; lon = next_lon;
-
-        std::int64_t lat_nano = 0, lon_nano = 0;
-        if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
-            !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
-
-        DenseTagRange tags;
-        if (!tag_nodes.next_node(tags)) return false;
-        if (!info_nodes.next_node()) return false;
-
-        summary.tag_count += tags.length();
-        sink.put(DenseNodeView{id, lat_nano, lon_nano, tags});
-        ++summary.node_count;
+    if (tag_validation.tag_count != 0) {
+        return emit_dense_nodes<true>(
+            block, group, table, tag_validation, sink, summary);
     }
-
-    std::int64_t extra = 0;
-    bool has_extra = false;
-    if (!ids.next(extra, has_extra) || has_extra) return false;
-    if (!lats.next(extra, has_extra) || has_extra) return false;
-    if (!lons.next(extra, has_extra) || has_extra) return false;
-    if (!tag_nodes.finish() || !info_nodes.finish()) return false;
-    return summary.tag_count == tag_validation.tag_count;
+    return emit_dense_nodes<false>(
+        block, group, table, tag_validation, sink, summary);
 }
 
 enum class WorkloadProfile { tagless, typical, rich, mixed };

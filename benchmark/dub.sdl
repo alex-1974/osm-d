@@ -23,3 +23,21 @@ configuration "dense-nodes" {
     importPaths "micro"
     mainSourceFile "micro/dense_nodes.d"
 }
+
+configuration "dense-coordinate-stages" {
+    targetType "executable"
+    targetName "d-osm-bench-dense-coordinate-stages"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/dense_coordinate_stages.d"
+}
+
+configuration "dense-varint-core" {
+    targetType "executable"
+    targetName "d-osm-bench-dense-varint-core"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/dense_varint_core.d"
+}

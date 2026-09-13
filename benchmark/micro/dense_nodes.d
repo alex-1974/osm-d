@@ -99,6 +99,14 @@ private struct CoordinateSink
     ulong checksum;
     size_t nodeCount;
 
+    void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
+    {
+        checksum = mix(checksum, cast(ulong)id);
+        checksum = mix(checksum, cast(ulong)latNano);
+        checksum = mix(checksum, cast(ulong)lonNano);
+        ++nodeCount;
+    }
+
     void put(DenseNodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
@@ -114,7 +122,15 @@ private struct TagIdSink
     size_t nodeCount;
     size_t tagCount;
 
-    void put(DenseNodeView node) @safe nothrow @nogc
+    void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
+    {
+        checksum = mix(checksum, cast(ulong)id);
+        checksum = mix(checksum, cast(ulong)latNano);
+        checksum = mix(checksum, cast(ulong)lonNano);
+        ++nodeCount;
+    }
+
+    void put(scope ref DenseNodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
@@ -140,7 +156,15 @@ private struct TagByteSink
     size_t nodeCount;
     size_t tagCount;
 
-    void put(DenseNodeView node) @safe nothrow @nogc
+    void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
+    {
+        checksum = mix(checksum, cast(ulong)id);
+        checksum = mix(checksum, cast(ulong)latNano);
+        checksum = mix(checksum, cast(ulong)lonNano);
+        ++nodeCount;
+    }
+
+    void put(scope ref DenseNodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
