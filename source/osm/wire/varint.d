@@ -104,31 +104,28 @@ bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
 }
 
 /**
- * Decode one unsigned 32-bit protobuf varint.
+ * Decode one protobuf 32-bit varint value.
+ *
+ * Protobuf scalar parsing consumes a complete legal 64-bit varint and keeps
+ * the low 32 bits for 32-bit integer field types. This deliberately differs
+ * from length/size decoding, where truncation would be unsafe.
  *
  * Params:
  *   cursor = Cursor positioned at the first byte of the varint.
- *   value = Receives the decoded value on success.
+ *   value = Receives the low 32 bits of the decoded wire value.
  *   status = Receives success or a wire-decoding failure.
  *
  * Returns:
- *   `true` when the encoded value fits in `uint`; `false` otherwise.
+ *   `true` for every legal protobuf varint; `false` only when the underlying
+ *   64-bit varint is malformed or truncated.
  */
 bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
     @safe nothrow @nogc
 {
-    const start = cursor.offset;
     ulong wide;
     if (!readVarint64(cursor, wide, status))
     {
         value = 0;
-        return false;
-    }
-
-    if (wide > uint.max)
-    {
-        value = 0;
-        status = WireStatus.failure(WireError.varintOverflow, start);
         return false;
     }
 
@@ -171,8 +168,11 @@ bool readSVarint64(ref WireCursor cursor, out long value, out WireStatus status)
  *   status = Receives success or a wire-decoding failure.
  *
  * Returns:
- *   `true` on success; `false` if the underlying varint is invalid or exceeds
- *   the supported 32-bit encoded width.
+ *   `true` on success; `false` only if the underlying 64-bit varint is invalid.
+ *
+ * Notes:
+ *   As for protobuf generated parsers, over-wide legal varints are truncated
+ *   to 32 bits before ZigZag decoding.
  */
 bool readSVarint32(ref WireCursor cursor, out int value, out WireStatus status)
     @safe nothrow @nogc
@@ -226,6 +226,28 @@ unittest
     auto b = WireCursor(overflow);
     assert(!readVarint64(b, value, status));
     assert(status.error == WireError.varintOverflow);
+}
+
+unittest
+{
+    // Protobuf 32-bit scalar reads consume a legal 64-bit varint and truncate
+    // the high bits, matching generated parser semantics.
+    WireStatus status;
+
+    const(ubyte)[] wide = [
+        0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x01
+    ];
+
+    uint u32;
+    auto a = WireCursor(wide);
+    assert(readVarint32(a, u32, status));
+    assert(status.ok && u32 == uint.max && a.empty);
+
+    int s32;
+    auto b = WireCursor(wide);
+    assert(readSVarint32(b, s32, status));
+    assert(status.ok && s32 == int.min && b.empty);
 }
 
 unittest
