@@ -48,6 +48,7 @@ struct StringTableView
     const(StringRef)[] entries;
 
     /** Returns the number of indexed strings. */
+    pragma(inline, true)
     @property size_t length() const @safe pure nothrow @nogc
     {
         return entries.length;
@@ -69,6 +70,7 @@ struct StringTableView
      * Returns:
      *   `true` for an in-range valid StringRef; `false` otherwise.
      */
+    pragma(inline, true)
     bool get(size_t index, out const(ubyte)[] value) const
         @safe nothrow @nogc
     {

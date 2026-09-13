@@ -147,6 +147,7 @@ bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
  * Returns:
  *   `true` on success; `false` if the underlying varint is invalid.
  */
+pragma(inline, true)
 bool readSVarint64(ref WireCursor cursor, out long value, out WireStatus status)
     @safe nothrow @nogc
 {

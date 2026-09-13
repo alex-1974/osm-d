@@ -69,18 +69,21 @@ private:
 
 public:
     /** Returns `true` when no tag remains in this node. */
+    pragma(inline, true)
     @property bool empty() const @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of tags not yet consumed from this range. */
+    pragma(inline, true)
     @property size_t length() const @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current validated tag. The range must be non-empty. */
+    pragma(inline, true)
     @property DenseTagView front() const @safe nothrow @nogc
     in (!empty)
     {
@@ -88,6 +91,7 @@ public:
     }
 
     /** Advance to the next validated tag in this node. */
+    pragma(inline, true)
     void popFront() @safe nothrow @nogc
     in (!empty)
     {
@@ -186,6 +190,7 @@ public:
      * Returns:
      *   `true` when one node range was produced; `false` otherwise.
      */
+    pragma(inline, true)
     bool nextNode(out DenseTagRange tags, out PbfStatus status)
         @safe nothrow @nogc
     {
@@ -266,6 +271,7 @@ public:
      * Returns:
      *   `true` when the cursor is exactly exhausted; `false` otherwise.
      */
+    pragma(inline, true)
     bool finish(out PbfStatus status) @safe nothrow @nogc
     {
         if (_remainingNodes != 0)
@@ -398,6 +404,7 @@ bool validateDenseTags(
     return true;
 }
 
+pragma(inline, true)
 private bool validateStringId(
     ulong raw,
     size_t offset,
@@ -428,6 +435,7 @@ private bool validateStringId(
     return true;
 }
 
+pragma(inline, true)
 private bool decodeValidatedPair(
     ref KeysValsCursor stream,
     StringTableView table,
@@ -493,6 +501,7 @@ public:
         return _lastValueOffset;
     }
 
+    pragma(inline, true)
     bool next(out ulong value, out bool hasValue, out PbfStatus status)
         @safe nothrow @nogc
     {

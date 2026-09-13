@@ -73,8 +73,19 @@ struct DenseNodeDecodeSummary
  * invalid string IDs, or arithmetic overflow cannot be discovered only after a
  * node prefix was already emitted.
  *
- * The sink must provide `void put(DenseNodeView)` and itself satisfy the
+ * The sink must provide a compatible `put` overload and itself satisfy the
  * `@safe nothrow @nogc` contract required by this function instantiation.
+ * Performance-sensitive sinks that consume the mutable tag input range should
+ * accept `scope ref DenseNodeView` so the callback-scoped borrowed view is not
+ * copied. The view is intentionally non-const because advancing
+ * `DenseTagRange` mutates its cursor state; an existing by-value
+ * `put(DenseNodeView)` remains source-compatible.
+ *
+ * As an optional zero-overhead hook, a sink may additionally provide
+ * `putDenseNodeScalars(long id, long latNano, long lonNano)`. That overload is
+ * selected only after complete preflight when the DenseNodes sequence contains
+ * neither tags nor DenseInfo; otherwise normal `put(DenseNodeView)` delivery is
+ * used. The hook therefore changes neither validation nor observable OSM data.
  *
  * Params:
  *   block = Validated PrimitiveBlock layout providing granularity and offsets.
@@ -122,9 +133,85 @@ bool decodeDenseNodes(Sink)(
     if (!validateDenseTags(group, table, tagValidation, status))
         return false;
 
-    DenseInfoNodeCursor infoNodes = DenseInfoNodeCursor(
-        block, group, table, infoValidation);
-    DenseTagNodeCursor tagNodes = DenseTagNodeCursor(group, table);
+    const hasTags = tagValidation.tagCount != 0;
+    const hasInfo = infoValidation.hasVersion ||
+        infoValidation.hasTimestamp ||
+        infoValidation.hasChangeset ||
+        infoValidation.hasUid ||
+        infoValidation.hasUser ||
+        infoValidation.hasVisible;
+
+    if (hasTags)
+    {
+        if (hasInfo)
+            return dispatchDenseNodes!(true, true)(
+                block, group, table, tagValidation, infoValidation,
+                sink, summary, status);
+        return dispatchDenseNodes!(true, false)(
+            block, group, table, tagValidation, infoValidation,
+            sink, summary, status);
+    }
+
+    if (hasInfo)
+        return dispatchDenseNodes!(false, true)(
+            block, group, table, tagValidation, infoValidation,
+            sink, summary, status);
+    return dispatchDenseNodes!(false, false)(
+        block, group, table, tagValidation, infoValidation,
+        sink, summary, status);
+}
+
+/**
+ * Dispatch to one compile-time-specialized DenseNodes emitter.
+ *
+ * This wrapper is intentionally not inlined into `decodeDenseNodes`: keeping
+ * the four runtime-selected capability variants out of the dispatcher avoids
+ * code-size explosion there. The selected `emitDenseNodes` specialization is
+ * still forced inline into this wrapper so its hot loop retains cross-function
+ * optimization and scalar replacement opportunities.
+ */
+pragma(inline, false)
+private bool dispatchDenseNodes(bool HasTags, bool HasInfo, Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    DenseTagValidationSummary tagValidation,
+    DenseInfoValidationSummary infoValidation,
+    ref Sink sink,
+    ref DenseNodeDecodeSummary summary,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    return emitDenseNodes!(HasTags, HasInfo)(
+        block, group, table, tagValidation, infoValidation,
+        sink, summary, status);
+}
+
+/**
+ * Emit one completely prevalidated DenseNodes sequence.
+ *
+ * `HasTags` and `HasInfo` are compile-time capabilities derived from the
+ * completed preflight summaries. The false variants remove their cursor work
+ * from the per-node loop entirely; they do not skip validation.
+ */
+pragma(inline, true)
+private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    DenseTagValidationSummary tagValidation,
+    DenseInfoValidationSummary infoValidation,
+    ref Sink sink,
+    ref DenseNodeDecodeSummary summary,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    static if (HasTags)
+        DenseTagNodeCursor tagNodes = DenseTagNodeCursor(group, table);
+    static if (HasInfo)
+        DenseInfoNodeCursor infoNodes = DenseInfoNodeCursor(
+            block, group, table, infoValidation);
+
     DenseColumnCursor ids = DenseColumnCursor(group.raw, 1);
     DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
     DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
@@ -189,16 +276,34 @@ bool decodeDenseNodes(Sink)(
             return false;
         }
 
-        DenseTagRange tags;
-        if (!tagNodes.nextNode(tags, status))
-            return false;
+        static if (!HasTags && !HasInfo &&
+            __traits(compiles, sink.putDenseNodeScalars(id, latNano, lonNano)))
+        {
+            // Optional sink fast path: once preflight proved that this sequence
+            // has neither tags nor DenseInfo, scalar-only consumers do not need
+            // a large DenseNodeView or its empty borrowed-range members.
+            sink.putDenseNodeScalars(id, latNano, lonNano);
+        }
+        else
+        {
+            DenseTagRange tags;
+            static if (HasTags)
+            {
+                if (!tagNodes.nextNode(tags, status))
+                    return false;
+                summary.tagCount += tags.length;
+            }
 
-        DenseInfoView info;
-        if (!infoNodes.nextNode(info, status))
-            return false;
+            DenseInfoView info;
+            static if (HasInfo)
+            {
+                if (!infoNodes.nextNode(info, status))
+                    return false;
+            }
 
-        summary.tagCount += tags.length;
-        sink.put(DenseNodeView(id, latNano, lonNano, tags, info));
+            DenseNodeView node = DenseNodeView(id, latNano, lonNano, tags, info);
+            sink.put(node);
+        }
         ++summary.nodeCount;
     }
 
@@ -226,10 +331,17 @@ bool decodeDenseNodes(Sink)(
         return false;
     }
 
-    if (!tagNodes.finish(status))
-        return false;
-    if (!infoNodes.finish(status))
-        return false;
+    static if (HasTags)
+    {
+        if (!tagNodes.finish(status))
+            return false;
+    }
+    static if (HasInfo)
+    {
+        if (!infoNodes.finish(status))
+            return false;
+    }
+
     if (summary.tagCount != tagValidation.tagCount)
     {
         status = PbfStatus.failure(PbfError.denseTagNodeCountMismatch, 0, 10);
@@ -290,6 +402,7 @@ public:
         _fieldNumber = fieldNumber;
     }
 
+    pragma(inline, true)
     bool next(out long value, out bool hasValue, out PbfStatus status)
         @safe nothrow @nogc
     {
@@ -650,4 +763,56 @@ unittest
     assert(sink.node.info.hasUser && sink.node.info.userSid == 1);
     const(ubyte)[] u = ['u'];
     assert(sink.node.info.user == u);
+}
+
+
+unittest
+{
+    // A scalar-capable sink bypasses DenseNodeView construction only when the
+    // completely prevalidated sequence contains neither tags nor DenseInfo.
+    const(ubyte)[] groupBytes = [
+        0x12, 0x0c,
+        0x0a, 0x02, 0x02, 0x02,
+        0x42, 0x02, 0x02, 0x02,
+        0x4a, 0x02, 0x02, 0x02,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus status;
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, status));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0];
+    StringRef[1] refs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(stringBytes, refs[]);
+
+    struct ScalarSink
+    {
+        size_t scalarUsed;
+        size_t viewUsed;
+        long lastId;
+
+        void putDenseNodeScalars(long id, long, long) @safe nothrow @nogc
+        {
+            ++scalarUsed;
+            lastId = id;
+        }
+
+        void put(DenseNodeView) @safe nothrow @nogc
+        {
+            ++viewUsed;
+        }
+    }
+
+    ScalarSink sink;
+    DenseNodeDecodeSummary summary;
+    assert(decodeDenseNodes(block, group, table, sink, summary, status));
+    assert(status.ok);
+    assert(summary.nodeCount == 2 && summary.tagCount == 0);
+    assert(sink.scalarUsed == 2 && sink.viewUsed == 0);
+    assert(sink.lastId == 2);
 }

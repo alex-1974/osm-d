@@ -577,6 +577,7 @@ public:
     }
 
     /** Decode metadata for the next dense node. */
+    pragma(inline, true)
     bool nextNode(out DenseInfoView info, out PbfStatus status)
         @safe nothrow @nogc
     {

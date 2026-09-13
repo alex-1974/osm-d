@@ -21,6 +21,7 @@ module osm.wire.zigzag;
  * Returns:
  *   The corresponding signed 64-bit value.
  */
+pragma(inline, true)
 long decodeZigZag64(ulong value) @safe pure nothrow @nogc
 {
     return cast(long)(value >> 1) ^ -cast(long)(value & 1UL);
