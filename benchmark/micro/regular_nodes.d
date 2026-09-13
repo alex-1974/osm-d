@@ -19,8 +19,22 @@
  */
 module benchmark.micro.regular_nodes;
 
-import osm.io.pbf.error : PbfStatus;
-import osm.io.pbf.info : InfoView;
+import osm.io.pbf.error : PbfError, PbfStatus;
+import osm.io.pbf.info :
+    InfoView,
+    finalizeInfo,
+    mergeInfoMessage;
+import osm.io.pbf.tags : TagValidationSummary, validateTags;
+import osm.util.checked : checkedMulAdd;
+import osm.wire.cursor : WireCursor;
+import osm.wire.error : WireStatus;
+import osm.wire.field :
+    FieldHeader,
+    WireType,
+    readFieldHeader,
+    readLengthDelimited,
+    skipFieldValue;
+import osm.wire.varint : readSVarint64;
 import osm.io.pbf.node :
     NodeDecodeSummary,
     NodeView,
@@ -95,6 +109,100 @@ private struct Workload
     ulong coordinateChecksum;
     ulong tagIdChecksum;
     ulong tagByteChecksum;
+}
+
+version (RegularNodeStageBenchmark)
+{
+    private enum StageKind
+    {
+        groupScan,
+        semanticPreflight,
+        fullDecode,
+    }
+
+    private struct StageRun
+    {
+        ulong checksum;
+        size_t nodeCount;
+        size_t tagCount;
+        size_t infoCount;
+        bool ok;
+    }
+
+    private struct StageNodeMessageRef
+    {
+        const(ubyte)[] bytes;
+        size_t rawOffset;
+    }
+
+    private struct StageParsedNode
+    {
+        long id;
+        long latNano;
+        long lonNano;
+        InfoView info;
+        TagValidationSummary tags;
+    }
+
+    /** Benchmark-local mirror of the private production NodeMessageCursor. */
+    private struct StageNodeMessageCursor
+    {
+    private:
+        WireCursor _group;
+
+    public:
+        this(const(ubyte)[] group) @safe nothrow @nogc
+        {
+            _group = WireCursor(group);
+        }
+
+        bool next(
+            out StageNodeMessageRef node,
+            out bool hasNode,
+            out PbfStatus status)
+            @safe nothrow @nogc
+        {
+            node = StageNodeMessageRef.init;
+            hasNode = false;
+
+            while (!_group.empty)
+            {
+                FieldHeader field;
+                WireStatus wire;
+                if (!readFieldHeader(_group, field, wire))
+                {
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
+                    return false;
+                }
+
+                if (field.number == 1 && field.wireType == WireType.lengthDelimited)
+                {
+                    const(ubyte)[] payload;
+                    if (!readLengthDelimited(_group, field.number, payload, wire))
+                    {
+                        status = PbfStatus.fromPrimitiveGroupWire(wire);
+                        return false;
+                    }
+
+                    node = StageNodeMessageRef(
+                        payload,
+                        _group.offset - payload.length);
+                    hasNode = true;
+                    status = PbfStatus.init;
+                    return true;
+                }
+
+                if (!skipFieldValue(_group, field, wire))
+                {
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
+                    return false;
+                }
+            }
+
+            status = PbfStatus.init;
+            return true;
+        }
+    }
 }
 
 private struct CoordinateSink
@@ -940,7 +1048,7 @@ private bool runWorkload(
  * Returns:
  *   Zero on success, non-zero for invalid arguments or consistency failure.
  */
-int main(string[] args) @system
+private int runRegularMain(string[] args) @system
 {
     size_t nodeCount = 100_000;
     uint iterations = 3;
@@ -1061,4 +1169,771 @@ int main(string[] args) @system
         return 3;
     }
     return 0;
+}
+
+version (RegularNodeStageBenchmark)
+{
+    private bool stageParseNode(
+        ref const PrimitiveBlockLayout block,
+        StageNodeMessageRef nodeRef,
+        StringTableView table,
+        out StageParsedNode parsed,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        parsed = StageParsedNode.init;
+        auto cursor = WireCursor(nodeRef.bytes);
+
+        bool hasId;
+        bool hasLat;
+        bool hasLon;
+        long latValue;
+        long lonValue;
+
+        while (!cursor.empty)
+        {
+            FieldHeader field;
+            WireStatus wire;
+            if (!readFieldHeader(cursor, field, wire))
+            {
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+
+            if ((field.number == 1 || field.number == 8 || field.number == 9) &&
+                field.wireType == WireType.varint)
+            {
+                long value;
+                if (!readSVarint64(cursor, value, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+
+                switch (field.number)
+                {
+                    case 1:
+                        parsed.id = value;
+                        hasId = true;
+                        break;
+
+                    case 8:
+                        latValue = value;
+                        hasLat = true;
+                        break;
+
+                    case 9:
+                        lonValue = value;
+                        hasLon = true;
+                        break;
+
+                    default:
+                        assert(0, "unexpected Node scalar field");
+                }
+                continue;
+            }
+
+            if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] infoBytes;
+                if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+                {
+                    status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+
+                const infoOffset =
+                    nodeRef.rawOffset + cursor.offset - infoBytes.length;
+                if (!mergeInfoMessage(
+                    infoBytes,
+                    infoOffset,
+                    parsed.info,
+                    status))
+                    return false;
+                continue;
+            }
+
+            if (!skipFieldValue(cursor, field, wire))
+            {
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+        }
+
+        if (!hasId)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeId,
+                nodeRef.rawOffset,
+                1);
+            return false;
+        }
+        if (!hasLat)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeLat,
+                nodeRef.rawOffset,
+                8);
+            return false;
+        }
+        if (!hasLon)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeLon,
+                nodeRef.rawOffset,
+                9);
+            return false;
+        }
+
+        if (!checkedMulAdd(
+            block.latOffset,
+            cast(long)block.granularity,
+            latValue,
+            parsed.latNano))
+        {
+            status = PbfStatus.failure(
+                PbfError.nodeCoordinateOverflow,
+                nodeRef.rawOffset,
+                8);
+            return false;
+        }
+
+        if (!checkedMulAdd(
+            block.lonOffset,
+            cast(long)block.granularity,
+            lonValue,
+            parsed.lonNano))
+        {
+            status = PbfStatus.failure(
+                PbfError.nodeCoordinateOverflow,
+                nodeRef.rawOffset,
+                9);
+            return false;
+        }
+
+        if (!finalizeInfo(block, table, parsed.info, status))
+            return false;
+
+        if (!validateTags(
+            nodeRef.bytes,
+            nodeRef.rawOffset,
+            table,
+            parsed.tags,
+            status))
+            return false;
+
+        status = PbfStatus.init;
+        return true;
+    }
+
+    private StageRun runGroupScan(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        size_t nodeCount;
+        auto nodes = StageNodeMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageNodeMessageRef nodeRef;
+            bool hasNode;
+            if (!nodes.next(nodeRef, hasNode, status))
+                return StageRun.init;
+            if (!hasNode)
+                break;
+            ++nodeCount;
+        }
+
+        const ok = nodeCount == workload.group.nodeOccurrences;
+        return StageRun(
+            mix(0, cast(ulong)nodeCount),
+            nodeCount,
+            0,
+            0,
+            ok);
+    }
+
+    private StageRun runSemanticPreflight(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        size_t nodeCount;
+        size_t tagCount;
+        auto nodes = StageNodeMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageNodeMessageRef nodeRef;
+            bool hasNode;
+            if (!nodes.next(nodeRef, hasNode, status))
+                return StageRun.init;
+            if (!hasNode)
+                break;
+
+            StageParsedNode parsed;
+            if (!stageParseNode(
+                workload.block,
+                nodeRef,
+                workload.table,
+                parsed,
+                status))
+                return StageRun.init;
+
+            ++nodeCount;
+            tagCount += parsed.tags.tagCount;
+        }
+
+        const ok = nodeCount == workload.group.nodeOccurrences;
+        return StageRun(
+            mix(mix(0, cast(ulong)nodeCount), cast(ulong)tagCount),
+            nodeCount,
+            tagCount,
+            0,
+            ok);
+    }
+
+    private StageRun runFullDecode(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        const decoded = decodeCoordinates(workload);
+        return StageRun(
+            decoded.checksum,
+            decoded.nodeCount,
+            decoded.tagCount,
+            decoded.infoCount,
+            decoded.ok);
+    }
+
+    private StageRun runStage(ref const Workload workload, StageKind stage)
+        @safe nothrow @nogc
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return runGroupScan(workload);
+        case StageKind.semanticPreflight:
+            return runSemanticPreflight(workload);
+        case StageKind.fullDecode:
+            return runFullDecode(workload);
+        }
+    }
+
+    private ulong expectedStageChecksum(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return mix(0, cast(ulong)workload.nodeCount);
+        case StageKind.semanticPreflight:
+            return mix(
+                mix(0, cast(ulong)workload.nodeCount),
+                cast(ulong)workload.tagCount);
+        case StageKind.fullDecode:
+            return workload.coordinateChecksum;
+        }
+    }
+
+    private size_t expectedStageTags(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.groupScan ? 0 : workload.tagCount;
+    }
+
+    private size_t expectedStageInfo(
+        ref const Workload workload,
+        StageKind stage)
+        @safe pure nothrow @nogc
+    {
+        return stage == StageKind.fullDecode ? workload.infoCount : 0;
+    }
+
+    private bool stageRunMatches(
+        ref const Workload workload,
+        StageKind stage,
+        const StageRun run)
+        @safe pure nothrow @nogc
+    {
+        return run.ok &&
+            run.nodeCount == workload.nodeCount &&
+            run.tagCount == expectedStageTags(workload, stage) &&
+            run.infoCount == expectedStageInfo(workload, stage) &&
+            run.checksum == expectedStageChecksum(workload, stage);
+    }
+
+    private bool warmupStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations)
+        @safe nothrow @nogc
+    {
+        foreach (_; 0 .. iterations)
+        {
+            const run = runStage(workload, stage);
+            if (!stageRunMatches(workload, stage, run))
+                return false;
+        }
+        return true;
+    }
+
+    private long timeStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        out ulong observableChecksum)
+        @system
+    {
+        auto stopwatch = StopWatch(AutoStart.yes);
+        ulong aggregateChecksum;
+        size_t aggregateNodes;
+        size_t aggregateTags;
+        size_t aggregateInfo;
+        bool ok = true;
+
+        foreach (_; 0 .. iterations)
+        {
+            const run = runStage(workload, stage);
+            aggregateChecksum += run.checksum;
+            aggregateNodes += run.nodeCount;
+            aggregateTags += run.tagCount;
+            aggregateInfo += run.infoCount;
+            ok = ok && run.ok;
+        }
+
+        stopwatch.stop();
+        observableChecksum = aggregateChecksum;
+
+        const expectedIterations = cast(size_t)iterations;
+        if (!ok ||
+            aggregateNodes != workload.nodeCount * expectedIterations ||
+            aggregateTags != expectedStageTags(workload, stage) * expectedIterations ||
+            aggregateInfo != expectedStageInfo(workload, stage) * expectedIterations ||
+            aggregateChecksum != expectedStageChecksum(workload, stage) * iterations)
+            return -1;
+
+        return stopwatch.peek.total!"nsecs";
+    }
+
+    private string stageName(StageKind stage) @safe pure nothrow
+    {
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            return "group-scan";
+        case StageKind.semanticPreflight:
+            return "semantic-preflight";
+        case StageKind.fullDecode:
+            return "full-decode";
+        }
+    }
+
+    private bool parseStage(string name, out StageKind stage)
+        @safe pure nothrow
+    {
+        switch (name)
+        {
+        case "group-scan":
+        case "scan":
+            stage = StageKind.groupScan;
+            return true;
+        case "semantic-preflight":
+        case "preflight":
+            stage = StageKind.semanticPreflight;
+            return true;
+        case "full-decode":
+        case "full":
+            stage = StageKind.fullDecode;
+            return true;
+        default:
+            stage = StageKind.init;
+            return false;
+        }
+    }
+
+    private bool recordStageSample(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        uint sample,
+        long[] scanTimings,
+        long[] preflightTimings,
+        long[] fullTimings,
+        ref ulong scanChecksum,
+        ref ulong preflightChecksum,
+        ref ulong fullChecksum)
+        @system
+    {
+        ulong observed;
+        const elapsed = timeStage(workload, stage, iterations, observed);
+        if (elapsed < 0)
+            return false;
+
+        final switch (stage)
+        {
+        case StageKind.groupScan:
+            scanTimings[sample] = elapsed;
+            scanChecksum += observed ^ cast(ulong)sample;
+            break;
+        case StageKind.semanticPreflight:
+            preflightTimings[sample] = elapsed;
+            preflightChecksum += observed ^ cast(ulong)sample;
+            break;
+        case StageKind.fullDecode:
+            fullTimings[sample] = elapsed;
+            fullChecksum += observed ^ cast(ulong)sample;
+            break;
+        }
+        return true;
+    }
+
+    private bool measureAllStages(
+        ref const Workload workload,
+        uint iterations,
+        uint samples,
+        uint warmupIterations,
+        out BenchResult scan,
+        out BenchResult preflight,
+        out BenchResult full)
+        @system
+    {
+        if (!warmupStage(workload, StageKind.groupScan, warmupIterations) ||
+            !warmupStage(workload, StageKind.semanticPreflight, warmupIterations) ||
+            !warmupStage(workload, StageKind.fullDecode, warmupIterations))
+            return false;
+
+        auto scanTimings = new long[samples];
+        auto preflightTimings = new long[samples];
+        auto fullTimings = new long[samples];
+        ulong scanChecksum;
+        ulong preflightChecksum;
+        ulong fullChecksum;
+
+        static immutable StageKind[3][6] orders = [
+            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode],
+            [StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight],
+            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode],
+            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan],
+            [StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight],
+            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan],
+        ];
+
+        foreach (sample; 0 .. samples)
+        {
+            const order = orders[sample % orders.length];
+            foreach (stage; order)
+            {
+                if (!recordStageSample(
+                    workload,
+                    stage,
+                    iterations,
+                    sample,
+                    scanTimings,
+                    preflightTimings,
+                    fullTimings,
+                    scanChecksum,
+                    preflightChecksum,
+                    fullChecksum))
+                    return false;
+            }
+        }
+
+        scan = summarize(scanTimings, scanChecksum);
+        preflight = summarize(preflightTimings, preflightChecksum);
+        full = summarize(fullTimings, fullChecksum);
+        return scan.ok && preflight.ok && full.ok;
+    }
+
+    private BenchResult measureSingleStage(
+        ref const Workload workload,
+        StageKind stage,
+        uint iterations,
+        uint samples,
+        uint warmupIterations)
+        @system
+    {
+        if (!warmupStage(workload, stage, warmupIterations))
+            return BenchResult.init;
+
+        auto timings = new long[samples];
+        ulong observableChecksum;
+        foreach (sample; 0 .. samples)
+        {
+            ulong observed;
+            const elapsed = timeStage(workload, stage, iterations, observed);
+            if (elapsed < 0)
+                return BenchResult.init;
+            timings[sample] = elapsed;
+            observableChecksum += observed ^ cast(ulong)sample;
+        }
+        return summarize(timings, observableChecksum);
+    }
+
+    private void reportStage(
+        StageKind stage,
+        ref const Workload workload,
+        uint iterations,
+        const BenchResult result)
+    {
+        const totalNodes = cast(double)workload.nodeCount * iterations;
+        const totalGroupBytes = cast(double)workload.group.raw.length * iterations;
+        const medianSeconds = cast(double)result.timings.medianNanoseconds /
+            1_000_000_000.0;
+        const medianNsPerNode = cast(double)result.timings.medianNanoseconds / totalNodes;
+        const p10NsPerNode = cast(double)result.timings.p10Nanoseconds / totalNodes;
+        const p90NsPerNode = cast(double)result.timings.p90Nanoseconds / totalNodes;
+        const minNsPerNode = cast(double)result.timings.minimumNanoseconds / totalNodes;
+        const maxNsPerNode = cast(double)result.timings.maximumNanoseconds / totalNodes;
+        const megaNodesPerSecond = totalNodes / medianSeconds / 1_000_000.0;
+        const mebiGroupBytesPerSecond =
+            totalGroupBytes / medianSeconds / (1024.0 * 1024.0);
+        const spreadPercent = result.timings.medianNanoseconds == 0
+            ? 0.0
+            : cast(double)(
+                result.timings.p90Nanoseconds - result.timings.p10Nanoseconds) /
+                result.timings.medianNanoseconds * 100.0;
+
+        writefln(
+            "%-13s %-19s p50=%8.3f ns/node %7.2f Mnode/s %8.2f MiB/s(group)  " ~
+            "p10=%8.3f p90=%8.3f Δ80=%5.1f%%  min=%8.3f max=%8.3f  checksum=%016x",
+            workload.name,
+            stageName(stage),
+            medianNsPerNode,
+            megaNodesPerSecond,
+            mebiGroupBytesPerSecond,
+            p10NsPerNode,
+            p90NsPerNode,
+            spreadPercent,
+            minNsPerNode,
+            maxNsPerNode,
+            result.checksum);
+    }
+
+    private void reportDerivedStageCosts(
+        ref const Workload workload,
+        uint iterations,
+        const BenchResult scan,
+        const BenchResult preflight,
+        const BenchResult full)
+    {
+        const totalNodes = cast(double)workload.nodeCount * iterations;
+        const scanNs = cast(double)scan.timings.medianNanoseconds / totalNodes;
+        const preflightNs = cast(double)preflight.timings.medianNanoseconds / totalNodes;
+        const fullNs = cast(double)full.timings.medianNanoseconds / totalNodes;
+
+        writefln(
+            "%-13s derived: parse+validate≈%8.3f ns/node  " ~
+            "post-preflight≈%8.3f ns/node  full/preflight=%.3f",
+            workload.name,
+            preflightNs - scanNs,
+            fullNs - preflightNs,
+            preflightNs == 0.0 ? 0.0 : fullNs / preflightNs);
+    }
+
+    private bool runStageWorkload(
+        ref const Workload workload,
+        bool allStages,
+        StageKind selectedStage,
+        uint iterations,
+        uint samples,
+        uint warmupIterations)
+        @system
+    {
+        writefln(
+            "profile=%s nodes=%s tags=%s tags/node=%.3f info-nodes=%s group-bytes=%s",
+            workload.name,
+            workload.nodeCount,
+            workload.tagCount,
+            workload.nodeCount == 0
+                ? 0.0
+                : cast(double)workload.tagCount / workload.nodeCount,
+            workload.infoCount,
+            workload.group.raw.length);
+
+        if (allStages)
+        {
+            BenchResult scan;
+            BenchResult preflight;
+            BenchResult full;
+            if (!measureAllStages(
+                workload,
+                iterations,
+                samples,
+                warmupIterations,
+                scan,
+                preflight,
+                full))
+                return false;
+
+            reportStage(StageKind.groupScan, workload, iterations, scan);
+            reportStage(StageKind.semanticPreflight, workload, iterations, preflight);
+            reportStage(StageKind.fullDecode, workload, iterations, full);
+            reportDerivedStageCosts(workload, iterations, scan, preflight, full);
+            return true;
+        }
+
+        const result = measureSingleStage(
+            workload,
+            selectedStage,
+            iterations,
+            samples,
+            warmupIterations);
+        if (!result.ok)
+            return false;
+        reportStage(selectedStage, workload, iterations, result);
+        return true;
+    }
+
+    private int runStageMain(string[] args) @system
+    {
+        size_t nodeCount = 100_000;
+        uint iterations = 3;
+        uint samples = 30;
+        uint warmupIterations = 2;
+        string selectedProfile = "all";
+        string selectedStageName = "all";
+
+        auto options = getopt(
+            args,
+            "nodes", "Regular Nodes generated for each workload", &nodeCount,
+            "iterations", "Complete stage runs per timed sample", &iterations,
+            "samples", "Timed samples; robust quantiles are reported", &samples,
+            "warmup", "Untimed stage runs before measurement", &warmupIterations,
+            "profile", "all|tagless|typical|typical-info|rich", &selectedProfile,
+            "stage", "all|group-scan|semantic-preflight|full-decode", &selectedStageName);
+
+        if (options.helpWanted)
+        {
+            defaultGetoptPrinter(
+                "d-osm regular Node stage benchmark",
+                options.options);
+            return 0;
+        }
+
+        if (nodeCount == 0 || iterations == 0 || samples == 0)
+        {
+            stderr.writeln("nodes, iterations and samples must all be greater than zero");
+            return 2;
+        }
+        if (samples > 100_000)
+        {
+            stderr.writeln("samples is unreasonably large");
+            return 2;
+        }
+
+        const allStages = selectedStageName == "all";
+        StageKind selectedStage;
+        if (!allStages && !parseStage(selectedStageName, selectedStage))
+        {
+            stderr.writefln("unknown stage: %s", selectedStageName);
+            return 2;
+        }
+
+        writeln("d-osm regular Node stage benchmark");
+        writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
+        writefln(
+            "nodes/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",
+            nodeCount,
+            iterations,
+            samples,
+            warmupIterations);
+        if (allStages)
+            writeln("ordering: rotating all six permutations of the three stages");
+        else
+            writefln("ordering: single stage (%s)", selectedStageName);
+        writeln("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50");
+        writeln("group-scan: benchmark-local mirror of private NodeMessageCursor traversal");
+        writeln("semantic-preflight: benchmark-local mirror of the current private first parse/validation pass");
+        writeln("full-decode: production decodeNodes with the coordinates sink");
+        writeln("derived values subtract medians and are diagnostic, not independently timed stages");
+        writeln("excluded: workload generation, block/group layout, StringTable indexing, sorting and reporting");
+        writeln();
+
+        static immutable WorkloadProfile[4] allProfiles = [
+            WorkloadProfile.tagless,
+            WorkloadProfile.typical,
+            WorkloadProfile.typicalInfo,
+            WorkloadProfile.rich,
+        ];
+
+        if (selectedProfile == "all")
+        {
+            foreach (profile; allProfiles)
+            {
+                Workload workload;
+                if (!buildWorkload(profile, nodeCount, workload))
+                {
+                    stderr.writefln(
+                        "failed to build/validate profile: %s",
+                        profileName(profile));
+                    return 3;
+                }
+                if (!runStageWorkload(
+                    workload,
+                    allStages,
+                    selectedStage,
+                    iterations,
+                    samples,
+                    warmupIterations))
+                {
+                    stderr.writefln(
+                        "stage benchmark consistency failure: %s",
+                        workload.name);
+                    return 3;
+                }
+                writeln();
+            }
+            return 0;
+        }
+
+        WorkloadProfile profile;
+        if (!parseProfile(selectedProfile, profile))
+        {
+            stderr.writefln("unknown profile: %s", selectedProfile);
+            return 2;
+        }
+
+        Workload workload;
+        if (!buildWorkload(profile, nodeCount, workload))
+        {
+            stderr.writefln(
+                "failed to build/validate profile: %s",
+                selectedProfile);
+            return 3;
+        }
+        if (!runStageWorkload(
+            workload,
+            allStages,
+            selectedStage,
+            iterations,
+            samples,
+            warmupIterations))
+        {
+            stderr.writefln(
+                "stage benchmark consistency failure: %s",
+                workload.name);
+            return 3;
+        }
+        return 0;
+    }
+}
+
+version (RegularNodeStageBenchmark)
+{
+    int main(string[] args) @system
+    {
+        return runStageMain(args);
+    }
+}
+else
+{
+    int main(string[] args) @system
+    {
+        return runRegularMain(args);
+    }
 }

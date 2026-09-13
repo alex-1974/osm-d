@@ -50,3 +50,13 @@ configuration "dense-varint-core" {
     importPaths "micro"
     mainSourceFile "micro/dense_varint_core.d"
 }
+
+configuration "regular-node-stages" {
+    targetType "executable"
+    targetName "d-osm-bench-regular-node-stages"
+    targetPath "bin"
+    sourcePaths "micro"
+    importPaths "micro"
+    mainSourceFile "micro/regular_nodes.d"
+    versions "RegularNodeStageBenchmark"
+}

@@ -278,3 +278,50 @@ region. The initial benchmark is a baseline for commit `eab2f9d`; it must not
 introduce a scalar fast path, cached first-pass representation or specialized
 regular-Node emitter. Those are separate architecture changes that require
 measurement against this baseline.
+
+### Regular Node stage diagnostics
+
+`regular-node-stages` is a diagnostic companion to the regular-Node baseline.
+It does not change the production decoder. Instead, the benchmark build enables
+benchmark-local mirrors of the current private `NodeMessageCursor` traversal and
+first semantic `parseNode` pass, then compares them with the real production
+`decodeNodes` coordinates path.
+
+The three stages are:
+
+- `group-scan`: traverse the PrimitiveGroup framing and locate every regular
+  Node payload, without parsing Node fields;
+- `semantic-preflight`: perform one complete benchmark-local mirror of the
+  current first production pass, including required-field checks, exact checked
+  coordinate conversion, merged Info validation and normal-tag validation;
+- `full-decode`: call the production `decodeNodes` implementation and consume
+  coordinates plus Info through the same coordinates sink as the baseline.
+
+The first two stages intentionally mirror private implementation details and are
+therefore diagnostic probes, not public parser APIs. `full-decode` remains the
+production truth. The reported derived `parse+validate` and `post-preflight`
+figures are differences of p50 medians, not independently timed stages.
+
+Run the controlled stage suite with the same environment used for the regular
+Node baseline:
+
+```bash
+D_OSM_BENCH_COMPILERS=ldc2 \
+D_OSM_BENCH_CPU=4 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_COOLDOWN=30 \
+./benchmark/run-regular-node-stages.sh
+```
+
+A focused run can select one profile or stage:
+
+```bash
+./benchmark/run-regular-node-stages.sh \
+    --profile=typical --stage=all
+
+./benchmark/run-regular-node-stages.sh \
+    --profile=typical-info --stage=semantic-preflight
+```
+
+Use the stage benchmark to test cost hypotheses before changing `decodeNodes`.
+Do not quote benchmark-local mirror stages as production throughput.
