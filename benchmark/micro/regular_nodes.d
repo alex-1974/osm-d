@@ -24,7 +24,11 @@ import osm.io.pbf.info :
     InfoView,
     finalizeInfo,
     mergeInfoMessage;
-import osm.io.pbf.tags : TagValidationSummary, validateTags;
+import osm.io.pbf.tags :
+    TagRange,
+    TagValidationSummary,
+    buildTagRange,
+    validateTags;
 import osm.util.checked : checkedMulAdd;
 import osm.wire.cursor : WireCursor;
 import osm.wire.error : WireStatus;
@@ -34,7 +38,7 @@ import osm.wire.field :
     readFieldHeader,
     readLengthDelimited,
     skipFieldValue;
-import osm.wire.varint : readSVarint64;
+import osm.wire.varint : readSVarint64, readVarint32;
 import osm.io.pbf.node :
     NodeDecodeSummary,
     NodeView,
@@ -117,6 +121,7 @@ version (RegularNodeStageBenchmark)
     {
         groupScan,
         semanticPreflight,
+        prevalidatedEmission,
         fullDecode,
     }
 
@@ -1328,6 +1333,280 @@ version (RegularNodeStageBenchmark)
         return true;
     }
 
+    /**
+     * Benchmark-local model of a second pass over an already prevalidated Node.
+     *
+     * The pass still decodes the values needed to construct the public NodeView,
+     * but it does not repeat full key/value/StringTable validation. The number of
+     * tags is reconstructed from legal key occurrences while the Node message is
+     * scanned. The preceding semantic-preflight stage has already proved that the
+     * value column has the same length and that every StringTable ID is valid.
+     */
+    private bool stageDecodePrevalidatedNode(
+        ref const PrimitiveBlockLayout block,
+        StageNodeMessageRef nodeRef,
+        StringTableView table,
+        out NodeView node,
+        out size_t tagCount,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        node = NodeView.init;
+        tagCount = 0;
+        auto cursor = WireCursor(nodeRef.bytes);
+
+        bool hasId;
+        bool hasLat;
+        bool hasLon;
+        long id;
+        long latValue;
+        long lonValue;
+        InfoView info;
+
+        while (!cursor.empty)
+        {
+            FieldHeader field;
+            WireStatus wire;
+            if (!readFieldHeader(cursor, field, wire))
+            {
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+
+            if ((field.number == 1 || field.number == 8 || field.number == 9) &&
+                field.wireType == WireType.varint)
+            {
+                long value;
+                if (!readSVarint64(cursor, value, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+
+                switch (field.number)
+                {
+                    case 1:
+                        id = value;
+                        hasId = true;
+                        break;
+
+                    case 8:
+                        latValue = value;
+                        hasLat = true;
+                        break;
+
+                    case 9:
+                        lonValue = value;
+                        hasLon = true;
+                        break;
+
+                    default:
+                        assert(0, "unexpected Node scalar field");
+                }
+                continue;
+            }
+
+            // Count the already-validated logical key column while this pass is
+            // scanning the Node anyway. Packed and legal unpacked protobuf forms
+            // both contribute one logical tag per key value.
+            if (field.number == 2 && field.wireType == WireType.varint)
+            {
+                uint ignored;
+                if (!readVarint32(cursor, ignored, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromTagWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+                ++tagCount;
+                continue;
+            }
+
+            if (field.number == 2 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] packedBytes;
+                if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+                {
+                    status = PbfStatus.fromTagWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+
+                const packedBase =
+                    nodeRef.rawOffset + cursor.offset - packedBytes.length;
+                auto packed = WireCursor(packedBytes);
+                while (!packed.empty)
+                {
+                    uint ignored;
+                    WireStatus packedWire;
+                    if (!readVarint32(packed, ignored, packedWire))
+                    {
+                        if (packedWire.fieldNumber == 0)
+                            packedWire.fieldNumber = 2;
+                        status = PbfStatus.fromTagWire(packedWire, packedBase);
+                        return false;
+                    }
+                    ++tagCount;
+                }
+                continue;
+            }
+
+            if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] infoBytes;
+                if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+                {
+                    status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                    return false;
+                }
+
+                const infoOffset =
+                    nodeRef.rawOffset + cursor.offset - infoBytes.length;
+                if (!mergeInfoMessage(
+                    infoBytes,
+                    infoOffset,
+                    info,
+                    status))
+                    return false;
+                continue;
+            }
+
+            if (!skipFieldValue(cursor, field, wire))
+            {
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+        }
+
+        // These conditions were established by semantic preflight. Keep the
+        // defensive checks in the benchmark model so a coding error never turns
+        // into an apparently successful but semantically different comparison.
+        if (!hasId)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeId,
+                nodeRef.rawOffset,
+                1);
+            return false;
+        }
+        if (!hasLat)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeLat,
+                nodeRef.rawOffset,
+                8);
+            return false;
+        }
+        if (!hasLon)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingNodeLon,
+                nodeRef.rawOffset,
+                9);
+            return false;
+        }
+
+        long latNano;
+        long lonNano;
+        if (!checkedMulAdd(
+            block.latOffset,
+            cast(long)block.granularity,
+            latValue,
+            latNano))
+        {
+            status = PbfStatus.failure(
+                PbfError.nodeCoordinateOverflow,
+                nodeRef.rawOffset,
+                8);
+            return false;
+        }
+        if (!checkedMulAdd(
+            block.lonOffset,
+            cast(long)block.granularity,
+            lonValue,
+            lonNano))
+        {
+            status = PbfStatus.failure(
+                PbfError.nodeCoordinateOverflow,
+                nodeRef.rawOffset,
+                9);
+            return false;
+        }
+
+        if (!finalizeInfo(block, table, info, status))
+            return false;
+
+        TagValidationSummary tagSummary;
+        tagSummary.keyCount = tagCount;
+        tagSummary.valueCount = tagCount;
+
+        TagRange tags;
+        if (!buildTagRange(
+            nodeRef.bytes,
+            nodeRef.rawOffset,
+            table,
+            tagSummary,
+            tags,
+            status))
+            return false;
+
+        node = NodeView(
+            id,
+            latNano,
+            lonNano,
+            tags,
+            info,
+            nodeRef.bytes,
+            nodeRef.rawOffset);
+        status = PbfStatus.init;
+        return true;
+    }
+
+    private StageRun runPrevalidatedEmission(ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        CoordinateSink sink;
+        size_t tagCount;
+        auto nodes = StageNodeMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageNodeMessageRef nodeRef;
+            bool hasNode;
+            if (!nodes.next(nodeRef, hasNode, status))
+                return StageRun.init;
+            if (!hasNode)
+                break;
+
+            NodeView node;
+            size_t nodeTags;
+            if (!stageDecodePrevalidatedNode(
+                workload.block,
+                nodeRef,
+                workload.table,
+                node,
+                nodeTags,
+                status))
+                return StageRun.init;
+
+            sink.put(node);
+            tagCount += nodeTags;
+        }
+
+        const ok = sink.nodeCount == workload.group.nodeOccurrences &&
+            tagCount == workload.tagCount &&
+            sink.infoCount == workload.infoCount;
+        return StageRun(
+            sink.checksum,
+            sink.nodeCount,
+            tagCount,
+            sink.infoCount,
+            ok);
+    }
+
     private StageRun runGroupScan(ref const Workload workload)
         @safe nothrow @nogc
     {
@@ -1415,6 +1694,8 @@ version (RegularNodeStageBenchmark)
             return runGroupScan(workload);
         case StageKind.semanticPreflight:
             return runSemanticPreflight(workload);
+        case StageKind.prevalidatedEmission:
+            return runPrevalidatedEmission(workload);
         case StageKind.fullDecode:
             return runFullDecode(workload);
         }
@@ -1433,6 +1714,7 @@ version (RegularNodeStageBenchmark)
             return mix(
                 mix(0, cast(ulong)workload.nodeCount),
                 cast(ulong)workload.tagCount);
+        case StageKind.prevalidatedEmission:
         case StageKind.fullDecode:
             return workload.coordinateChecksum;
         }
@@ -1451,7 +1733,10 @@ version (RegularNodeStageBenchmark)
         StageKind stage)
         @safe pure nothrow @nogc
     {
-        return stage == StageKind.fullDecode ? workload.infoCount : 0;
+        return stage == StageKind.prevalidatedEmission ||
+            stage == StageKind.fullDecode
+            ? workload.infoCount
+            : 0;
     }
 
     private bool stageRunMatches(
@@ -1528,6 +1813,8 @@ version (RegularNodeStageBenchmark)
             return "group-scan";
         case StageKind.semanticPreflight:
             return "semantic-preflight";
+        case StageKind.prevalidatedEmission:
+            return "prevalidated-emission";
         case StageKind.fullDecode:
             return "full-decode";
         }
@@ -1546,6 +1833,10 @@ version (RegularNodeStageBenchmark)
         case "preflight":
             stage = StageKind.semanticPreflight;
             return true;
+        case "prevalidated-emission":
+        case "emission":
+            stage = StageKind.prevalidatedEmission;
+            return true;
         case "full-decode":
         case "full":
             stage = StageKind.fullDecode;
@@ -1563,9 +1854,11 @@ version (RegularNodeStageBenchmark)
         uint sample,
         long[] scanTimings,
         long[] preflightTimings,
+        long[] emissionTimings,
         long[] fullTimings,
         ref ulong scanChecksum,
         ref ulong preflightChecksum,
+        ref ulong emissionChecksum,
         ref ulong fullChecksum)
         @system
     {
@@ -1584,6 +1877,10 @@ version (RegularNodeStageBenchmark)
             preflightTimings[sample] = elapsed;
             preflightChecksum += observed ^ cast(ulong)sample;
             break;
+        case StageKind.prevalidatedEmission:
+            emissionTimings[sample] = elapsed;
+            emissionChecksum += observed ^ cast(ulong)sample;
+            break;
         case StageKind.fullDecode:
             fullTimings[sample] = elapsed;
             fullChecksum += observed ^ cast(ulong)sample;
@@ -1599,28 +1896,50 @@ version (RegularNodeStageBenchmark)
         uint warmupIterations,
         out BenchResult scan,
         out BenchResult preflight,
+        out BenchResult emission,
         out BenchResult full)
         @system
     {
         if (!warmupStage(workload, StageKind.groupScan, warmupIterations) ||
             !warmupStage(workload, StageKind.semanticPreflight, warmupIterations) ||
+            !warmupStage(workload, StageKind.prevalidatedEmission, warmupIterations) ||
             !warmupStage(workload, StageKind.fullDecode, warmupIterations))
             return false;
 
         auto scanTimings = new long[samples];
         auto preflightTimings = new long[samples];
+        auto emissionTimings = new long[samples];
         auto fullTimings = new long[samples];
         ulong scanChecksum;
         ulong preflightChecksum;
+        ulong emissionChecksum;
         ulong fullChecksum;
 
-        static immutable StageKind[3][6] orders = [
-            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode],
-            [StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight],
-            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode],
-            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan],
-            [StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight],
-            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan],
+        static immutable StageKind[4][24] orders = [
+            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.fullDecode],
+            [StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode, StageKind.prevalidatedEmission],
+            [StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.fullDecode],
+            [StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.semanticPreflight],
+            [StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight, StageKind.prevalidatedEmission],
+            [StageKind.groupScan, StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.semanticPreflight],
+            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.fullDecode],
+            [StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode, StageKind.prevalidatedEmission],
+            [StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.fullDecode],
+            [StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.groupScan],
+            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan, StageKind.prevalidatedEmission],
+            [StageKind.semanticPreflight, StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.groupScan],
+            [StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.semanticPreflight, StageKind.fullDecode],
+            [StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.fullDecode, StageKind.semanticPreflight],
+            [StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.groupScan, StageKind.fullDecode],
+            [StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.fullDecode, StageKind.groupScan],
+            [StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight],
+            [StageKind.prevalidatedEmission, StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan],
+            [StageKind.fullDecode, StageKind.groupScan, StageKind.semanticPreflight, StageKind.prevalidatedEmission],
+            [StageKind.fullDecode, StageKind.groupScan, StageKind.prevalidatedEmission, StageKind.semanticPreflight],
+            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.groupScan, StageKind.prevalidatedEmission],
+            [StageKind.fullDecode, StageKind.semanticPreflight, StageKind.prevalidatedEmission, StageKind.groupScan],
+            [StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.groupScan, StageKind.semanticPreflight],
+            [StageKind.fullDecode, StageKind.prevalidatedEmission, StageKind.semanticPreflight, StageKind.groupScan],
         ];
 
         foreach (sample; 0 .. samples)
@@ -1635,9 +1954,11 @@ version (RegularNodeStageBenchmark)
                     sample,
                     scanTimings,
                     preflightTimings,
+                    emissionTimings,
                     fullTimings,
                     scanChecksum,
                     preflightChecksum,
+                    emissionChecksum,
                     fullChecksum))
                     return false;
             }
@@ -1645,8 +1966,9 @@ version (RegularNodeStageBenchmark)
 
         scan = summarize(scanTimings, scanChecksum);
         preflight = summarize(preflightTimings, preflightChecksum);
+        emission = summarize(emissionTimings, emissionChecksum);
         full = summarize(fullTimings, fullChecksum);
-        return scan.ok && preflight.ok && full.ok;
+        return scan.ok && preflight.ok && emission.ok && full.ok;
     }
 
     private BenchResult measureSingleStage(
@@ -1719,20 +2041,31 @@ version (RegularNodeStageBenchmark)
         uint iterations,
         const BenchResult scan,
         const BenchResult preflight,
+        const BenchResult emission,
         const BenchResult full)
     {
         const totalNodes = cast(double)workload.nodeCount * iterations;
         const scanNs = cast(double)scan.timings.medianNanoseconds / totalNodes;
         const preflightNs = cast(double)preflight.timings.medianNanoseconds / totalNodes;
+        const emissionNs = cast(double)emission.timings.medianNanoseconds / totalNodes;
         const fullNs = cast(double)full.timings.medianNanoseconds / totalNodes;
+        const candidateNs = preflightNs + emissionNs;
+        const potentialNs = fullNs - candidateNs;
+        const potentialPercent = fullNs == 0.0
+            ? 0.0
+            : potentialNs / fullNs * 100.0;
 
         writefln(
-            "%-13s derived: parse+validate≈%8.3f ns/node  " ~
-            "post-preflight≈%8.3f ns/node  full/preflight=%.3f",
+            "%-13s derived: parse+validate≈%8.3f  current-post≈%8.3f  " ~
+            "prevalidated-emission=%8.3f  candidate-total≈%8.3f ns/node  " ~
+            "potential≈%+8.3f (%+5.1f%%)",
             workload.name,
             preflightNs - scanNs,
             fullNs - preflightNs,
-            preflightNs == 0.0 ? 0.0 : fullNs / preflightNs);
+            emissionNs,
+            candidateNs,
+            potentialNs,
+            potentialPercent);
     }
 
     private bool runStageWorkload(
@@ -1759,6 +2092,7 @@ version (RegularNodeStageBenchmark)
         {
             BenchResult scan;
             BenchResult preflight;
+            BenchResult emission;
             BenchResult full;
             if (!measureAllStages(
                 workload,
@@ -1767,13 +2101,21 @@ version (RegularNodeStageBenchmark)
                 warmupIterations,
                 scan,
                 preflight,
+                emission,
                 full))
                 return false;
 
             reportStage(StageKind.groupScan, workload, iterations, scan);
             reportStage(StageKind.semanticPreflight, workload, iterations, preflight);
+            reportStage(StageKind.prevalidatedEmission, workload, iterations, emission);
             reportStage(StageKind.fullDecode, workload, iterations, full);
-            reportDerivedStageCosts(workload, iterations, scan, preflight, full);
+            reportDerivedStageCosts(
+                workload,
+                iterations,
+                scan,
+                preflight,
+                emission,
+                full);
             return true;
         }
 
@@ -1805,7 +2147,7 @@ version (RegularNodeStageBenchmark)
             "samples", "Timed samples; robust quantiles are reported", &samples,
             "warmup", "Untimed stage runs before measurement", &warmupIterations,
             "profile", "all|tagless|typical|typical-info|rich", &selectedProfile,
-            "stage", "all|group-scan|semantic-preflight|full-decode", &selectedStageName);
+            "stage", "all|group-scan|semantic-preflight|prevalidated-emission|full-decode", &selectedStageName);
 
         if (options.helpWanted)
         {
@@ -1843,12 +2185,13 @@ version (RegularNodeStageBenchmark)
             samples,
             warmupIterations);
         if (allStages)
-            writeln("ordering: rotating all six permutations of the three stages");
+            writeln("ordering: rotating all 24 permutations of the four stages");
         else
             writefln("ordering: single stage (%s)", selectedStageName);
         writeln("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50");
         writeln("group-scan: benchmark-local mirror of private NodeMessageCursor traversal");
         writeln("semantic-preflight: benchmark-local mirror of the current private first parse/validation pass");
+        writeln("prevalidated-emission: benchmark-local second pass that re-decodes output values but skips duplicate tag semantic validation");
         writeln("full-decode: production decodeNodes with the coordinates sink");
         writeln("derived values subtract medians and are diagnostic, not independently timed stages");
         writeln("excluded: workload generation, block/group layout, StringTable indexing, sorting and reporting");
