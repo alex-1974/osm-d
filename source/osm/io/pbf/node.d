@@ -35,7 +35,7 @@ import osm.wire.field :
     readFieldHeader,
     readLengthDelimited,
     skipFieldValue;
-import osm.wire.varint : readSVarint64;
+import osm.wire.varint : readSVarint64, readVarint32;
 
 /** One validated regular Node with exact borrowed provenance. */
 struct NodeView
@@ -139,7 +139,7 @@ bool decodeNodes(Sink)(
             break;
 
         ParsedNode parsed;
-        if (!parseNode(block, nodeRef, table, parsed, status))
+        if (!parsePrevalidatedNode(block, nodeRef, table, parsed, status))
             return false;
 
         TagRange tags;
@@ -328,6 +328,214 @@ private bool parseNode(
         status))
         return false;
 
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Re-decode one Node after the complete group has passed `parseNode` preflight.
+ *
+ * The first pass has already proved required-field presence, key/value column
+ * equality, StringTable IDs, coordinate arithmetic, and final Info semantics
+ * for these same borrowed bytes and table. This emission pass still decodes the
+ * values needed for `NodeView`, but it does not repeat full tag validation.
+ * Tag count is reconstructed from the already validated logical key column.
+ *
+ * Defensive wire, required-field, coordinate, and Info checks deliberately
+ * remain fail-closed. This function must never be called before successful
+ * complete-group preflight.
+ */
+private bool parsePrevalidatedNode(
+    ref const PrimitiveBlockLayout block,
+    NodeMessageRef nodeRef,
+    StringTableView table,
+    out ParsedNode parsed,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    parsed = ParsedNode.init;
+    auto cursor = WireCursor(nodeRef.bytes);
+
+    bool hasId;
+    bool hasLat;
+    bool hasLon;
+    long latValue;
+    long lonValue;
+    size_t tagCount;
+
+    while (!cursor.empty)
+    {
+        FieldHeader field;
+        WireStatus wire;
+        if (!readFieldHeader(cursor, field, wire))
+        {
+            status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+            return false;
+        }
+
+        if ((field.number == 1 || field.number == 8 || field.number == 9) &&
+            field.wireType == WireType.varint)
+        {
+            long value;
+            if (!readSVarint64(cursor, value, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+
+            switch (field.number)
+            {
+                case 1:
+                    parsed.id = value;
+                    hasId = true;
+                    break;
+
+                case 8:
+                    latValue = value;
+                    hasLat = true;
+                    break;
+
+                case 9:
+                    lonValue = value;
+                    hasLon = true;
+                    break;
+
+                default:
+                    assert(0, "unexpected Node scalar field");
+            }
+            continue;
+        }
+
+        // The full preflight already proved the values column has the same
+        // logical length and that every key/value SID is valid. Count keys only
+        // so TagRange can be reconstructed without repeating those checks.
+        if (field.number == 2 && field.wireType == WireType.varint)
+        {
+            uint ignored;
+            if (!readVarint32(cursor, ignored, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromTagWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+            ++tagCount;
+            continue;
+        }
+
+        if (field.number == 2 && field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] packedBytes;
+            if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+            {
+                status = PbfStatus.fromTagWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+
+            const packedBase =
+                nodeRef.rawOffset + cursor.offset - packedBytes.length;
+            auto packed = WireCursor(packedBytes);
+            while (!packed.empty)
+            {
+                uint ignored;
+                WireStatus packedWire;
+                if (!readVarint32(packed, ignored, packedWire))
+                {
+                    if (packedWire.fieldNumber == 0)
+                        packedWire.fieldNumber = 2;
+                    status = PbfStatus.fromTagWire(packedWire, packedBase);
+                    return false;
+                }
+                ++tagCount;
+            }
+            continue;
+        }
+
+        if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] infoBytes;
+            if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+            {
+                status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+                return false;
+            }
+
+            const infoOffset =
+                nodeRef.rawOffset + cursor.offset - infoBytes.length;
+            if (!mergeInfoMessage(
+                infoBytes,
+                infoOffset,
+                parsed.info,
+                status))
+                return false;
+            continue;
+        }
+
+        if (!skipFieldValue(cursor, field, wire))
+        {
+            status = PbfStatus.fromNodeWire(wire, nodeRef.rawOffset);
+            return false;
+        }
+    }
+
+    if (!hasId)
+    {
+        status = PbfStatus.failure(
+            PbfError.missingNodeId,
+            nodeRef.rawOffset,
+            1);
+        return false;
+    }
+    if (!hasLat)
+    {
+        status = PbfStatus.failure(
+            PbfError.missingNodeLat,
+            nodeRef.rawOffset,
+            8);
+        return false;
+    }
+    if (!hasLon)
+    {
+        status = PbfStatus.failure(
+            PbfError.missingNodeLon,
+            nodeRef.rawOffset,
+            9);
+        return false;
+    }
+
+    if (!checkedMulAdd(
+        block.latOffset,
+        cast(long)block.granularity,
+        latValue,
+        parsed.latNano))
+    {
+        status = PbfStatus.failure(
+            PbfError.nodeCoordinateOverflow,
+            nodeRef.rawOffset,
+            8);
+        return false;
+    }
+
+    if (!checkedMulAdd(
+        block.lonOffset,
+        cast(long)block.granularity,
+        lonValue,
+        parsed.lonNano))
+    {
+        status = PbfStatus.failure(
+            PbfError.nodeCoordinateOverflow,
+            nodeRef.rawOffset,
+            9);
+        return false;
+    }
+
+    if (!finalizeInfo(block, table, parsed.info, status))
+        return false;
+
+    parsed.tags.keyCount = tagCount;
+    parsed.tags.valueCount = tagCount;
     status = PbfStatus.init;
     return true;
 }
