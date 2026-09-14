@@ -382,8 +382,11 @@ public:
         _fieldNumber = fieldNumber;
     }
 
+    // `status` is failure-only here. The enclosing emitter starts with a
+    // successful status and returns immediately after any cursor failure, so
+    // rewriting PbfStatus.init for every successfully decoded value is redundant.
     pragma(inline, true)
-    bool next(out long value, out bool hasValue, out PbfStatus status)
+    bool next(out long value, out bool hasValue, ref PbfStatus status)
         @safe nothrow @nogc
     {
         value = 0;
@@ -402,7 +405,6 @@ public:
                     return false;
                 }
                 hasValue = true;
-                status = PbfStatus.init;
                 return true;
             }
 
@@ -426,8 +428,7 @@ public:
                         return false;
                     }
                     hasValue = true;
-                    status = PbfStatus.init;
-                    return true;
+                        return true;
                 }
 
                 if (field.number == _fieldNumber &&
@@ -492,7 +493,6 @@ public:
 
             if (_group.empty)
             {
-                status = PbfStatus.init;
                 return true;
             }
         }
