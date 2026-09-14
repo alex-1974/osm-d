@@ -220,6 +220,12 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
     long lat;
     long lon;
 
+    // preflightCoordinates() has already proved that the affine coordinate
+    // transform is representable for the complete validated latitude and
+    // longitude ranges. Every emitted cumulative coordinate lies within those
+    // ranges, so repeating checkedMulAdd for every node is redundant.
+    const coordinateFactor = cast(long)block.granularity;
+
     foreach (_; 0 .. group.dense.nodeCount)
     {
         long idDelta;
@@ -263,18 +269,8 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
         lat = nextLat;
         lon = nextLon;
 
-        long latNano;
-        long lonNano;
-        if (!checkedMulAdd(block.latOffset, cast(long)block.granularity, lat, latNano))
-        {
-            status = PbfStatus.failure(PbfError.denseNodeCoordinateOverflow, 0, 8);
-            return false;
-        }
-        if (!checkedMulAdd(block.lonOffset, cast(long)block.granularity, lon, lonNano))
-        {
-            status = PbfStatus.failure(PbfError.denseNodeCoordinateOverflow, 0, 9);
-            return false;
-        }
+        const latNano = block.latOffset + coordinateFactor * lat;
+        const lonNano = block.lonOffset + coordinateFactor * lon;
 
         static if (!HasTags && !HasInfo &&
             __traits(compiles, sink.putDenseNodeScalars(id, latNano, lonNano)))

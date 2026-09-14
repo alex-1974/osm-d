@@ -106,7 +106,8 @@ large extracts do not belong in Git.
 `micro/dense_nodes.d` measures the production `decodeDenseNodes` path after
 PrimitiveBlock/PrimitiveGroup layout discovery and StringTable indexing have
 already completed. This isolates the entity hot path while retaining production
-preflight, checked coordinate conversion and tag semantics.
+coordinate-range preflight, direct prevalidated coordinate reconstruction and
+tag semantics.
 
 Run both installed reference compilers:
 
@@ -157,19 +158,23 @@ Examples:
 Workload generation, structural layout decoding, StringTable index allocation,
 correctness validation, sorting and reporting are outside the timed region.
 
-### Semantically matched C++ reference
+### Conservative C++ reference
 
 `reference/dense_nodes_cpp.cpp` is a C++20 reference for the same canonical
-no-DenseInfo workloads used by `micro/dense_nodes.d`. It intentionally performs
-the same integrity work that materially affects the timed D hot path: complete
-`keys_vals` preflight before emission, checked delta accumulation, checked exact
-coordinate conversion, per-node tag partitioning, borrowed StringTable lookup,
-and the same three observable checksum sinks.
+no-DenseInfo workloads used by `micro/dense_nodes.d`. It retains complete
+`keys_vals` preflight, checked delta accumulation, per-node tag partitioning,
+borrowed StringTable lookup and the same three observable checksum sinks.
 
-The reference is deliberately **not** libosmium. Its purpose is to answer the
-narrow compiler/language question before an implementation-level comparison is
-made. A faster implementation that performs less validation would not establish
-that C++ is faster than D for the same contract.
+Unlike current D production, the C++ reference still performs checked coordinate
+conversion for every emitted node. D production validates the complete
+coordinate ranges during preflight and then performs direct affine coordinate
+reconstruction during emission. The C++ implementation is therefore a
+conservative reference, not a cycle-for-cycle matched coordinate-arithmetic
+contract.
+
+The reference is deliberately **not** libosmium. Until its coordinate
+preflight/emission split is updated to match production, absolute C++ versus D
+timings must not be interpreted as a strict same-work language comparison.
 
 Run Clang and GCC if both are installed:
 

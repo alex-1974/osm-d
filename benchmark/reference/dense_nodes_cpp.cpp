@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// Semantically matched C++20 reference for the d-osm DenseNodes hot path.
+// Conservative C++20 reference for the d-osm DenseNodes hot path.
 //
-// This benchmark intentionally mirrors the work performed by the production D
-// decoder on the benchmark's canonical no-DenseInfo workloads: complete dense
-// tag preflight before emission, checked delta/coordinate arithmetic, per-node
-// tag-range construction, and the same observable sink checksums. Workload
-// generation, PrimitiveBlock/PrimitiveGroup layout discovery and StringTable
-// indexing remain outside the timed region, exactly as in dense_nodes.d.
+// This benchmark uses the same canonical no-DenseInfo workloads, complete dense
+// tag preflight, checked delta accumulation, per-node tag-range construction,
+// and observable sink checksums as the production D benchmark. Unlike current
+// D production, it still performs checked coordinate conversion for every
+// emitted node. Workload generation, PrimitiveBlock/PrimitiveGroup layout
+// discovery and StringTable indexing remain outside the timed region.
 //
 // Authors: Alexander Bernardi
 // Date: 2026-09-12
@@ -1459,7 +1459,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::cout << "d-osm DenseNodes C++ semantic-reference benchmark\n";
+    std::cout << "d-osm DenseNodes C++ conservative-reference benchmark\n";
     std::cout << "compiler: " << compiler_name() << '\n';
     std::cout << "nodes/profile: " << node_count
               << "  iterations/sample: " << iterations
@@ -1473,7 +1473,7 @@ int main(int argc, char** argv) {
     std::cout << "statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50\n";
     std::cout << "timed: semantic-reference DenseNodes preflight + emission + selected sink work\n";
     std::cout << "excluded: workload generation, block/group layout, StringTable indexing, validation, sorting and reporting\n";
-    std::cout << "comparison contract: no DenseInfo; full tag preflight; checked deltas/coordinates; identical sink checksum\n";
+    std::cout << "comparison scope: no DenseInfo; full tag preflight; checked deltas; C++ retains per-node checked coordinates; identical sink checksum\n";
     std::cout << "MiB/s(group) is serialized PrimitiveGroup memory throughput, not compressed PBF I/O\n\n";
 
     static constexpr std::array<WorkloadProfile, 4> all_profiles{
