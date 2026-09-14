@@ -12,7 +12,13 @@
 
 namespace {
 
-enum class Stage { varint3, delta3, coordinates };
+enum class Stage {
+    sint64Decode,
+    deltaUnchecked,
+    deltaChecked,
+    coordinatesUnchecked,
+    coordinatesChecked
+};
 
 struct Workload {
     std::vector<std::uint8_t> ids;
@@ -151,7 +157,7 @@ inline bool checked_mul_add(
     return checked_mul(factor, value, product) && checked_add(base, product, out);
 }
 
-Run run_varint3(const Workload& w) noexcept {
+Run run_sint64_decode(const Workload& w) noexcept {
     Cursor ids(w.ids), lats(w.lats), lons(w.lons);
     std::uint64_t checksum = 0;
     for (std::size_t i = 0; i < w.node_count; ++i) {
@@ -164,58 +170,138 @@ Run run_varint3(const Workload& w) noexcept {
     return {checksum, ids.empty() && lats.empty() && lons.empty()};
 }
 
-Run run_delta3(const Workload& w) noexcept {
+Run run_delta_unchecked(const Workload& w) noexcept {
     Cursor ids(w.ids), lats(w.lats), lons(w.lons);
     std::int64_t id = 0, lat = 0, lon = 0;
     std::uint64_t checksum = 0;
+
     for (std::size_t i = 0; i < w.node_count; ++i) {
         std::int64_t di, da, dn;
         if (!read_triple(ids, lats, lons, di, da, dn)) return {};
-        std::int64_t ni, na, nn;
-        if (!checked_add(id, di, ni) || !checked_add(lat, da, na) || !checked_add(lon, dn, nn)) return {};
-        id = ni; lat = na; lon = nn;
+
+        // The synthetic workload is deliberately far from integer overflow.
+        id += di;
+        lat += da;
+        lon += dn;
+
         checksum = mix(checksum, static_cast<std::uint64_t>(id));
         checksum = mix(checksum, static_cast<std::uint64_t>(lat));
         checksum = mix(checksum, static_cast<std::uint64_t>(lon));
     }
+
     return {checksum, ids.empty() && lats.empty() && lons.empty()};
 }
 
-Run run_coordinates(const Workload& w) noexcept {
+Run run_delta_checked(const Workload& w) noexcept {
+    Cursor ids(w.ids), lats(w.lats), lons(w.lons);
+    std::int64_t id = 0, lat = 0, lon = 0;
+    std::uint64_t checksum = 0;
+
+    for (std::size_t i = 0; i < w.node_count; ++i) {
+        std::int64_t di, da, dn;
+        if (!read_triple(ids, lats, lons, di, da, dn)) return {};
+
+        std::int64_t ni, na, nn;
+        if (!checked_add(id, di, ni) ||
+            !checked_add(lat, da, na) ||
+            !checked_add(lon, dn, nn))
+            return {};
+
+        id = ni;
+        lat = na;
+        lon = nn;
+
+        checksum = mix(checksum, static_cast<std::uint64_t>(id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lat));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lon));
+    }
+
+    return {checksum, ids.empty() && lats.empty() && lons.empty()};
+}
+
+Run run_coordinates_unchecked(const Workload& w) noexcept {
     Cursor ids(w.ids), lats(w.lats), lons(w.lons);
     std::int64_t id = 0, lat = 0, lon = 0;
     std::uint64_t checksum = 0;
     const auto factor = static_cast<std::int64_t>(w.granularity);
+
     for (std::size_t i = 0; i < w.node_count; ++i) {
         std::int64_t di, da, dn;
         if (!read_triple(ids, lats, lons, di, da, dn)) return {};
-        std::int64_t ni, na, nn;
-        if (!checked_add(id, di, ni) || !checked_add(lat, da, na) || !checked_add(lon, dn, nn)) return {};
-        id = ni; lat = na; lon = nn;
-        std::int64_t lat_nano, lon_nano;
-        if (!checked_mul_add(w.lat_offset, factor, lat, lat_nano) ||
-            !checked_mul_add(w.lon_offset, factor, lon, lon_nano)) return {};
+
+        // The synthetic workload is deliberately far from integer overflow.
+        id += di;
+        lat += da;
+        lon += dn;
+
+        const auto lat_nano = w.lat_offset + factor * lat;
+        const auto lon_nano = w.lon_offset + factor * lon;
+
         checksum = mix(checksum, static_cast<std::uint64_t>(id));
         checksum = mix(checksum, static_cast<std::uint64_t>(lat_nano));
         checksum = mix(checksum, static_cast<std::uint64_t>(lon_nano));
     }
+
+    return {checksum, ids.empty() && lats.empty() && lons.empty()};
+}
+
+Run run_coordinates_checked(const Workload& w) noexcept {
+    Cursor ids(w.ids), lats(w.lats), lons(w.lons);
+    std::int64_t id = 0, lat = 0, lon = 0;
+    std::uint64_t checksum = 0;
+    const auto factor = static_cast<std::int64_t>(w.granularity);
+
+    for (std::size_t i = 0; i < w.node_count; ++i) {
+        std::int64_t di, da, dn;
+        if (!read_triple(ids, lats, lons, di, da, dn)) return {};
+
+        // Keep delta accumulation identical to coordinatesUnchecked so this
+        // pair isolates only checked_mul_add versus ordinary multiply/add.
+        id += di;
+        lat += da;
+        lon += dn;
+
+        std::int64_t lat_nano, lon_nano;
+        if (!checked_mul_add(w.lat_offset, factor, lat, lat_nano) ||
+            !checked_mul_add(w.lon_offset, factor, lon, lon_nano))
+            return {};
+
+        checksum = mix(checksum, static_cast<std::uint64_t>(id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lat_nano));
+        checksum = mix(checksum, static_cast<std::uint64_t>(lon_nano));
+    }
+
     return {checksum, ids.empty() && lats.empty() && lons.empty()};
 }
 
 Run run_stage(const Workload& w, Stage s) noexcept {
     switch (s) {
-        case Stage::varint3: return run_varint3(w);
-        case Stage::delta3: return run_delta3(w);
-        case Stage::coordinates: return run_coordinates(w);
+        case Stage::sint64Decode:
+            return run_sint64_decode(w);
+        case Stage::deltaUnchecked:
+            return run_delta_unchecked(w);
+        case Stage::deltaChecked:
+            return run_delta_checked(w);
+        case Stage::coordinatesUnchecked:
+            return run_coordinates_unchecked(w);
+        case Stage::coordinatesChecked:
+            return run_coordinates_checked(w);
     }
     return {};
 }
 
 const char* stage_name(Stage s) noexcept {
     switch (s) {
-        case Stage::varint3: return "varint3";
-        case Stage::delta3: return "delta3";
-        case Stage::coordinates: return "coordinates";
+        case Stage::sint64Decode:
+            return "sint64-decode";
+        case Stage::deltaUnchecked:
+            return "delta-unchecked";
+        case Stage::deltaChecked:
+            return "delta-checked";
+        case Stage::coordinatesUnchecked:
+            return "coords-unchecked";
+        case Stage::coordinatesChecked:
+            return "coords-checked";
     }
     return "?";
 }
@@ -241,18 +327,37 @@ std::size_t parse_arg(int argc, char** argv, std::string_view name, std::size_t 
 
 int main(int argc, char** argv) {
     const auto nodes = parse_arg(argc, argv, "--nodes=", 200000);
-    const auto iterations = parse_arg(argc, argv, "--iterations=", 5);
+    const auto iterations = parse_arg(argc, argv, "--iterations=", 1);
     const auto samples = parse_arg(argc, argv, "--samples=", 30);
     const auto warmup = parse_arg(argc, argv, "--warmup=", 2);
-    if (!nodes || !iterations || !samples) return 2;
+    if (!nodes || !samples || iterations != 1) {
+        std::fprintf(stderr,
+            "nodes and samples must be > 0; iterations must be exactly 1\n");
+        return 2;
+    }
 
     const auto w = build_workload(nodes);
-    constexpr Stage stages[] = {Stage::varint3, Stage::delta3, Stage::coordinates};
-    std::uint64_t expected[3]{};
-    for (int i = 0; i < 3; ++i) {
+    constexpr Stage stages[] = {
+        Stage::sint64Decode,
+        Stage::deltaUnchecked,
+        Stage::deltaChecked,
+        Stage::coordinatesUnchecked,
+        Stage::coordinatesChecked,
+    };
+    std::uint64_t expected[5]{};
+    for (int i = 0; i < 5; ++i) {
         const auto r = run_stage(w, stages[i]);
         if (!r.ok) return 3;
         expected[i] = r.checksum;
+    }
+
+    if (expected[static_cast<int>(Stage::deltaUnchecked)] !=
+            expected[static_cast<int>(Stage::deltaChecked)] ||
+        expected[static_cast<int>(Stage::coordinatesUnchecked)] !=
+            expected[static_cast<int>(Stage::coordinatesChecked)]) {
+        std::fprintf(stderr,
+            "paired checked/unchecked stage checksum mismatch\n");
+        return 3;
     }
 
 #if defined(__clang__)
@@ -263,23 +368,52 @@ int main(int argc, char** argv) {
     std::printf("d-osm DenseNodes C++ coordinate-stage benchmark\ncompiler: unknown\n");
 #endif
     std::printf("nodes: %zu  iterations/sample: %zu  samples: %zu  warmup: %zu\n", nodes, iterations, samples, warmup);
-    std::printf("packed bytes: ids=%zu lats=%zu lons=%zu total=%zu\n", w.ids.size(), w.lats.size(), w.lons.size(), w.ids.size()+w.lats.size()+w.lons.size());
-    std::printf("stages: varint3 -> checked delta3 -> checked nanodegree coordinates\n");
+    std::printf("encoded bytes: ids=%zu lats=%zu lons=%zu total=%zu\n", w.ids.size(), w.lats.size(), w.lons.size(), w.ids.size()+w.lats.size()+w.lons.size());
+    std::printf("stages: sint64-decode; checked/unchecked delta accumulation; checked/unchecked nanodegree conversion\n");
     std::printf("excluded: protobuf field scanning, tags, DenseInfo, node views, workload generation and reporting\n");
-    std::printf("ordering: rotating all six permutations of the three stages\n");
+    std::printf("ordering: rotating five cyclic orders; balanced over each complete five-sample cycle\n");
     std::printf("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50\n\n");
 
     volatile std::uint64_t observable = 0;
-    constexpr Stage permutations[6][3] = {
-        {Stage::varint3, Stage::delta3, Stage::coordinates},
-        {Stage::varint3, Stage::coordinates, Stage::delta3},
-        {Stage::delta3, Stage::varint3, Stage::coordinates},
-        {Stage::delta3, Stage::coordinates, Stage::varint3},
-        {Stage::coordinates, Stage::varint3, Stage::delta3},
-        {Stage::coordinates, Stage::delta3, Stage::varint3},
+    constexpr Stage permutations[5][5] = {
+        {
+            Stage::sint64Decode,
+            Stage::deltaUnchecked,
+            Stage::deltaChecked,
+            Stage::coordinatesUnchecked,
+            Stage::coordinatesChecked,
+        },
+        {
+            Stage::deltaUnchecked,
+            Stage::deltaChecked,
+            Stage::coordinatesUnchecked,
+            Stage::coordinatesChecked,
+            Stage::sint64Decode,
+        },
+        {
+            Stage::deltaChecked,
+            Stage::coordinatesUnchecked,
+            Stage::coordinatesChecked,
+            Stage::sint64Decode,
+            Stage::deltaUnchecked,
+        },
+        {
+            Stage::coordinatesUnchecked,
+            Stage::coordinatesChecked,
+            Stage::sint64Decode,
+            Stage::deltaUnchecked,
+            Stage::deltaChecked,
+        },
+        {
+            Stage::coordinatesChecked,
+            Stage::sint64Decode,
+            Stage::deltaUnchecked,
+            Stage::deltaChecked,
+            Stage::coordinatesUnchecked,
+        },
     };
 
-    for (int si = 0; si < 3; ++si) {
+    for (int si = 0; si < 5; ++si) {
         for (std::size_t wup = 0; wup < warmup; ++wup) {
             const auto r = run_stage(w, stages[si]);
             if (!r.ok || r.checksum != expected[si]) return 3;
@@ -287,10 +421,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::vector<double> times[3];
+    std::vector<double> times[5];
     for (auto& v : times) v.reserve(samples);
     for (std::size_t sample = 0; sample < samples; ++sample) {
-        const auto& order = permutations[sample % 6];
+        const auto& order = permutations[sample % 5];
         for (Stage stage : order) {
             const int si = static_cast<int>(stage);
             const auto start = std::chrono::steady_clock::now();
@@ -309,7 +443,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    for (int si = 0; si < 3; ++si) {
+    for (int si = 0; si < 5; ++si) {
         const auto stage = stages[si];
         const auto st = summarize(times[si]);
         const double delta80 = st.p50 == 0 ? 0 : (st.p90 - st.p10) / st.p50 * 100.0;

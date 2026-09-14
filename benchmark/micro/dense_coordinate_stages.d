@@ -2,10 +2,13 @@
  * Diagnostic microbenchmark for the DenseNodes coordinate decode core.
  *
  * The benchmark removes PrimitiveGroup scanning, tags, DenseInfo and node-view
- * construction. Three identical packed sint64 columns are generated with the
- * same delta patterns as the DenseNodes benchmark and then timed in stages:
- * raw protobuf varint decode, checked delta accumulation, and checked exact
- * nanodegree conversion. A matching C++ reference lives in
+ * construction. Separate encoded sint64 delta streams for ID, latitude and
+ * longitude are generated with the same deterministic delta patterns as the
+ * DenseNodes benchmark. Five stages read the same three input streams and
+ * isolate sint64 decoding (varint plus ZigZag), unchecked versus checked delta
+ * accumulation, and unchecked versus checked exact nanodegree conversion.
+ * Each checked/unchecked
+ * pair produces the same observable checksum. A matching C++ reference lives in
  * `reference/dense_coordinate_stages_cpp.cpp`.
  *
  * This is a diagnostic benchmark, not an end-to-end parser benchmark.
@@ -29,9 +32,11 @@ import std.stdio : stderr, writefln, writeln;
 
 private enum Stage
 {
-    varint3,
-    delta3,
-    coordinates,
+    sint64Decode,
+    deltaUnchecked,
+    deltaChecked,
+    coordinatesUnchecked,
+    coordinatesChecked,
 }
 
 private struct Workload
@@ -153,7 +158,7 @@ private bool readTriple(
         readSVarint64(lons, lon, status);
 }
 
-private StageRun runVarint3(ref const Workload workload)
+private StageRun runSint64Decode(ref const Workload workload)
     @safe nothrow @nogc
 {
     auto ids = WireCursor(workload.ids);
@@ -176,7 +181,38 @@ private StageRun runVarint3(ref const Workload workload)
     return StageRun(checksum, ids.empty && lats.empty && lons.empty);
 }
 
-private StageRun runDelta3(ref const Workload workload)
+private StageRun runDeltaUnchecked(ref const Workload workload)
+    @safe nothrow @nogc
+{
+    auto ids = WireCursor(workload.ids);
+    auto lats = WireCursor(workload.lats);
+    auto lons = WireCursor(workload.lons);
+    long id;
+    long lat;
+    long lon;
+    ulong checksum;
+
+    foreach (_; 0 .. workload.nodeCount)
+    {
+        long idDelta;
+        long latDelta;
+        long lonDelta;
+        if (!readTriple(ids, lats, lons, idDelta, latDelta, lonDelta))
+            return StageRun(0, false);
+
+        id += idDelta;
+        lat += latDelta;
+        lon += lonDelta;
+
+        checksum = mix(checksum, cast(ulong)id);
+        checksum = mix(checksum, cast(ulong)lat);
+        checksum = mix(checksum, cast(ulong)lon);
+    }
+
+    return StageRun(checksum, ids.empty && lats.empty && lons.empty);
+}
+
+private StageRun runDeltaChecked(ref const Workload workload)
     @safe nothrow @nogc
 {
     auto ids = WireCursor(workload.ids);
@@ -202,6 +238,7 @@ private StageRun runDelta3(ref const Workload workload)
             !checkedAdd(lat, latDelta, nextLat) ||
             !checkedAdd(lon, lonDelta, nextLon))
             return StageRun(0, false);
+
         id = nextId;
         lat = nextLat;
         lon = nextLon;
@@ -214,7 +251,7 @@ private StageRun runDelta3(ref const Workload workload)
     return StageRun(checksum, ids.empty && lats.empty && lons.empty);
 }
 
-private StageRun runCoordinates(ref const Workload workload)
+private StageRun runCoordinatesUnchecked(ref const Workload workload)
     @safe nothrow @nogc
 {
     auto ids = WireCursor(workload.ids);
@@ -234,16 +271,48 @@ private StageRun runCoordinates(ref const Workload workload)
         if (!readTriple(ids, lats, lons, idDelta, latDelta, lonDelta))
             return StageRun(0, false);
 
-        long nextId;
-        long nextLat;
-        long nextLon;
-        if (!checkedAdd(id, idDelta, nextId) ||
-            !checkedAdd(lat, latDelta, nextLat) ||
-            !checkedAdd(lon, lonDelta, nextLon))
+        // This benchmark workload is deliberately constructed so these
+        // operations cannot overflow.
+        id += idDelta;
+        lat += latDelta;
+        lon += lonDelta;
+
+        const latNano = workload.latOffset + factor * lat;
+        const lonNano = workload.lonOffset + factor * lon;
+
+        checksum = mix(checksum, cast(ulong)id);
+        checksum = mix(checksum, cast(ulong)latNano);
+        checksum = mix(checksum, cast(ulong)lonNano);
+    }
+
+    return StageRun(checksum, ids.empty && lats.empty && lons.empty);
+}
+
+private StageRun runCoordinatesChecked(ref const Workload workload)
+    @safe nothrow @nogc
+{
+    auto ids = WireCursor(workload.ids);
+    auto lats = WireCursor(workload.lats);
+    auto lons = WireCursor(workload.lons);
+    long id;
+    long lat;
+    long lon;
+    ulong checksum;
+    const factor = cast(long)workload.granularity;
+
+    foreach (_; 0 .. workload.nodeCount)
+    {
+        long idDelta;
+        long latDelta;
+        long lonDelta;
+        if (!readTriple(ids, lats, lons, idDelta, latDelta, lonDelta))
             return StageRun(0, false);
-        id = nextId;
-        lat = nextLat;
-        lon = nextLon;
+
+        // Keep delta accumulation identical to coordinatesUnchecked so the
+        // pair isolates only checkedMulAdd versus ordinary mul+add.
+        id += idDelta;
+        lat += latDelta;
+        lon += lonDelta;
 
         long latNano;
         long lonNano;
@@ -264,9 +333,16 @@ private StageRun runStage(ref const Workload workload, Stage stage)
 {
     final switch (stage)
     {
-    case Stage.varint3: return runVarint3(workload);
-    case Stage.delta3: return runDelta3(workload);
-    case Stage.coordinates: return runCoordinates(workload);
+    case Stage.sint64Decode:
+        return runSint64Decode(workload);
+    case Stage.deltaUnchecked:
+        return runDeltaUnchecked(workload);
+    case Stage.deltaChecked:
+        return runDeltaChecked(workload);
+    case Stage.coordinatesUnchecked:
+        return runCoordinatesUnchecked(workload);
+    case Stage.coordinatesChecked:
+        return runCoordinatesChecked(workload);
     }
 }
 
@@ -274,9 +350,16 @@ private string stageName(Stage stage) @safe pure nothrow
 {
     final switch (stage)
     {
-    case Stage.varint3: return "varint3";
-    case Stage.delta3: return "delta3";
-    case Stage.coordinates: return "coordinates";
+    case Stage.sint64Decode:
+        return "sint64-decode";
+    case Stage.deltaUnchecked:
+        return "delta-unchecked";
+    case Stage.deltaChecked:
+        return "delta-checked";
+    case Stage.coordinatesUnchecked:
+        return "coords-unchecked";
+    case Stage.coordinatesChecked:
+        return "coords-checked";
     }
 }
 
@@ -384,8 +467,14 @@ int main(string[] args) @system
     }
 
     auto workload = buildWorkload(nodeCount);
-    static immutable Stage[3] stages = [Stage.varint3, Stage.delta3, Stage.coordinates];
-    ulong[3] expected;
+    static immutable Stage[5] stages = [
+        Stage.sint64Decode,
+        Stage.deltaUnchecked,
+        Stage.deltaChecked,
+        Stage.coordinatesUnchecked,
+        Stage.coordinatesChecked,
+    ];
+    ulong[5] expected;
     foreach (i, stage; stages)
     {
         const run = runStage(workload, stage);
@@ -397,28 +486,66 @@ int main(string[] args) @system
         expected[i] = run.checksum;
     }
 
+    if (expected[cast(size_t)Stage.deltaUnchecked] !=
+            expected[cast(size_t)Stage.deltaChecked] ||
+        expected[cast(size_t)Stage.coordinatesUnchecked] !=
+            expected[cast(size_t)Stage.coordinatesChecked])
+    {
+        stderr.writeln("paired checked/unchecked stage checksum mismatch");
+        return 3;
+    }
+
     writeln("d-osm DenseNodes coordinate-stage benchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "nodes: %s  iterations/sample: %s  samples: %s  warmup: %s",
         nodeCount, iterations, samples, warmupIterations);
     writefln(
-        "packed bytes: ids=%s lats=%s lons=%s total=%s",
+        "encoded bytes: ids=%s lats=%s lons=%s total=%s",
         workload.ids.length, workload.lats.length, workload.lons.length,
         workload.ids.length + workload.lats.length + workload.lons.length);
-    writeln("stages: varint3 -> checked delta3 -> checked nanodegree coordinates");
+    writeln("stages: sint64-decode; checked/unchecked delta accumulation; checked/unchecked nanodegree conversion");
     writeln("excluded: protobuf field scanning, tags, DenseInfo, node views, workload generation and reporting");
-    writeln("ordering: rotating all six permutations of the three stages");
+    writeln("ordering: rotating five cyclic orders; balanced over each complete five-sample cycle");
     writeln("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50");
     writeln();
 
-    static immutable Stage[3][6] permutations = [
-        [Stage.varint3, Stage.delta3, Stage.coordinates],
-        [Stage.varint3, Stage.coordinates, Stage.delta3],
-        [Stage.delta3, Stage.varint3, Stage.coordinates],
-        [Stage.delta3, Stage.coordinates, Stage.varint3],
-        [Stage.coordinates, Stage.varint3, Stage.delta3],
-        [Stage.coordinates, Stage.delta3, Stage.varint3],
+    static immutable Stage[5][5] permutations = [
+        [
+            Stage.sint64Decode,
+            Stage.deltaUnchecked,
+            Stage.deltaChecked,
+            Stage.coordinatesUnchecked,
+            Stage.coordinatesChecked,
+        ],
+        [
+            Stage.deltaUnchecked,
+            Stage.deltaChecked,
+            Stage.coordinatesUnchecked,
+            Stage.coordinatesChecked,
+            Stage.sint64Decode,
+        ],
+        [
+            Stage.deltaChecked,
+            Stage.coordinatesUnchecked,
+            Stage.coordinatesChecked,
+            Stage.sint64Decode,
+            Stage.deltaUnchecked,
+        ],
+        [
+            Stage.coordinatesUnchecked,
+            Stage.coordinatesChecked,
+            Stage.sint64Decode,
+            Stage.deltaUnchecked,
+            Stage.deltaChecked,
+        ],
+        [
+            Stage.coordinatesChecked,
+            Stage.sint64Decode,
+            Stage.deltaUnchecked,
+            Stage.deltaChecked,
+            Stage.coordinatesUnchecked,
+        ],
     ];
 
     foreach (i, stage; stages)
@@ -430,10 +557,10 @@ int main(string[] args) @system
         }
     }
 
-    long[][3] times;
-    foreach (i; 0 .. 3)
+    long[][5] times;
+    foreach (i; 0 .. 5)
         times[i] = new long[samples];
-    ulong[3] observables;
+    ulong[5] observables;
 
     foreach (sample; 0 .. samples)
     {
