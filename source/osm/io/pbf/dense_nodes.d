@@ -28,7 +28,7 @@ import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.primitive_block : PrimitiveBlockLayout;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
 import osm.io.pbf.string_table : StringTableView;
-import osm.util.checked : checkedAdd, checkedMulAdd;
+import osm.util.checked : checkedMulAdd;
 import osm.wire.cursor : WireCursor;
 import osm.wire.error : WireStatus;
 import osm.wire.field :
@@ -246,28 +246,12 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
             return false;
         }
 
-        long nextId;
-        long nextLat;
-        long nextLon;
-        if (!checkedAdd(id, idDelta, nextId))
-        {
-            status = PbfStatus.failure(PbfError.denseNodeDeltaOverflow, 0, 1);
-            return false;
-        }
-        if (!checkedAdd(lat, latDelta, nextLat))
-        {
-            status = PbfStatus.failure(PbfError.denseNodeDeltaOverflow, 0, 8);
-            return false;
-        }
-        if (!checkedAdd(lon, lonDelta, nextLon))
-        {
-            status = PbfStatus.failure(PbfError.denseNodeDeltaOverflow, 0, 9);
-            return false;
-        }
-
-        id = nextId;
-        lat = nextLat;
-        lon = nextLon;
+        // decodePrimitiveGroupLayout() has already checked every cumulative
+        // ID/latitude/longitude delta step over these same validated column
+        // streams. Repeating checkedAdd during emission is therefore redundant.
+        id += idDelta;
+        lat += latDelta;
+        lon += lonDelta;
 
         const latNano = block.latOffset + coordinateFactor * lat;
         const lonNano = block.lonOffset + coordinateFactor * lon;
@@ -513,6 +497,81 @@ public:
             }
         }
     }
+}
+
+unittest
+{
+    // Packed and unpacked occurrences of each DenseNodes delta column concatenate
+    // in serialized field order. This also covers interleaving with the other
+    // coordinate columns.
+    //
+    // ids:  +1, +2, -1 -> 1, 3, 2
+    // lats: +10, -2, +1 -> 10, 8, 9
+    // lons: +5, -1, +2 -> 5, 4, 6
+    const(ubyte)[] groupBytes = [
+        0x12, 0x14,
+
+        0x0a, 0x01, 0x02,
+        0x40, 0x14,
+        0x4a, 0x02, 0x0a, 0x01,
+
+        0x08, 0x04,
+        0x42, 0x02, 0x03, 0x02,
+        0x48, 0x04,
+
+        0x0a, 0x01, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus status;
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, status));
+    assert(status.ok);
+
+    assert(group.dense.nodeCount == 3);
+    assert(group.dense.finalId == 2);
+    assert(group.dense.finalLat == 9);
+    assert(group.dense.finalLon == 6);
+    assert(group.dense.minLat == 8 && group.dense.maxLat == 10);
+    assert(group.dense.minLon == 4 && group.dense.maxLon == 6);
+
+    PrimitiveBlockLayout block;
+    block.granularity = 1;
+
+    import osm.io.pbf.string_table : StringRef;
+    const(ubyte)[] stringBytes = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(stringBytes, stringRefs[]);
+
+    struct Sink
+    {
+        DenseNodeView[3] nodes;
+        size_t used;
+
+        void put(DenseNodeView node) @safe nothrow @nogc
+        {
+            nodes[used++] = node;
+        }
+    }
+
+    Sink sink;
+    DenseNodeDecodeSummary summary;
+    assert(decodeDenseNodes(block, group, table, sink, summary, status));
+    assert(status.ok);
+    assert(summary.nodeCount == 3);
+    assert(sink.used == 3);
+
+    assert(sink.nodes[0].id == 1);
+    assert(sink.nodes[0].latNano == 10);
+    assert(sink.nodes[0].lonNano == 5);
+
+    assert(sink.nodes[1].id == 3);
+    assert(sink.nodes[1].latNano == 8);
+    assert(sink.nodes[1].lonNano == 4);
+
+    assert(sink.nodes[2].id == 2);
+    assert(sink.nodes[2].latNano == 9);
+    assert(sink.nodes[2].lonNano == 6);
 }
 
 unittest
