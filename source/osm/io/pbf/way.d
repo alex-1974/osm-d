@@ -41,7 +41,7 @@ import osm.wire.field :
     readFieldHeader,
     readLengthDelimited,
     skipFieldValue;
-import osm.wire.varint : readSVarint64, readVarint64;
+import osm.wire.varint : readSVarint64, readVarint32, readVarint64;
 
 /** Validation summary for one Way's delta-coded node-reference column. */
 struct WayRefValidationSummary
@@ -357,54 +357,26 @@ bool decodeWays(Sink)(
         if (!hasWay)
             break;
 
-        ParsedWay parsed;
-        if (!parseWay(block, wayRef, table, parsed, status))
-            return false;
-
-        TagRange tags;
-        if (!buildTagRange(
-            wayRef.bytes,
-            wayRef.rawOffset,
-            table,
-            parsed.tags,
-            tags,
-            status))
-            return false;
-
-        WayRefRange refs;
-        if (!buildWayRefRange(
-            wayRef.bytes,
-            wayRef.rawOffset,
-            parsed.refs,
-            refs,
-            status))
-            return false;
-
-        WayLocationRange locations;
-        if (!buildWayLocationRange(
+        WayView way;
+        size_t wayTagCount;
+        size_t wayRefCount;
+        size_t wayLocationCount;
+        if (!decodePrevalidatedWay(
             block,
-            wayRef.bytes,
-            wayRef.rawOffset,
-            parsed.locations,
-            locations,
+            wayRef,
+            table,
+            way,
+            wayTagCount,
+            wayRefCount,
+            wayLocationCount,
             status))
             return false;
-
-        WayView way = WayView(
-            parsed.id,
-            tags,
-            refs,
-            locations,
-            parsed.info,
-            wayRef.bytes,
-            wayRef.rawOffset);
 
         sink.put(way);
         ++summary.wayCount;
-        summary.tagCount += parsed.tags.tagCount;
-        summary.refCount += parsed.refs.refCount;
-        if (parsed.locations.hasLocations)
-            summary.locationCount += parsed.locations.latCount;
+        summary.tagCount += wayTagCount;
+        summary.refCount += wayRefCount;
+        summary.locationCount += wayLocationCount;
     }
 
     if (summary.wayCount != preflightCount ||
@@ -415,6 +387,344 @@ bool decodeWays(Sink)(
         status = PbfStatus.failure(PbfError.wayCountMismatch, 0, 3);
         return false;
     }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Count one already-valid packed uint32 occurrence without repeating tag
+ * StringTable semantics.
+ *
+ * This helper is used only by the emission pass after the complete immutable
+ * PrimitiveGroup has passed `parseWay` preflight.
+ */
+pragma(inline, true)
+private bool countPrevalidatedPackedUInt32(
+    const(ubyte)[] packedBytes,
+    size_t packedBase,
+    uint fieldNumber,
+    ref size_t count,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    auto packed = WireCursor(packedBytes);
+    while (!packed.empty)
+    {
+        uint ignored;
+        WireStatus wire;
+        if (!readVarint32(packed, ignored, wire))
+        {
+            if (wire.fieldNumber == 0)
+                wire.fieldNumber = fieldNumber;
+            status = PbfStatus.fromTagWire(wire, packedBase);
+            return false;
+        }
+        ++count;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Count one already-valid packed sint64 occurrence without repeating checked
+ * delta accumulation or coordinate semantics.
+ */
+pragma(inline, true)
+private bool countPrevalidatedPackedSInt64(
+    const(ubyte)[] packedBytes,
+    size_t packedBase,
+    uint fieldNumber,
+    ref size_t count,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    auto packed = WireCursor(packedBytes);
+    while (!packed.empty)
+    {
+        long ignored;
+        WireStatus wire;
+        if (!readSVarint64(packed, ignored, wire))
+        {
+            if (wire.fieldNumber == 0)
+                wire.fieldNumber = fieldNumber;
+            status = PbfStatus.fromWayWire(wire, packedBase);
+            return false;
+        }
+        ++count;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Reconstruct one Way for emission after complete group semantic preflight.
+ *
+ * Precondition: `wayRef.bytes` are the same immutable bytes previously accepted
+ * by `parseWay` with the same PrimitiveBlock and StringTable. The first pass has
+ * therefore already proved tag StringTable references, checked ref deltas,
+ * LocationsOnWays alignment, checked coordinate accumulation/conversion, and
+ * required-field semantics for every Way before any sink call.
+ *
+ * This second pass still re-decodes values needed by `WayView` and counts the
+ * already-valid repeated columns so borrowed ranges can be rebuilt without
+ * allocation. It deliberately does not repeat complete tag/ref/location
+ * semantic validation.
+ */
+private bool decodePrevalidatedWay(
+    ref const PrimitiveBlockLayout block,
+    WayMessageRef wayRef,
+    StringTableView table,
+    out WayView way,
+    out size_t tagCount,
+    out size_t refCount,
+    out size_t locationCount,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    way = WayView.init;
+    tagCount = 0;
+    refCount = 0;
+    locationCount = 0;
+
+    auto cursor = WireCursor(wayRef.bytes);
+    bool hasId;
+    long id;
+    InfoView info;
+    size_t latCount;
+    size_t lonCount;
+
+    while (!cursor.empty)
+    {
+        FieldHeader field;
+        WireStatus wire;
+        if (!readFieldHeader(cursor, field, wire))
+        {
+            status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+            return false;
+        }
+
+        if (field.number == 1 && field.wireType == WireType.varint)
+        {
+            ulong raw;
+            if (!readVarint64(cursor, raw, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            id = cast(long)raw;
+            hasId = true;
+            continue;
+        }
+
+        if (field.number == 2 && field.wireType == WireType.varint)
+        {
+            uint ignored;
+            if (!readVarint32(cursor, ignored, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromTagWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            ++tagCount;
+            continue;
+        }
+
+        if (field.number == 2 && field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] packedBytes;
+            if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+            {
+                status = PbfStatus.fromTagWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            const packedBase =
+                wayRef.rawOffset + cursor.offset - packedBytes.length;
+            if (!countPrevalidatedPackedUInt32(
+                packedBytes,
+                packedBase,
+                2,
+                tagCount,
+                status))
+                return false;
+            continue;
+        }
+
+        if ((field.number == 8 || field.number == 9 || field.number == 10) &&
+            field.wireType == WireType.varint)
+        {
+            long ignored;
+            if (!readSVarint64(cursor, ignored, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            if (field.number == 8)
+                ++refCount;
+            else if (field.number == 9)
+                ++latCount;
+            else
+                ++lonCount;
+            continue;
+        }
+
+        if ((field.number == 8 || field.number == 9 || field.number == 10) &&
+            field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] packedBytes;
+            if (!readLengthDelimited(cursor, field.number, packedBytes, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            const packedBase =
+                wayRef.rawOffset + cursor.offset - packedBytes.length;
+
+            if (field.number == 8)
+            {
+                if (!countPrevalidatedPackedSInt64(
+                    packedBytes,
+                    packedBase,
+                    8,
+                    refCount,
+                    status))
+                    return false;
+            }
+            else if (field.number == 9)
+            {
+                if (!countPrevalidatedPackedSInt64(
+                    packedBytes,
+                    packedBase,
+                    9,
+                    latCount,
+                    status))
+                    return false;
+            }
+            else
+            {
+                if (!countPrevalidatedPackedSInt64(
+                    packedBytes,
+                    packedBase,
+                    10,
+                    lonCount,
+                    status))
+                    return false;
+            }
+            continue;
+        }
+
+        if (field.number == 4 && field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] infoBytes;
+            if (!readLengthDelimited(cursor, field.number, infoBytes, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            const infoOffset =
+                wayRef.rawOffset + cursor.offset - infoBytes.length;
+            if (!mergeInfoMessage(
+                infoBytes,
+                infoOffset,
+                info,
+                status))
+                return false;
+            continue;
+        }
+
+        if (!skipFieldValue(cursor, field, wire))
+        {
+            status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+            return false;
+        }
+    }
+
+    // These are defensive checks. The complete first pass already established
+    // them for the same immutable bytes before this function can run.
+    if (!hasId)
+    {
+        status = PbfStatus.failure(
+            PbfError.missingWayId,
+            wayRef.rawOffset,
+            1);
+        return false;
+    }
+
+    if ((latCount != 0 || lonCount != 0) &&
+        (latCount != refCount || lonCount != refCount))
+    {
+        status = PbfStatus.failure(
+            PbfError.wayLocationColumnLengthMismatch,
+            wayRef.rawOffset,
+            latCount != refCount ? 9 : 10);
+        return false;
+    }
+
+    if (!finalizeInfo(block, table, info, status))
+        return false;
+
+    TagValidationSummary tagSummary;
+    tagSummary.keyCount = tagCount;
+    tagSummary.valueCount = tagCount;
+
+    TagRange tags;
+    if (!buildTagRange(
+        wayRef.bytes,
+        wayRef.rawOffset,
+        table,
+        tagSummary,
+        tags,
+        status))
+        return false;
+
+    WayRefValidationSummary refSummary;
+    refSummary.refCount = refCount;
+
+    WayRefRange refs;
+    if (!buildWayRefRange(
+        wayRef.bytes,
+        wayRef.rawOffset,
+        refSummary,
+        refs,
+        status))
+        return false;
+
+    WayLocationValidationSummary locationSummary;
+    locationSummary.latCount = latCount;
+    locationSummary.lonCount = lonCount;
+
+    WayLocationRange locations;
+    if (!buildWayLocationRange(
+        block,
+        wayRef.bytes,
+        wayRef.rawOffset,
+        locationSummary,
+        locations,
+        status))
+        return false;
+
+    locationCount = latCount;
+    way = WayView(
+        id,
+        tags,
+        refs,
+        locations,
+        info,
+        wayRef.bytes,
+        wayRef.rawOffset);
 
     status = PbfStatus.init;
     return true;
