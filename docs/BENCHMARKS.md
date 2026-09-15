@@ -542,3 +542,97 @@ A4a is therefore **REJECTED as a performance change** despite its valid
 semantic premise and smaller generated code. The experiment reinforces the
 earlier A3b result: static simplification of this hot loop must not be accepted
 without controlled runtime evidence.
+
+
+### A4d: publish the completed DenseNodes node count once
+
+Fresh profiling also showed that the successful emission loop updated
+`DenseNodeDecodeSummary.nodeCount` once per emitted node. That value is already
+fixed by the validated layout: `DenseNodesLayout.nodeCount` is established
+before emission, and `DenseNodeDecodeSummary` represents the result of a
+successfully completed decode rather than a partial-progress interface.
+
+A4d therefore removed the per-node `++summary.nodeCount` update and publishes
+
+```d
+summary.nodeCount = group.dense.nodeCount;
+```
+
+once after successful completion of all emission and final consistency checks.
+The public contract was made explicit at the same time: summary fields are
+contractually valid only when `decodeDenseNodes()` returns `true`; callers must
+not interpret them as partial progress after a failed decode.
+
+The source change passed the full unit-test suite (24 modules). The final
+documented source rebuilt to exactly the benchmark binary used for the
+performance decision:
+
+```text
+SHA-256:
+b9466c315aef00a82a454d27a0909837f4b3ef16a28145dc510a769322e6429c
+```
+
+A controlled fixed-binary A-B-B-A run on tagless/coordinates showed a consistent
+improvement:
+
+| Comparison | A4d vs baseline |
+| --- | ---: |
+| mean p50 | -2.83% ns/node |
+| B1 / A1 | -2.60% |
+| B2 / A2 | -3.05% |
+| throughput from mean p50 | +2.91% |
+
+All four runs produced the same checksum. A separate fixed-binary hardware
+counter A-B-B-A run supported the same mechanism:
+
+| Counter | Baseline mean | A4d mean | Change |
+| --- | ---: | ---: | ---: |
+| cycles | 3,122,993,885.5 | 3,052,591,816.0 | -2.25% |
+| instructions | 12,511,902,278.5 | 12,306,705,521.0 | -1.64% |
+| branches | 858,779,935.5 | 858,781,226.5 | ~0.00% |
+| IPC | 4.0064 | 4.0316 | +0.63% |
+
+Unlike A4a, A4d therefore reduced retired work and cycles without degrading
+execution efficiency in the targeted minimal hot path.
+
+The full twelve-combination profile/path matrix was more mixed than the
+tagless result: nine combinations improved in both paired comparisons, two were
+slower in both comparisons, and one had mixed direction. Checksums matched in
+all combinations. In particular, the ordinary timing matrix showed small
+apparent regressions for `typical/coordinates` and `rich/coordinates`.
+
+Those timing-only regressions were not confirmed as a stable execution-cost
+regression by targeted fixed-binary counter runs. For `typical/coordinates`,
+A4d reduced cycles by about 0.64%, instructions by about 2.98%, and branches by
+about 5.89%. For `typical/tag-ids`, it reduced cycles by about 1.74%,
+instructions by about 1.42%, and branches by about 5.01%. Branch-miss counts
+remained tiny in absolute terms and are not used to explain the result.
+
+Static inspection of the tagged `HasTags=true, HasInfo=false` dispatchers also
+showed broader code-generation simplification than the single removed memory
+increment alone:
+
+| Dispatcher | Metric | Baseline | A4d | Change |
+| --- | --- | ---: | ---: | ---: |
+| coordinates | size | 23,915 bytes | 23,678 bytes | -237 bytes |
+| coordinates | static instructions | 4,433 | 4,387 | -46 |
+| coordinates | `mov` family | 1,896 | 1,861 | -35 |
+| coordinates | unconditional jumps | 169 | 163 | -6 |
+| coordinates | calls | 124 | 123 | -1 |
+| tag IDs | size | 23,915 bytes | 23,762 bytes | -153 bytes |
+| tag IDs | static instructions | 4,436 | 4,405 | -31 |
+| tag IDs | `mov` family | 1,899 | 1,876 | -23 |
+| tag IDs | unconditional jumps | 171 | 166 | -5 |
+| tag IDs | calls | 126 | 126 | 0 |
+
+The intended per-node summary memory increment disappears in both dispatchers.
+The source change also enables wider generated-code simplification, but the
+measurements do not isolate a unique LDC/LLVM cause. Alias analysis, register
+allocation, control-flow simplification, code layout, or a combination of
+effects may contribute; none is claimed as the demonstrated sole mechanism.
+
+A4d is therefore **KEPT**. The decision rests on the controlled tagless A-B-B-A
+win, matching hardware-counter evidence, successful targeted tagged counter
+runs, passing correctness tests, and exact final-binary identity. The mixed
+twelve-combination timing matrix is retained as part of the evidence rather
+than being hidden or interpreted as uniformly positive.
