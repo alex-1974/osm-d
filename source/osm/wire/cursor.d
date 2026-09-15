@@ -1,5 +1,5 @@
 /**
- * Bounded slice-backed cursor over immutable protobuf input bytes.
+ * Bounded slice-backed cursor over const-qualified protobuf input bytes.
  *
  * `WireCursor` keeps the unread portion of its borrowed input as a normal D
  * slice. Reads, skips, and takes advance that slice only after checking that
@@ -18,7 +18,7 @@
 module osm.wire.cursor;
 
 /**
- * Mutable read cursor over one borrowed immutable wire buffer.
+ * Mutable read cursor over one borrowed const-qualified wire buffer.
  *
  * The cursor never allocates and never owns the underlying bytes. Slices
  * returned by `take` refer to the same caller-owned storage.
@@ -39,7 +39,7 @@ public:
      * Construct a cursor over `input`.
      *
      * Params:
-     *   input = Immutable bytes borrowed by the cursor.
+     *   input = Bytes borrowed through a const-qualified slice by the cursor.
      */
     this(const(ubyte)[] input) @safe pure nothrow @nogc
     {
