@@ -729,6 +729,148 @@ the serialized input remains tagless: changing only the sink instantiation is
 sufficient for LDC to generate very different performance from the same source
 loop transformation.
 
+#### A5a frontend-placement diagnosis
+
+The unusually large tagless/tag-ids regression was investigated separately
+rather than attributed to the countdown source form from timing alone. Within
+each build, normalized disassembly of the three tagless sink/template
+dispatchers was structurally identical after absolute addresses and symbol
+names were removed.
+
+The three A5a dispatchers all had size 15,609 bytes and the same normalized
+SHA-256:
+
+```text
+911a69074da34b09ba0ec62cbedefe1e8b1601136bbd9e00715b2f21f3f52000
+```
+
+The corresponding baseline dispatchers were likewise mutually identical
+within their build, with size 15,673 bytes and normalized SHA-256:
+
+```text
+2f506f76e64f998bb68ca16208a33e61bd0f4aef157e19e26710cf9cb276a4db
+```
+
+This made absolute code placement a directly testable variable.
+
+GNU `ld.bfd`, reached through LDC, accepted
+
+```text
+-L--section-start=.text=<address>
+```
+
+without changing the normalized dispatcher code. A controlled A5a sweep moved
+`.text` in 16-byte increments from `0x25990` through `0x25a80`, producing
+sixteen binaries with identical normalized dispatcher code but different
+absolute addresses.
+
+The tagless/tag-ids path showed a deterministic placement pattern:
+
+| TagId dispatcher phase | Representative cycles | `IDQ_UOPS_NOT_DELIVERED.CORE` / cycle | Behavior |
+| --- | ---: | ---: | --- |
+| `mod 64 = 16 or 48` | 2.965-2.971 billion | 0.011-0.014 | fast |
+| `mod 64 = 0` | 3.458-3.462 billion | 0.583-0.587 | intermediate |
+| `mod 64 = 32` | 3.765-3.767 billion | 0.847-0.848 | slow |
+
+Across those code-identical A5a binaries, the maximum/minimum cycle spread was
+**27.08%**. The original A5a tag-ids placement belonged to the slow
+`mod 64 = 32` class.
+
+The same sixteen-phase experiment on the unchanged production baseline did not
+show comparable sensitivity. Its cycle spread was only **1.12%**, with all
+measurements remaining close to 3.04-3.07 billion cycles.
+
+Comparing baseline and A5a at identical `.text` phases made the contrast
+explicit:
+
+| A5a TagId phase | A5a versus baseline |
+| --- | ---: |
+| `mod 64 = 16 or 48` | approximately -2.2% to -2.9% |
+| `mod 64 = 0` | approximately +12.6% to +13.2% |
+| `mod 64 = 32` | approximately +23.3% to +23.5% |
+
+The strong placement sensitivity is therefore not a general property of the
+DenseNodes benchmark or of the baseline dispatcher. It is a property of the
+machine-code layout generated for A5a.
+
+Hardware frontend counters independently matched this result. In the original
+slow A5a tag-ids placement, IPC fell to about 3.19 while
+`IDQ_UOPS_NOT_DELIVERED.CORE` rose to about 0.85 per cycle. Earlier frontend
+counter runs also showed a large shift away from DSB delivery toward MITE
+delivery, while backend resource stalls decreased rather than increased.
+Ordinary L1 instruction-cache activity was too small to account for the cycle
+difference.
+
+The test CPU was an Intel Core i7-9750H with CPUID family/model/stepping
+`06_9E_A` and microcode revision `0xfa`. LDC 1.41.0 / LLVM 19.1.7 exposes the
+backend option
+
+```text
+--x86-branches-within-32B-boundaries
+```
+
+whose help text describes it as aligning selected instructions to mitigate the
+negative performance impact of Intel's microcode update for erratum `skx102`.
+
+Static disassembly of the unmitigated A5a variants showed control-transfer
+instructions that crossed or ended on 32-byte boundaries. The analyzed slow
+and intermediate placements each had 37 such hazards in the selected repeated
+region, while the two fast placements had 33.
+
+Hazard count alone did not explain the three observed performance levels: the
+slow and intermediate placements had the same analyzed hazard set despite
+materially different runtime. The experiment therefore does not identify one
+specific offending branch, nor does it establish simple boundary-hazard count
+as a sufficient performance model.
+
+The decisive intervention was to rebuild A5a with LLVM's explicit JCC
+mitigation enabled. Four representative placements were tested: the former
+slow `mod 64 = 32`, intermediate `mod 64 = 0`, and the two fast
+`mod 64 = 16/48` classes.
+
+LLVM padding increased the TagId dispatcher from 15,609 to 16,306 bytes. A
+static scan of the mitigated binaries found zero jump instructions crossing or
+ending on a 32-byte boundary in all four cases.
+
+The runtime effect was correspondingly large:
+
+| `.text` phase | Unmitigated A5a vs baseline | Mitigated A5a vs baseline | Mitigated IDQ-undel/cycle | Mitigated MITE share |
+| --- | ---: | ---: | ---: | ---: |
+| `0x25990` | +23.46% | +0.72% | 0.0187 | 0.56% |
+| `0x259a0` | -2.50% | +1.09% | 0.0189 | 0.56% |
+| `0x259b0` | +12.74% | +0.23% | 0.0167 | 0.50% |
+| `0x259c0` | -2.93% | +0.53% | 0.0164 | 0.50% |
+
+The unmitigated four-phase A5a cycle spread was **27.06%**. With LLVM's JCC
+mitigation it fell to **0.11%**, a **99.60% reduction**. Mitigated IPC was
+4.037-4.041 for all four placements, and DSB delivery again overwhelmingly
+dominated MITE delivery.
+
+This intervention provides strong causal evidence that the dominant A5a
+placement regression is an interaction between the A5a-generated branch
+layout and the Intel JCC/32-byte-boundary microcode mitigation represented by
+LLVM's `skx102` workaround.
+
+The experiment does not identify a single responsible branch. The LLVM
+mitigation also changes padding and generated-code size, so the result is not
+stated as proof that one individual boundary crossing is the sole
+microarchitectural cause.
+
+The diagnostic runs were retained outside the repository at:
+
+```text
+/tmp/d-osm-a5a-phase-sweep-20260915-213159
+/tmp/d-osm-baseline-phase-sweep-20260915-214304
+/tmp/d-osm-a5a-jcc-20260915-222032
+```
+
+This diagnosis does not change the optimization decision. Compiler-specific
+branch padding suppresses the pathological placement, but it also removes the
+small advantage of the previously fast A5a phases and increases generated-code
+size. More importantly, a source-level library optimization must not depend on
+a fortunate code address, one CPU microcode behavior, or a particular LLVM
+backend mitigation to remain broadly beneficial.
+
 A5a is therefore **REJECTED as a general performance change**. The countdown
 form is semantically valid and materially faster for the targeted
 tagless/coordinates specialization, but that local result does not generalize
