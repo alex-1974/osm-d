@@ -636,3 +636,110 @@ win, matching hardware-counter evidence, successful targeted tagged counter
 runs, passing correctness tests, and exact final-binary identity. The mixed
 twelve-combination timing matrix is retained as part of the evidence rather
 than being hidden or interpreted as uniformly positive.
+
+### A5a: DenseNodes countdown emission loop
+
+Post-A4d profiling showed that the tagless/coordinates specialization still
+spent measurable time in its loop-control sequence. The production loop
+
+```d
+foreach (_; 0 .. group.dense.nodeCount)
+```
+
+does not use its iteration index semantically. A5a therefore tested the
+equivalent countdown form
+
+```d
+for (size_t remaining = group.dense.nodeCount; remaining != 0; --remaining)
+```
+
+as an isolated loop-control experiment. No cursor, validation, sink, summary,
+tag, DenseInfo, or `nodeCount` publication logic changed.
+
+The experiment passed the full unit-test suite (24 modules). For the
+tagless/coordinates dispatcher, LDC generated a smaller function:
+
+| Metric | Baseline | A5a | Change |
+| --- | ---: | ---: | ---: |
+| dispatcher size | 15,673 bytes | 15,609 bytes | -64 bytes |
+| static instructions | 3,067 | 3,059 | -8 |
+| `mov` family | 1,233 | 1,230 | -3 |
+| `inc` family | 2 | 1 | -1 |
+| `dec` family | 0 | 1 | +1 |
+| `cmp` family | 122 | 121 | -1 |
+| conditional jumps | 352 | 352 | 0 |
+| unconditional jumps | 111 | 110 | -1 |
+| calls | 79 | 79 | 0 |
+
+The intended loop-control change was therefore present in generated code rather
+than optimized back into the previous formulation. Both
+`DenseNodesLayout.nodeCount` call sites also remained present, so A5a did not
+accidentally include a separate `nodeCount`-hoisting optimization.
+
+A controlled fixed-binary A-B-B-A run on tagless/coordinates initially showed
+a strong and highly consistent local improvement:
+
+| Comparison | A5a vs baseline |
+| --- | ---: |
+| mean p50 | -2.620% ns/node |
+| B1 / A1 | -2.620% |
+| B2 / A2 | -2.620% |
+| throughput from mean p50 | +2.690% |
+
+All four runs produced the same checksum.
+
+A separate fixed-binary hardware-counter A-B-B-A run supported that local
+result:
+
+| Counter | Baseline mean | A5a mean | Change |
+| --- | ---: | ---: | ---: |
+| cycles | 3,052,656,503.0 | 2,987,382,857.0 | -2.138% |
+| instructions | 12,306,699,957.5 | 11,998,904,309.5 | -2.501% |
+| branches | 858,780,144.5 | 858,780,900.0 | ~0.000% |
+| IPC | 4.0315 | 4.0165 | -0.371% |
+
+Cycle reductions were consistent in both counter pairs (-2.119% and -2.158%).
+Branch-miss counts increased substantially in relative terms, but remained
+small compared with roughly 859 million retired branches and are treated only
+as diagnostic evidence rather than as an explanation of the result.
+
+The complete twelve-combination profile/path matrix reversed the local
+conclusion:
+
+| Profile | Path | Mean p50 change | B1 / A1 | B2 / A2 | Direction |
+| --- | --- | ---: | ---: | ---: | --- |
+| tagless | coordinates | -2.609% | -2.575% | -2.643% | win |
+| tagless | tag IDs | +23.527% | +23.913% | +23.143% | loss |
+| tagless | tag bytes | -2.398% | -2.644% | -2.151% | win |
+| typical | coordinates | -0.004% | +0.020% | -0.027% | mixed |
+| typical | tag IDs | +1.163% | +1.165% | +1.162% | loss |
+| typical | tag bytes | +0.937% | +1.389% | +0.488% | loss |
+| rich | coordinates | -0.063% | +0.047% | -0.174% | mixed |
+| rich | tag IDs | +2.122% | +2.232% | +2.013% | loss |
+| rich | tag bytes | +2.644% | +1.589% | +3.699% | loss |
+| mixed | coordinates | +0.366% | +0.577% | +0.155% | loss |
+| mixed | tag IDs | +0.599% | +9.117% | -7.209% | mixed |
+| mixed | tag bytes | +1.621% | +1.648% | +1.593% | loss |
+
+Checksums matched in every combination. Overall, only two combinations improved
+in both paired comparisons, seven were slower in both comparisons, and three
+had mixed direction. The median combination delta was +0.768% ns/node. The
+large +23.527% regression for tagless/tag-ids is especially important because
+the serialized input remains tagless: changing only the sink instantiation is
+sufficient for LDC to generate very different performance from the same source
+loop transformation.
+
+A5a is therefore **REJECTED as a general performance change**. The countdown
+form is semantically valid and materially faster for the targeted
+tagless/coordinates specialization, but that local result does not generalize
+across the template/sink specializations produced by `emitDenseNodes`. As with
+A4a and A3b, smaller generated code and fewer retired instructions in one
+specialization are insufficient grounds for adoption without broad runtime
+evidence.
+
+The rejected source patch is preserved outside the repository as
+`/tmp/d-osm-a5a-rejected.patch` with SHA-256
+`dc59508675a8f69f5f4c7ec4d9a800a4d9380fa96e05a127511ca9dc84625d7d`.
+Any future countdown-based optimization would require a separately justified
+semantic specialization boundary; sink-specific tuning solely to improve a
+benchmark instantiation would not establish a suitable library design.
