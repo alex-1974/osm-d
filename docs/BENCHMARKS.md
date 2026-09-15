@@ -474,7 +474,71 @@ correspond to that validated layout when decoding occurs; they are not described
 as immutable. Fabricating a validated layout or mutating aliased backing storage
 after validation violates that precondition.
 
-After A3a-2i the next DenseNodes optimization must be selected from a fresh
-profile of the current production code. Earlier assumptions about checked
-arithmetic and successful status writes are no longer representative of the
-remaining hot path.
+After A3a-2i the current production code was profiled again before selecting
+the next experiment. The fixed LDC benchmark binary retained SHA-256
+`9094dddfa44e45d82c860ab8ab737939ca837652b6fa7937bee819c6ed514cd4`.
+The tagless coordinate path remained stable at about 11.55 ns/node, and cycle
+sampling again placed nearly all measured execution inside the specialized
+DenseNodes dispatcher. No single remaining decoder instruction dominated the
+profile; sampled work was distributed across cursor bookkeeping, one-byte
+`sint64`/ZigZag handling, coordinate arithmetic and benchmark sink work.
+
+### A4a: per-node Dense column presence checks
+
+A4a tested whether emission could omit the `hasId`/`hasLat`/`hasLon` checks
+after successful layout validation. The semantic premise is valid under the
+same validated-layout precondition used by the accepted A2 changes:
+`decodePrimitiveGroupLayout()` scans every ID, latitude and longitude value,
+records their counts, requires the three counts to be equal, and exposes the
+validated ID count as `DenseNodesLayout.nodeCount`. `emitDenseNodes()` then
+requests exactly that many values from each of the same merged streams.
+
+The experimental implementation therefore retained all cursor and wire-decode
+failure handling but stopped testing the successful per-value presence flags.
+It passed the full unit-test suite (24 modules) and reduced the tagless
+coordinate dispatcher statically:
+
+| Metric | Baseline | A4a | Change |
+| --- | ---: | ---: | ---: |
+| dispatcher size | 15,646 bytes | 15,573 bytes | -73 bytes |
+| static instructions | 3,067 | 3,057 | -10 |
+| `mov` family | 1,234 | 1,228 | -6 |
+| conditional jumps | 352 | 351 | -1 |
+| unconditional jumps | 111 | 110 | -1 |
+| calls | 78 | 78 | 0 |
+
+Despite the smaller static hot loop, a controlled A-B-B-A run on
+tagless/coordinates was clearly slower:
+
+| Comparison | A4a vs baseline |
+| --- | ---: |
+| mean p50 | +5.23% ns/node |
+| B1 / A1 | +4.34% |
+| B2 / A2 | +6.12% |
+
+All runs produced the same checksum. A second source formulation using three
+independent ignored presence variables produced the same candidate benchmark
+binary (`59876c2fde8205e4c251b4c1c1fa493ae1ac8b603741219f5e52691aa1daa949`),
+so reuse of one ignored output variable was not responsible for the regression.
+
+A fixed-binary hardware-counter A-B-B-A run confirmed that the candidate
+retired less work but executed it less efficiently:
+
+| Counter | Baseline mean | A4a mean | Change |
+| --- | ---: | ---: | ---: |
+| cycles | 3,119,307,699.5 | 3,276,571,917.5 | +5.04% |
+| instructions | 12,511,905,281 | 11,896,309,526 | -4.92% |
+| branches | 858,780,541 | 756,180,905 | -11.95% |
+| IPC | 4.011 | 3.631 | -9.5% |
+
+Branch misses remained extremely small in absolute terms and are not used to
+explain the regression. The measurements establish that removing the presence
+checks reduced retired instructions and branches while increasing cycles and
+lowering IPC. They do not identify a unique microarchitectural cause; code
+layout, scheduling and dependency effects remain possible explanations rather
+than demonstrated ones.
+
+A4a is therefore **REJECTED as a performance change** despite its valid
+semantic premise and smaller generated code. The experiment reinforces the
+earlier A3b result: static simplification of this hot loop must not be accepted
+without controlled runtime evidence.
