@@ -54,12 +54,18 @@ struct DenseNodeView
     DenseInfoView info;
 }
 
-/** Summary of one completed DenseNodes decode operation. */
+/**
+ * Summary of one successfully completed DenseNodes decode operation.
+ *
+ * The fields are contractually valid only when `decodeDenseNodes` returns
+ * `true`. Callers must not interpret their contents as partial progress after
+ * a failed decode.
+ */
 struct DenseNodeDecodeSummary
 {
-    /// Number of nodes delivered to the sink.
+    /// Number of nodes delivered to the sink by the completed decode.
     size_t nodeCount;
-    /// Number of ordered tags exposed across all emitted nodes.
+    /// Number of ordered tags exposed across all nodes of the completed decode.
     size_t tagCount;
 }
 
@@ -92,7 +98,8 @@ struct DenseNodeDecodeSummary
  *   group = Validated PrimitiveGroup layout containing DenseNodes data.
  *   table = Indexed StringTable belonging to `block`.
  *   sink = Consumer receiving nodes in merged protobuf column order.
- *   summary = Receives the number of emitted nodes.
+ *   summary = Receives completed decode counts on success; its contents are not
+ *     contractually defined after a `false` return.
  *   status = Receives success or a checked arithmetic/defensive wire failure.
  *
  * Returns:
@@ -284,7 +291,6 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
             DenseNodeView node = DenseNodeView(id, latNano, lonNano, tags, info);
             sink.put(node);
         }
-        ++summary.nodeCount;
     }
 
     long ignored;
@@ -327,6 +333,11 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
         status = PbfStatus.failure(PbfError.denseTagNodeCountMismatch, 0, 10);
         return false;
     }
+
+    // The validated layout fixes the exact number of nodes before emission.
+    // Publish it once after the complete emission succeeds instead of updating
+    // the externally visible summary on every node.
+    summary.nodeCount = group.dense.nodeCount;
 
     status = PbfStatus.init;
     return true;
