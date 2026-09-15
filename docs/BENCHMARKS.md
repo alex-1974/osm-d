@@ -323,13 +323,26 @@ libosmium/protozero remains the separate production-implementation reference.
 Its results should not be interpreted as a pure D-versus-C++ language result
 unless the measured semantic work is first shown to be equivalent.
 
-## DenseNodes reference baseline (2026-09-13)
+Current production D and the retained C++ semantic reference no longer perform
+cycle-for-cycle equivalent coordinate arithmetic. D validates the complete
+cumulative ID/coordinate streams and coordinate ranges during preflight, then
+uses direct cumulative addition and affine nanodegree reconstruction during
+emission. The C++ reference still repeats checked cumulative and coordinate
+arithmetic while emitting nodes. It is therefore a conservative semantic
+reference until its preflight/emission split is updated to match production.
+Absolute current D/C++ timings must not be presented as a strict same-work
+language comparison.
+
+## Historical DenseNodes reference baseline (2026-09-13)
 
 DenseNodes is a production hot path and has a dedicated semantic reference
-benchmark. The comparison must perform equivalent work: complete structural
-preflight, checked delta accumulation, exact coordinate conversion, StringTable
-validation, and the same sink/checksum semantics. A faster decoder that omits
-these checks is not an equivalent reference.
+benchmark. At this historical baseline the comparison was used to guide the
+specialized dispatch architecture while retaining complete structural
+preflight, checked arithmetic, StringTable validation and identical observable
+sink/checksum semantics. Subsequent production optimizations moved redundant
+per-node arithmetic checks out of emission after equivalent checks had already
+succeeded during preflight, so the table below is retained as historical
+evidence rather than a current same-work comparison.
 
 Reference environment for this baseline:
 
@@ -351,7 +364,7 @@ example on a host where the plugin path is known:
 DFLAGS="-flto=full -flto-binary=/path/to/LLVMgold.so" ./run-dense-nodes.sh ...
 ```
 
-Final D baseline with the specialized dispatch boundary:
+Historical D baseline with the specialized dispatch boundary:
 
 | Profile / sink | D p50 ns/node | C++ p50 ns/node | D vs C++ |
 | --- | ---: | ---: | ---: |
@@ -384,3 +397,84 @@ Permanent diagnostic microbenchmarks retain the coordinate-stage and varint-core
 probes because they isolate reusable wire/coordinate costs. The temporary
 E0--E4 tagless breakdown and disassembly probe are not part of the maintained
 benchmark suite.
+
+
+## DenseNodes scalar hot-path research milestone (2026-09-15)
+
+The follow-up A2/A3 campaign targeted the remaining scalar cost in validated
+DenseNodes emission. Correctness and malformed-input behavior remained
+non-negotiable: each accepted optimization removed work only when the same
+semantic condition had already been established by the validated layout or
+preflight over the same encoded streams.
+
+The campaign used LDC 1.41.0 (DMD frontend 2.111.0, LLVM 19.1.7) as the
+performance compiler. Controlled runs pinned the benchmark to logical CPU 5,
+disabled turbo and offlined SMT sibling CPU 11. Background backup processes
+were suspended for the measurement window. Checksums were required to match
+for every compared workload.
+
+The following values are representative controlled tagless/coordinates
+snapshots from the research sequence. They document the scale of the progression
+but are not a substitute for the paired A/B decision for each individual
+change; the measurements were collected in separate controlled sessions.
+
+| Stage | Commit | Change | tagless / coordinates |
+| --- | --- | --- | ---: |
+| pre-A2 reference | `deb1419` | validated emission before arithmetic deduplication | ~46.843 ns/node |
+| A2a | `948dbf7` | remove duplicate per-node checked coordinate `offset + granularity * value` arithmetic after range preflight | ~23.334 ns/node |
+| A2b | `dfcd3dc` | remove duplicate per-node checked cumulative ID/latitude/longitude additions already validated over the same streams | ~14.047 ns/node |
+| A3a-1 | `fb729e0` | stop rewriting successful `PbfStatus` inside the private Dense column cursor | ~12.318 ns/node |
+| A3a-2i | `20e78ca` | use a package-internal failure-only `sint64` decoder in the Dense column cursor | ~11.555 ns/node |
+
+Across those representative endpoints the minimal coordinate-core production
+path fell by about 75.3%, corresponding to roughly 4.05 times the throughput of
+the pre-A2 reference. This number describes the synthetic tagless coordinate
+microbenchmark only; it is not whole-file PBF throughput.
+
+The directly paired decisions were also checked on tagged profiles. Removing
+duplicate cumulative checked additions (A2b) improved the coordinate path by
+about 39.8% for tagless data and by roughly 4--5% for the typical, rich and
+mixed profiles. A3a-1 improved all twelve profile/path combinations in its
+controlled matrix. A3a-2i retained the same DenseNodes semantics and public wire
+API while removing successful `WireStatus` materialization from the two private
+Dense column `sint64` decode sites.
+
+A3a-2i deliberately keeps the failure-only decoder package-internal. Public
+`readVarint64` and `readSVarint64` retain their success/failure `WireStatus`
+contract. The final implementation was verified to produce exactly the same
+DenseNodes benchmark binary as the measured experimental winner:
+
+```text
+SHA-256:
+9094dddfa44e45d82c860ab8ab737939ca837652b6fa7937bee819c6ed514cd4
+```
+
+All twelve `dispatchDenseNodes!(HasTags, HasInfo, Sink)` benchmark
+specializations were code-generation equivalent between the experimental and
+final implementations. The final source also retained passing unit tests across
+24 modules.
+
+Two attempted slow-path extractions were rejected despite large static code-size
+reductions:
+
+| Experiment | Static effect | Runtime effect | Decision |
+| --- | --- | --- | --- |
+| A3b-1 | tagless dispatcher ~16,925 -> 9,429 bytes (-44.3%) | ~7.5% slower | REJECT |
+| A3b-2 | tagless dispatcher ~16,925 -> 10,490 bytes (-38.0%) | ~8.8% slower; substantially more retired branches and lower IPC | REJECT |
+
+The rejected A3b experiments are important negative evidence: reducing static
+instruction footprint did not automatically improve this one-byte-varint
+workload. The extracted slow path introduced control-flow costs on the common
+path. Future code-size work must therefore be evaluated with runtime counters,
+not accepted from size reduction alone.
+
+The arithmetic optimizations rely on a validated-layout precondition. The
+backing `const(ubyte)[]` bytes are validated before emission and must still
+correspond to that validated layout when decoding occurs; they are not described
+as immutable. Fabricating a validated layout or mutating aliased backing storage
+after validation violates that precondition.
+
+After A3a-2i the next DenseNodes optimization must be selected from a fresh
+profile of the current production code. Earlier assumptions about checked
+arithmetic and successful status writes are no longer representative of the
+remaining hot path.
