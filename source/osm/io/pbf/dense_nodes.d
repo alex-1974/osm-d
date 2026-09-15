@@ -37,7 +37,7 @@ import osm.wire.field :
     readFieldHeader,
     readLengthDelimited,
     skipFieldValue;
-import osm.wire.varint : readSVarint64;
+import osm.wire.varint : readSVarint64FailureOnly;
 
 /** One validated dense node with exact coordinates in nanodegrees. */
 struct DenseNodeView
@@ -397,7 +397,7 @@ public:
             if (!_packed.empty)
             {
                 WireStatus wire;
-                if (!readSVarint64(_packed, value, wire))
+                if (!readSVarint64FailureOnly(_packed, value, wire))
                 {
                     if (wire.fieldNumber == 0)
                         wire.fieldNumber = _fieldNumber;
@@ -420,7 +420,7 @@ public:
 
                 if (field.number == _fieldNumber && field.wireType == WireType.varint)
                 {
-                    if (!readSVarint64(_dense, value, wire))
+                    if (!readSVarint64FailureOnly(_dense, value, wire))
                     {
                         if (wire.fieldNumber == 0)
                             wire.fieldNumber = field.number;
