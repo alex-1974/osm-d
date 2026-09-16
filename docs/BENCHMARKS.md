@@ -885,3 +885,204 @@ The rejected source patch is preserved outside the repository as
 Any future countdown-based optimization would require a separately justified
 semantic specialization boundary; sink-specific tuning solely to improve a
 benchmark instantiation would not establish a suitable library design.
+
+### A6a: offsetless packed Dense column cursor
+
+After A5a was rejected, the next experiment returned to the remaining
+per-value work in the validated Dense scalar columns. `DenseColumnCursor`
+already used the failure-only `sint64` reader introduced by A3a-2i, so
+successful values no longer materialized a `WireStatus`. The underlying
+`WireCursor`, however, still advanced three pieces of state for every decoded
+byte: remaining length, data pointer, and running byte offset.
+
+The benchmark workload stores each Dense ID, latitude, and longitude column as
+one long packed length-delimited occurrence. Static inspection of the
+production `tagless/coordinates` specialization confirmed that LDC retained
+the running offset update in the successful packed decode path for all three
+columns.
+
+A6a therefore tested a private Dense-only representation:
+
+- `_group` and `_dense` remained ordinary `WireCursor` instances because they
+  still parse protobuf structure and require normal cursor-offset semantics;
+- `_packed` became a borrowed `const(ubyte)[]`;
+- a private failure-only packed `sint64` reader advanced only the slice;
+- the exact value-start offset was reconstructed only for the failure path;
+- public `WireCursor`, public wire-decoder behavior, legal unpacked Dense
+  representation, and packed/unpacked concatenation semantics were unchanged.
+
+The new reader was checked against the established failure-only cursor reader
+for one-byte and multi-byte values, legal non-minimal encodings, truncation,
+overflow, consumed-byte count, and exact non-zero failure offsets. Both LDC and
+DMD passed the complete unit-test suite (24 modules).
+
+For the `tagless/coordinates` dispatcher, A6a produced the intended generated
+code. The third running cursor-state update disappeared from the successful
+one-byte path. The whole specialization also became substantially smaller:
+
+| Metric | Baseline | A6a | Change |
+| --- | ---: | ---: | ---: |
+| dispatcher size | 15,673 bytes | 14,864 bytes | -809 bytes |
+| static instructions | 3,067 | 2,966 | -101 |
+| `mov` family | 1,233 | 1,177 | -56 |
+| `lea` | 494 | 432 | -62 |
+| calls | 79 | 73 | -6 |
+
+A controlled fixed-binary A-B-B-A run on `tagless/coordinates` showed a strong
+and consistent local improvement:
+
+| Comparison | A6a vs baseline |
+| --- | ---: |
+| mean p50 | -5.876% ns/node |
+| B1 / A1 | -5.997% |
+| B2 / A2 | -5.756% |
+| throughput from mean p50 | +6.242% |
+
+All four runs produced identical checksums.
+
+A separate fixed-binary hardware-counter A-B-B-A run independently supported
+the same local mechanism:
+
+| Counter | Baseline mean | A6a mean | Change |
+| --- | ---: | ---: | ---: |
+| cycles | 5,971,719,410.0 | 5,622,743,184.0 | -5.844% |
+| instructions | 24,108,370,017.5 | 22,892,739,751.5 | -5.042% |
+| branches | 1,659,038,220.0 | 1,659,032,647.0 | ~0.000% |
+| branch misses | 22,128.5 | 23,986.5 | +8.396% |
+| IPC | 4.0371 | 4.0715 | +0.851% |
+
+The branch-miss increase is large only as a relative percentage. The absolute
+counts remain about 22-24 thousand misses against roughly 1.66 billion retired
+branches and are not used to explain the result. Both counter pairs reduced
+cycles by essentially the same amount (-5.841% and -5.847%).
+
+The complete twelve-combination timing matrix did **not** generalize the local
+win:
+
+| Profile | Path | Mean p50 change | B1 / A1 | B2 / A2 | Direction |
+| --- | --- | ---: | ---: | ---: | --- |
+| tagless | coordinates | -6.164% | -6.428% | -5.899% | win |
+| tagless | tag IDs | -6.114% | -6.312% | -5.916% | win |
+| tagless | tag bytes | -6.018% | -6.154% | -5.881% | win |
+| typical | coordinates | -0.959% | -1.096% | -0.821% | win |
+| typical | tag IDs | +0.876% | +0.784% | +0.969% | loss |
+| typical | tag bytes | +0.851% | +0.822% | +0.879% | loss |
+| rich | coordinates | -0.448% | -0.458% | -0.439% | win |
+| rich | tag IDs | +1.744% | +1.738% | +1.749% | loss |
+| rich | tag bytes | +1.414% | +1.526% | +1.301% | loss |
+| mixed | coordinates | -0.404% | -0.168% | -0.641% | win |
+| mixed | tag IDs | +1.228% | +1.670% | +0.788% | loss |
+| mixed | tag bytes | +1.145% | +1.542% | +0.748% | loss |
+
+Checksums matched in all twelve combinations. The result was six wins, six
+losses, and no mixed-direction pairs. The median combination delta was
+**+0.223% ns/node**. Every real tag-consuming sink in a workload containing
+tags regressed consistently, while the three coordinate-only paths and all
+three tagless paths improved.
+
+Because A5a had demonstrated that source-level DenseNodes changes can interact
+strongly with frontend placement, the largest A6a loss (`rich/tag-ids`) was
+examined with fixed-binary hardware counters before interpreting the timing
+matrix. That run confirmed a genuine execution-cost regression rather than a
+simple timing-only anomaly:
+
+| Counter | Baseline mean | A6a mean | Change |
+| --- | ---: | ---: | ---: |
+| elapsed p50 | 357.778 ns/node | 364.700 ns/node | +1.935% |
+| cycles | 21,187,432,679.5 | 21,570,339,512.5 | +1.807% |
+| instructions | 65,612,644,787.0 | 65,835,384,793.0 | +0.339% |
+| branches | 9,266,031,696.0 | 9,266,019,335.5 | ~0.000% |
+| branch misses | 236,257.0 | 232,806.5 | -1.460% |
+| IPC | 3.0968 | 3.0521 | -1.442% |
+
+Both cycle pairs regressed (+1.842% and +1.773%). A6a therefore executed
+slightly **more**, not less, retired work in this tagged specialization while
+also losing IPC. This differs materially from the A5a placement pathology,
+where the problematic specialization could execute fewer instructions but
+suffer a much larger frontend-cycle penalty.
+
+Static inspection likewise did not show a simple whole-function code-size
+regression. For the `HasTags=true, HasInfo=false, TagIdSink` dispatcher A6a
+actually reduced:
+
+| Metric | Baseline | A6a | Change |
+| --- | ---: | ---: | ---: |
+| dispatcher size | 23,762 bytes | 22,412 bytes | -1,350 bytes |
+| static instructions | 4,405 | 4,182 | -223 |
+| `mov` family | 1,876 | 1,741 | -135 |
+| `lea` | 707 | 634 | -73 |
+| calls | 126 | 113 | -13 |
+| stack references | 1,598 | 1,479 | -119 |
+
+The stack frame nevertheless grew from `0x778` to `0x788` bytes, and normalized
+assembly changed broadly because the cursor representation altered register
+and stack allocation throughout the large tagged dispatcher. The measurements
+do not establish one unique compiler mechanism for the regression; they do
+show that smaller static code is insufficient evidence that the dynamic tagged
+path became cheaper.
+
+A6a is therefore **REJECTED as a general performance change**. Its central
+micro-optimization is real and valuable in the minimal packed-coordinate path,
+but the resulting cursor representation is not robust across the tagged
+template/sink specializations used by the same production decoder.
+
+#### A6b: derive packed length instead of storing it
+
+A6b tested one narrowly motivated rework before abandoning this representation.
+The hypothesis was that A6a's persistent `_packedLength` member increased live
+cursor state and caused the tagged register-allocation regression. A6b removed
+that member and derived the original packed length at the call site from the
+existing Dense cursor and packed-base state.
+
+This hypothesis was rejected **before runtime benchmarking**. Correctness
+remained intact under both LDC and DMD, but the generated code moved in the
+wrong direction:
+
+| Dispatcher | Metric | A6a | A6b |
+| --- | --- | ---: | ---: |
+| tagless/coordinates | size | 14,864 | 14,994 bytes |
+| tagless/coordinates | static instructions | 2,966 | 2,996 |
+| tagless/coordinates | stack frame | `0x388` | `0x388` |
+| tagged/tag IDs | size | 22,412 | 22,619 bytes |
+| tagged/tag IDs | static instructions | 4,182 | 4,227 |
+| tagged/tag IDs | stack references | 1,479 | 1,488 |
+| tagged/tag IDs | stack frame | `0x788` | `0x788` |
+
+Thus removing the persistent length neither restored the baseline tagged stack
+frame nor reduced the A6a register/stack disturbance. Instead it added static
+work to both inspected specializations while retaining the offsetless packed
+decode.
+
+A6b is therefore **NOT PURSUED**. The specific hypothesis that
+`_packedLength` was the dominant cause of the tagged regression was falsified
+by code generation before a benchmark was justified.
+
+The broader idea of a private Dense packed-scalar representation remains a
+possible **REWORK** direction, but any future attempt must avoid merely trading
+one piece of cursor state for another. It should establish, before broad
+benchmarking, that its successful packed path remains compact across both
+tagless and `HasTags=true` specializations and that precise wire-error offsets
+remain reconstructible without perturbing the common tagged code path.
+
+The experimental artifacts were retained outside the repository. The principal
+directories are:
+
+```text
+/tmp/d-osm-a6a-offsetless-packed-20260915-233126
+/tmp/d-osm-a6a-targeted-abba-20260915-233831
+/tmp/d-osm-a6a-counter-abba-20260915-234430
+/tmp/d-osm-a6a-full-matrix-abba-20260915-235100
+/tmp/d-osm-a6a-rich-tagids-counter-abba-20260916-001325
+/tmp/d-osm-a6a-tagids-static
+/tmp/d-osm-a6b-derived-packed-length-20260916-100353
+/tmp/d-osm-a6-rejected-artifacts-20260916-100811
+```
+
+The preserved A6b rejection patch has SHA-256:
+
+```text
+c39add198a56d16d2f1d8e8f0a84ce5997ba708f3e6a90c67d1e70be1e016495
+```
+
+A6a source state is also retained as
+`/tmp/d-osm-a6b-derived-packed-length-20260916-100353/a6a-before-rework.patch`.
