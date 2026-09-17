@@ -1086,3 +1086,369 @@ c39add198a56d16d2f1d8e8f0a84ce5997ba708f3e6a90c67d1e70be1e016495
 
 A6a source state is also retained as
 `/tmp/d-osm-a6b-derived-packed-length-20260916-100353/a6a-before-rework.patch`.
+
+### A7: validated canonical single-packed Dense coordinate fast path
+
+A7 investigated whether the common canonical DenseNodes representation could
+bypass the general `DenseColumnCursor` machinery after semantic validation.
+
+The target representation was deliberately narrow:
+
+- exactly one `DenseNodes` occurrence in the `PrimitiveGroup`;
+- exactly one packed length-delimited occurrence of each Dense coordinate
+  column (`id`, `lat`, and `lon`);
+- no repeated, unpacked, or interleaved coordinate representation;
+- all ordinary legal protobuf representations remained supported by the
+  existing generic decoder as fallback.
+
+The intended optimization was not to weaken validation. Structural and
+semantic validation still established node counts, cumulative delta safety,
+DenseInfo validity, and Dense tag validity before emission. The experiment
+instead asked whether a validated canonical representation could expose the
+three packed payloads directly and thereby remove repeated structural cursor
+work from the emission loop.
+
+#### A7a: general canonical dispatch
+
+The first implementation extended `DenseNodesLayout` with canonical packed
+offset/length metadata discovered during `PrimitiveGroup` layout decoding. A
+specialized emitter then constructed three direct packed cursors from those
+validated spans.
+
+The implementation passed the complete LDC and DMD unit-test suite (24
+modules). On the targeted tagless/coordinates path it produced a local
+improvement of approximately **-3.42% ns/node**.
+
+The complete twelve-combination matrix did not support general adoption:
+
+- tagless workloads improved;
+- several tagged specializations regressed;
+- the matrix classified as **3 wins, 5 losses, and 4 mixed**;
+- the median combination delta was **+0.493% ns/node**.
+
+A7a was therefore **REJECTED as a general dispatch strategy**. The canonical
+emitter itself was promising, but routing all DenseNodes specializations
+through the additional layout state perturbed unrelated tagged code paths.
+
+#### A7b: restrict canonical dispatch to tagless/no-info DenseNodes
+
+A7b retained the canonical metadata discovered during layout decoding but
+restricted the specialized emitter to the semantic case where both tags and
+DenseInfo were absent. Tagged or info-bearing workloads remained on the
+existing generic decoder.
+
+Both LDC and DMD again passed all 24 test modules.
+
+An emission-only twelve-combination matrix showed the intended isolation:
+
+| Classification | Count |
+| --- | ---: |
+| win | 3 |
+| loss | 0 |
+| mixed | 9 |
+
+All three tagless sink instantiations improved consistently:
+
+| Path | A7b change |
+| --- | ---: |
+| coordinates | -3.536% |
+| tag IDs | -3.558% |
+| tag bytes | -3.562% |
+
+The generic tagged dispatchers were normalized and compared across baseline
+and A7b; all twelve inspected generic specializations were identical. The
+canonical `HasTags=false, HasInfo=false` dispatcher was approximately 6.5 KiB
+per benchmark sink instantiation, increasing benchmark `.text` by roughly
+20.4 KiB across the three sinks.
+
+Hardware counters on tagless/coordinates supported the local mechanism:
+
+| Counter | A7b change |
+| --- | ---: |
+| cycles | -3.740% |
+| instructions | -1.692% |
+| branches | -12.236% |
+| branch misses | approximately -14% |
+| IPC | +2.127% |
+
+The branch-miss count was very small in absolute terms and is retained only as
+diagnostic evidence.
+
+However, the benchmark above measured emission after a predecoded
+`PrimitiveGroupLayout`. The canonical spans were not free: A7b added discovery
+work to layout decoding for every relevant Dense group.
+
+A temporary end-to-end benchmark therefore moved
+`decodePrimitiveGroupLayout()` inside the timed region before the existing
+production `decodeDenseNodes()` preflight and emission. Its benchmark source
+SHA-256 was:
+
+```text
+79cbda9fb39e7cf0c7d91fa64a56b99fc93f7c176867421933411da1be422f6d
+```
+
+In that combined layout-plus-emission matrix, A7b produced **1 win, 0 losses,
+and 11 mixed** combinations with a median delta of **-0.095%**. The tagless
+paths that had improved by about 3.5% in emission-only measurement became
+essentially neutral end to end.
+
+A dedicated layout-only benchmark explained the disappearance. Canonical
+metadata discovery made layout decoding approximately **2.00% slower**.
+
+A7b therefore demonstrated that the canonical emitter removes real dynamic
+work, but also that discovering and persisting its metadata during ordinary
+layout decoding consumes almost the entire end-to-end benefit.
+
+#### A7c: separate canonical structure discovery from Dense validation
+
+A7c tested whether the layout cost came from perturbing the already large
+`scanDenseNodes()` validator rather than from the canonical discovery itself.
+
+`scanDenseNodes()` was restored byte-for-byte to the production source.
+Canonical structure discovery moved into a separate helper that scanned only
+protobuf field structure:
+
+- first DenseNodes occurrence only;
+- coordinate fields `1`, `8`, and `9`;
+- each required exactly once and length-delimited;
+- non-coordinate fields were skipped;
+- exact payload offsets and lengths were recorded;
+- repeated DenseNodes disabled the canonical flag.
+
+The production and A7c `scanDenseNodes()` sources had identical SHA-256:
+
+```text
+92a53c60dbcc64a1441cf6eec1151f29e9a00d3be576b1f105def38d48ec3982
+```
+
+All 24 LDC and DMD test modules passed.
+
+The normal layout-only benchmark still showed a stable regression:
+
+| Variant | Layout cost |
+| --- | ---: |
+| baseline | 26.536 ns/node-equivalent workload cost |
+| A7c | 26.8705 |
+| change | +1.261% |
+
+Hardware counters did **not** show additional retired work:
+
+| Counter | A7c change |
+| --- | ---: |
+| cycles | +1.120% |
+| instructions | -0.001% |
+| branches | -0.004% |
+| IPC | -1.109% |
+
+This pattern suggested another code-placement/frontend effect rather than an
+algorithmic cost large enough to explain the measured regression.
+
+Because A5a had already established strong sensitivity on this Intel CPU to
+32-byte branch placement, A7c was rebuilt with LLVM's explicit mitigation:
+
+```text
+--x86-branches-within-32B-boundaries
+```
+
+Under that controlled build, the layout-only result collapsed from **+1.261%**
+to approximately **-0.114%**, i.e. measurement-neutral. This was strong
+evidence that the apparent A7c layout regression was dominated by generated
+code placement rather than by the structure scanner itself.
+
+The normal unmitigated combined layout-plus-emission matrix was correspondingly
+ambiguous: **1 win, 1 loss, and 10 mixed**, with a median delta of **+0.242%**.
+The tagless paths were effectively neutral.
+
+A repeated tagged hardware-counter run also showed essentially unchanged
+retired work and frequency behavior, reinforcing that unrelated tagged timing
+movement was a frontend/layout artifact rather than execution of the canonical
+fast path.
+
+#### A7d: source-level helper reordering
+
+A7d tested the narrow hypothesis that inserting the canonical discovery helper
+between existing hot `primitive_group.d` functions had changed their linker or
+compiler placement.
+
+The helper was moved in source after `validateDenseInfo()`. Its own source was
+identical before and after the move, and all tests passed.
+
+LDC nevertheless emitted every relevant function at exactly the same address,
+size, and 64-byte phase as A7c:
+
+- `scanDenseNodes`;
+- canonical discovery helper;
+- `acceptDenseDelta`;
+- `scanPackedSInt64`;
+- `validateDenseInfo`.
+
+Normalized generated code for all relevant functions was likewise identical.
+
+A7d is therefore **NOT PURSUED**. Source order did not control the relevant
+generated-function placement and could not address the frontend artifact.
+
+#### A7e: discover canonical packed spans only after tagless/no-info dispatch
+
+A7e removed canonical metadata from `PrimitiveGroupLayout` entirely.
+
+`primitive_group.d` was restored exactly to production. Only after the normal
+production sequence had completed
+
+- coordinate preflight;
+- DenseInfo validation;
+- Dense tag validation; and
+- semantic dispatch had established `HasTags=false` and `HasInfo=false`
+
+did `dense_nodes.d` perform a local one-pass structure scan for the canonical
+three packed coordinate spans.
+
+The descriptor was stack-local and used six `size_t` offset/length values.
+Failure to prove the exact canonical representation simply selected the
+existing generic decoder. No public wire semantics or legal protobuf fallback
+representation changed.
+
+This design had an important architectural advantage over A7b/A7c: tagged and
+DenseInfo-bearing inputs did not execute the canonical discovery scanner, and
+`PrimitiveGroupLayout` returned to its production representation.
+
+The A7e production patch passed all 24 test modules under both LDC and DMD.
+
+Static placement inspection nevertheless showed that adding the specialized
+DenseNodes code shifted the complete `primitive_group` validator block in the
+linked benchmark binary by **+20,832 bytes**, changing every inspected
+function's `mod 64` phase by 32 bytes even though function sizes were
+unchanged.
+
+After normalizing direct targets and RIP-relative linked addresses, the
+generated instruction sequences for all five inspected hot functions were
+identical between baseline and A7e:
+
+- `decodePrimitiveGroupLayout`;
+- `scanDenseNodes`;
+- `acceptDenseDelta`;
+- `scanPackedSInt64`;
+- `validateDenseInfo`.
+
+This reproduced the same kind of placement confound diagnosed during A5a.
+
+Both binaries were therefore rebuilt with LLVM's 32-byte branch-boundary
+mitigation. Under that build all five validator functions had matching
+`mod 32` and `mod 64` phases between baseline and A7e, while retaining
+identical sizes. The controlled JCC build was then used for the decisive
+end-to-end matrix.
+
+The benchmark used:
+
+```text
+CPU:             5
+nodes:           200000
+iterations:      20 per sample
+samples:         30
+warmup:          10
+ordering:        A-B-B-A
+timed region:    PrimitiveGroup layout decode
+                 + production decodeDenseNodes preflight
+                 + emission
+                 + selected sink work
+```
+
+The three target tagless paths all regressed reproducibly:
+
+| Profile | Path | Mean p50 change | B1 / A1 | B2 / A2 |
+| --- | --- | ---: | ---: | ---: |
+| tagless | coordinates | +0.951% | +0.880% | +1.021% |
+| tagless | tag IDs | +1.030% | +1.080% | +0.980% |
+| tagless | tag bytes | +1.067% | +1.051% | +1.084% |
+
+These are the only paths that execute A7e's late canonical discovery and
+specialized emitter. Their agreement across three independent sink
+instantiations is therefore the primary optimization result.
+
+Several non-target tagged combinations showed isolated process-level
+variation. In particular, `typical/tag-ids` and `mixed/tag-ids` contained
+single-run outliers with opposite paired direction and are not attributed to
+the A7e mechanism. The whole twelve-combination median was **+0.300%**, but the
+decision is based on the directly affected tagless paths rather than that
+mixed matrix aggregate.
+
+A separate four-round fixed-binary A-B-B-A hardware-counter experiment on
+tagless/coordinates confirmed the regression and explained its character:
+
+| Counter | A7e vs baseline |
+| --- | ---: |
+| cycles | +1.118% |
+| reference cycles | +1.118% |
+| instructions | +1.301% |
+| branches | -1.913% |
+| branch misses | -4.041% |
+| IPC | +0.180% |
+| cycles / reference cycles | +0.000% |
+
+Thus A7e successfully removes branches, but it retires approximately **1.3%
+more instructions overall**. Frequency behavior is identical and IPC slightly
+improves, while total cycles still increase by approximately **1.1%**.
+
+This is materially different from the earlier A5a frontend-placement failure:
+after controlling 32-byte branch placement, A7e remains slower because the
+late canonical structure scan adds more dynamic work than the specialized
+emitter saves.
+
+A7e is therefore **REJECTED**.
+
+The broader result of A7 is more informative than the final rejection alone:
+
+1. Direct canonical packed emission is measurably cheaper once exact spans are
+   already known.
+2. Persisting those spans during general layout decoding is not free enough to
+   justify the added metadata and code footprint.
+3. Discovering them lazily only for tagless/no-info input avoids cross-path
+   semantic pollution, but still performs net additional work.
+4. Large template specializations can shift unrelated hot code sufficiently
+   to invalidate ordinary timing comparisons on the tested Intel CPU/microcode
+   environment; controlled LLVM branch-boundary builds are required when that
+   signature appears.
+5. A future canonical fast path would need span information to become available
+   essentially for free from work that must already occur for another reason,
+   rather than adding another protobuf structure scan solely to accelerate
+   emission.
+
+A7 is therefore classified **REWORK**. A7a, A7b, A7c, and A7e were not retained
+as production implementations, and A7d was not pursued. The useful remaining design
+question is whether a later parser architecture can expose canonical packed
+spans as a natural by-product of required validation without increasing the
+general layout representation or rescanning the serialized DenseNodes
+message.
+
+The principal retained diagnostic artifacts are:
+
+```text
+/tmp/d-osm-a7b-e2e-baseline
+/tmp/d-osm-a7b-full-matrix-20260916-132749
+/tmp/d-osm-a7b-counters-root-20260916-135121
+/tmp/d-osm-a7b-layout-plus-emission-matrix-20260916-142018
+/tmp/d-osm-a7b-layout-only-20260916-145845
+/tmp/d-osm-a7c-layout-only-20260916-193923
+/tmp/d-osm-a7c-layout-jcc-20260916-200534
+/tmp/d-osm-a7c-combined-matrix-20260916-202724
+/tmp/d-osm-a7c-typical-tagbytes-counters-20260916-215752
+/tmp/d-osm-a7d-placement-20260916-222346
+/tmp/d-osm-a7e-placement-20260916-232425
+/tmp/d-osm-a7e-validator-codegen-20260916-232708
+/tmp/d-osm-a7e-validator-codegen-ripnorm-20260916-232812
+/tmp/d-osm-a7e-jcc-build-20260916-232921
+/tmp/d-osm-a7e-jcc-matrix-20260916-235809
+/tmp/d-osm-a7e-jcc-tagless-counters-20260917-002642
+/tmp/d-osm-a7e-rejected-artifacts-20260917-003728
+```
+
+The preserved A7e rejection patch is:
+
+```text
+/tmp/d-osm-a7e-rejected-artifacts-20260917-003728/a7e-rejected.patch
+```
+
+with SHA-256:
+
+```text
+9b8bbd5d6d74fa8ab177b387463e3db3925cf9d65d18fb0acd2206e1ba995c59
+```
