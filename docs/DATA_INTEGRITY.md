@@ -2,7 +2,7 @@
 
 ## Principle
 
-`d-osm` must never silently corrupt OSM data.
+`osm-d` must never silently corrupt OSM data.
 
 No field, tag, reference, relation member, metadata value, extension or source
 feature may be discarded, repaired, reordered or approximated without an

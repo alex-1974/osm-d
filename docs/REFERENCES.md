@@ -1,7 +1,7 @@
 # Technical References
 
 This file records the primary specifications, canonical schemas and comparison
-implementations used by `d-osm`. `SPEC_MATRIX.md` converts these references into
+implementations used by `osm-d`. `SPEC_MATRIX.md` converts these references into
 concrete design decisions and tests.
 
 Last verification pass: **2026-09-12**.
@@ -14,7 +14,7 @@ Use evidence in this order when behavior is disputed:
 2. current OSM Editing API documentation and observed server contract;
 3. documented real-world format variants;
 4. multiple independent established implementations;
-5. `d-osm` behavior.
+5. `osm-d` behavior.
 
 A reference implementation is evidence, never the specification.
 
@@ -169,7 +169,7 @@ Why it matters:
 
 Important limitation as a lossless oracle: JOSM's semantic model/writer
 normalizes data. Current writer behavior includes sorting primitives by ID,
-sorting tags by key and skipping incomplete primitives. `d-osm` must not copy
+sorting tags by key and skipping incomplete primitives. `osm-d` must not copy
 those behaviors into its loss-aware raw layer.
 
 ### R3/R4/R5 — iD
@@ -239,7 +239,7 @@ not only the encoding usually produced by OSM tooling.
 libosmium v2.23.0 release notes record the corresponding fix:
 https://github.com/osmcode/libosmium/releases/tag/v2.23.0
 
-This fixture is mandatory for `d-osm` regression testing.
+This fixture is mandatory for `osm-d` regression testing.
 
 ---
 

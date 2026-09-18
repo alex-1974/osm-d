@@ -18,7 +18,7 @@ __dummy.html
 *.profdata
 
 # dub test runner
-/d-osm-test-library
+/osm-d-test-library
 
 # Local benchmark data, generated executables and results
 benchmark/data/

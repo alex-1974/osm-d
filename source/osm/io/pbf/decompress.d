@@ -3,7 +3,7 @@
  *
  * Raw Blob payloads are returned zero-copy. Zlib payloads are decompressed into
  * caller-owned storage whose capacity is validated before calling zlib. The
- * zlib path uses `uncompress2`, allowing d-osm to enforce the declared
+ * zlib path uses `uncompress2`, allowing osm-d to enforce the declared
  * `raw_size` as a hard output bound and to reject trailing compressed bytes.
  * No GC allocation occurs in this module; streaming workers can therefore use
  * pooled per-worker buffers.

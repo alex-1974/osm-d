@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Conservative C++20 reference for the d-osm DenseNodes hot path.
+// Conservative C++20 reference for the osm-d DenseNodes hot path.
 //
 // This benchmark uses the same canonical no-DenseInfo workloads, complete dense
 // tag preflight, checked delta accumulation, per-node tag-range construction,
@@ -1378,7 +1378,7 @@ bool option_value(int& i, int argc, char** argv, std::string_view arg,
 
 void print_help() {
     std::cout
-        << "d-osm DenseNodes C++ semantic-reference benchmark\n"
+        << "osm-d DenseNodes C++ semantic-reference benchmark\n"
         << "  --nodes=N\n"
         << "  --iterations=N\n"
         << "  --samples=N\n"
@@ -1459,7 +1459,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::cout << "d-osm DenseNodes C++ conservative-reference benchmark\n";
+    std::cout << "osm-d DenseNodes C++ conservative-reference benchmark\n";
     std::cout << "compiler: " << compiler_name() << '\n';
     std::cout << "nodes/profile: " << node_count
               << "  iterations/sample: " << iterations

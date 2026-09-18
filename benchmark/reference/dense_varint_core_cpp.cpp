@@ -1,4 +1,4 @@
-// Diagnostic C++ reference for d-osm DenseNodes one-byte varint core.
+// Diagnostic C++ reference for osm-d DenseNodes one-byte varint core.
 // Copyright © 2026 Alexander Bernardi. MIT License.
 
 #include <algorithm>
@@ -278,11 +278,11 @@ int main(int argc, char** argv) {
     }
 
 #if defined(__clang__)
-    std::printf("d-osm DenseNodes C++ one-byte varint-core benchmark\ncompiler: Clang %s\n", __clang_version__);
+    std::printf("osm-d DenseNodes C++ one-byte varint-core benchmark\ncompiler: Clang %s\n", __clang_version__);
 #elif defined(__GNUC__)
-    std::printf("d-osm DenseNodes C++ one-byte varint-core benchmark\ncompiler: GCC %s\n", __VERSION__);
+    std::printf("osm-d DenseNodes C++ one-byte varint-core benchmark\ncompiler: GCC %s\n", __VERSION__);
 #else
-    std::printf("d-osm DenseNodes C++ one-byte varint-core benchmark\n");
+    std::printf("osm-d DenseNodes C++ one-byte varint-core benchmark\n");
 #endif
     std::printf("nodes: %zu  values: %zu  samples: %zu  warmup: %zu\n", nodes, nodes * 3, samples, warmup);
     std::printf("packed bytes: ids=%zu lats=%zu lons=%zu total=%zu\n",

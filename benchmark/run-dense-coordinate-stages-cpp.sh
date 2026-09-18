@@ -28,7 +28,7 @@ for compiler in "${compilers[@]}"; do
         printf '\n=== %s ===\n' "$compiler"
         "$compiler" --version | head -n 2
         tag="$(basename "$compiler" | tr -c 'A-Za-z0-9_.-' '_')"
-        binary="$here/bin/d-osm-bench-dense-coordinate-stages-cpp-$tag"
+        binary="$here/bin/osm-d-bench-dense-coordinate-stages-cpp-$tag"
         flags=(-std=c++20 -O3 -DNDEBUG)
         if [[ -n "$extra_flags" ]]; then
             # shellcheck disable=SC2206

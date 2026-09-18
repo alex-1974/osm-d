@@ -1074,7 +1074,7 @@ private int runRegularMain(string[] args) @system
     if (options.helpWanted)
     {
         defaultGetoptPrinter(
-            "d-osm regular Node microbenchmark",
+            "osm-d regular Node microbenchmark",
             options.options);
         return 0;
     }
@@ -1098,7 +1098,7 @@ private int runRegularMain(string[] args) @system
         return 2;
     }
 
-    writeln("d-osm regular Node microbenchmark");
+    writeln("osm-d regular Node microbenchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "nodes/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",
@@ -2152,7 +2152,7 @@ version (RegularNodeStageBenchmark)
         if (options.helpWanted)
         {
             defaultGetoptPrinter(
-                "d-osm regular Node stage benchmark",
+                "osm-d regular Node stage benchmark",
                 options.options);
             return 0;
         }
@@ -2176,7 +2176,7 @@ version (RegularNodeStageBenchmark)
             return 2;
         }
 
-        writeln("d-osm regular Node stage benchmark");
+        writeln("osm-d regular Node stage benchmark");
         writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
         writefln(
             "nodes/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",

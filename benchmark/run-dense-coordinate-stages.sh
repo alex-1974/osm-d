@@ -29,9 +29,9 @@ for compiler in "${compilers[@]}"; do
         [[ "$cooldown" != "0" ]] && sleep "$cooldown"
         thermal
         if [[ -n "$bench_cpu" ]]; then
-            taskset -c "$bench_cpu" "$here/bin/d-osm-bench-dense-coordinate-stages" "$@"
+            taskset -c "$bench_cpu" "$here/bin/osm-d-bench-dense-coordinate-stages" "$@"
         else
-            "$here/bin/d-osm-bench-dense-coordinate-stages" "$@"
+            "$here/bin/osm-d-bench-dense-coordinate-stages" "$@"
         fi
         thermal
     fi

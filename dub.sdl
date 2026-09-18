@@ -1,4 +1,4 @@
-name "d-osm"
+name "osm-d"
 description "Safe, loss-aware and high-performance OpenStreetMap data library for D"
 authors "Alexander Bernardi"
 copyright "Copyright © 2026 Alexander Bernardi"

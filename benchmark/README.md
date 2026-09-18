@@ -20,7 +20,7 @@ Run both available reference compilers from the repository root:
 ./benchmark/run-varint.sh
 ```
 
-The runner defaults to DUB `allAtOnce` build mode. The `d-osm` package itself is
+The runner defaults to DUB `allAtOnce` build mode. The `osm-d` package itself is
 still a dependency build unit, so measured hot-path functions that require
 cross-module inlining must express that explicitly; ADR 0008 records why this
 matters for varint decoding.

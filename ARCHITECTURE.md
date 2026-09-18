@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`d-osm` separates four concerns that are often conflated in OSM libraries:
+`osm-d` separates four concerns that are often conflated in OSM libraries:
 
 1. decoding bytes;
 2. preserving what was actually present in the source;

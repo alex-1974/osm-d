@@ -1,4 +1,4 @@
-// Diagnostic C++ reference for d-osm DenseNodes coordinate-core stages.
+// Diagnostic C++ reference for osm-d DenseNodes coordinate-core stages.
 // Copyright © 2026 Alexander Bernardi. MIT License.
 
 #include <algorithm>
@@ -361,11 +361,11 @@ int main(int argc, char** argv) {
     }
 
 #if defined(__clang__)
-    std::printf("d-osm DenseNodes C++ coordinate-stage benchmark\ncompiler: Clang %s\n", __clang_version__);
+    std::printf("osm-d DenseNodes C++ coordinate-stage benchmark\ncompiler: Clang %s\n", __clang_version__);
 #elif defined(__GNUC__)
-    std::printf("d-osm DenseNodes C++ coordinate-stage benchmark\ncompiler: GCC %s\n", __VERSION__);
+    std::printf("osm-d DenseNodes C++ coordinate-stage benchmark\ncompiler: GCC %s\n", __VERSION__);
 #else
-    std::printf("d-osm DenseNodes C++ coordinate-stage benchmark\ncompiler: unknown\n");
+    std::printf("osm-d DenseNodes C++ coordinate-stage benchmark\ncompiler: unknown\n");
 #endif
     std::printf("nodes: %zu  iterations/sample: %zu  samples: %zu  warmup: %zu\n", nodes, iterations, samples, warmup);
     std::printf("encoded bytes: ids=%zu lats=%zu lons=%zu total=%zu\n", w.ids.size(), w.lats.size(), w.lons.size(), w.ids.size()+w.lats.size()+w.lons.size());

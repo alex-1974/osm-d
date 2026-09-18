@@ -10,7 +10,7 @@ normalizing structures, confusing incomplete extracts with complete objects,
 or rewriting an input format that contains information their internal model
 cannot represent.
 
-`d-osm` is intended both for an editor and as a standalone ecosystem library.
+`osm-d` is intended both for an editor and as a standalone ecosystem library.
 Its default behavior therefore must be safe for data it did not create.
 
 ## Decision

@@ -18,7 +18,7 @@ streaming architecture's planned worker-local decompression buffers.
 
 ## Decision
 
-`d-osm` separates Blob parsing from payload materialization.
+`osm-d` separates Blob parsing from payload materialization.
 
 `decodeBlob` is zero-copy and allocation-free. It validates one unambiguous
 known payload representation, validates `raw_size`, preserves the complete

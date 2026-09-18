@@ -11,7 +11,7 @@ Applications nevertheless sometimes need durable objects.
 
 ## Decision
 
-`d-osm` exposes two explicit lifetimes:
+`osm-d` exposes two explicit lifetimes:
 
 - borrowed `*View` values that may reference a current input/decompression
   block, StringTable or worker arena;

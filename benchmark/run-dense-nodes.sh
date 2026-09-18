@@ -66,7 +66,7 @@ build_benchmark() {
 }
 
 run_benchmark() {
-    local binary="$here/bin/d-osm-bench-dense-nodes"
+    local binary="$here/bin/osm-d-bench-dense-nodes"
 
     if [[ "$cooldown" != "0" ]]; then
         sleep "$cooldown"

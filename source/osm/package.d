@@ -1,7 +1,7 @@
 /**
- * Public package root for `d-osm`.
+ * Public package root for `osm-d`.
  *
- * `d-osm` provides loss-aware, high-performance OpenStreetMap data handling.
+ * `osm-d` provides loss-aware, high-performance OpenStreetMap data handling.
  * The public surface is intentionally kept small while the canonical data
  * model, codecs, validation rules, and streaming contracts are established.
  *

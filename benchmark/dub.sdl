@@ -1,14 +1,14 @@
-name "d-osm-benchmarks"
-description "Reproducible micro- and end-to-end benchmarks for d-osm"
+name "osm-d-benchmarks"
+description "Reproducible micro- and end-to-end benchmarks for osm-d"
 authors "Alexander Bernardi"
 copyright "Copyright © 2026 Alexander Bernardi"
 license "MIT"
 
-dependency "d-osm" path=".."
+dependency "osm-d" path=".."
 
 configuration "varint" {
     targetType "executable"
-    targetName "d-osm-bench-varint"
+    targetName "osm-d-bench-varint"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -17,7 +17,7 @@ configuration "varint" {
 
 configuration "dense-nodes" {
     targetType "executable"
-    targetName "d-osm-bench-dense-nodes"
+    targetName "osm-d-bench-dense-nodes"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -26,7 +26,7 @@ configuration "dense-nodes" {
 
 configuration "regular-nodes" {
     targetType "executable"
-    targetName "d-osm-bench-regular-nodes"
+    targetName "osm-d-bench-regular-nodes"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -35,7 +35,7 @@ configuration "regular-nodes" {
 
 configuration "dense-coordinate-stages" {
     targetType "executable"
-    targetName "d-osm-bench-dense-coordinate-stages"
+    targetName "osm-d-bench-dense-coordinate-stages"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -44,7 +44,7 @@ configuration "dense-coordinate-stages" {
 
 configuration "dense-varint-core" {
     targetType "executable"
-    targetName "d-osm-bench-dense-varint-core"
+    targetName "osm-d-bench-dense-varint-core"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -53,7 +53,7 @@ configuration "dense-varint-core" {
 
 configuration "regular-node-stages" {
     targetType "executable"
-    targetName "d-osm-bench-regular-node-stages"
+    targetName "osm-d-bench-regular-node-stages"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -63,7 +63,7 @@ configuration "regular-node-stages" {
 
 configuration "regular-ways" {
     targetType "executable"
-    targetName "d-osm-bench-regular-ways"
+    targetName "osm-d-bench-regular-ways"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"
@@ -72,7 +72,7 @@ configuration "regular-ways" {
 
 configuration "regular-way-stages" {
     targetType "executable"
-    targetName "d-osm-bench-regular-way-stages"
+    targetName "osm-d-bench-regular-way-stages"
     targetPath "bin"
     sourcePaths "micro"
     importPaths "micro"

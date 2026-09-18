@@ -62,7 +62,7 @@ store. Requiring all columns would reject valid metadata subsets.
 
 Rejected for the high-integrity core. Once a column is present, a shorter
 column has no explicit per-node presence bitmap and therefore makes positional
-association dependent on an implicit recovery rule. d-osm fails closed instead
+association dependent on an implicit recovery rule. osm-d fails closed instead
 of inventing tail defaults.
 
 ### Decode metadata only while emitting nodes

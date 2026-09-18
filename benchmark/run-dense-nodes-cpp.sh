@@ -58,7 +58,7 @@ build_benchmark() {
     local compiler="$1"
     local tag
     tag="$(printf '%s' "$(basename "$compiler")" | tr -c 'A-Za-z0-9_.-' '_')"
-    local binary="$here/bin/d-osm-bench-dense-nodes-cpp-$tag"
+    local binary="$here/bin/osm-d-bench-dense-nodes-cpp-$tag"
     mkdir -p "$here/bin"
 
     local -a flags=(-std=c++20 -O3 -DNDEBUG)

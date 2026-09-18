@@ -457,7 +457,7 @@ int main(string[] args) @system
         "warmup", "Untimed stage runs before measurement", &warmupIterations);
     if (options.helpWanted)
     {
-        defaultGetoptPrinter("d-osm DenseNodes coordinate-stage benchmark", options.options);
+        defaultGetoptPrinter("osm-d DenseNodes coordinate-stage benchmark", options.options);
         return 0;
     }
     if (nodeCount == 0 || samples == 0 || iterations != 1)
@@ -495,7 +495,7 @@ int main(string[] args) @system
         return 3;
     }
 
-    writeln("d-osm DenseNodes coordinate-stage benchmark");
+    writeln("osm-d DenseNodes coordinate-stage benchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "nodes: %s  iterations/sample: %s  samples: %s  warmup: %s",

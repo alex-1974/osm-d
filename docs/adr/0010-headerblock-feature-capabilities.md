@@ -8,7 +8,7 @@
 OSMPBF `HeaderBlock` combines ordinary document metadata with two feature lists.
 A reader must reject a file when it does not understand a required feature, but
 unknown optional features do not prevent read-only interpretation. At the same
-time, `d-osm` is implementing PBF incrementally: decoding a HeaderBlock must not
+time, `osm-d` is implementing PBF incrementally: decoding a HeaderBlock must not
 prematurely claim support for DenseNodes, history semantics, or LocationsOnWays
 before the corresponding PrimitiveBlock paths exist.
 
@@ -19,7 +19,7 @@ nanodegrees and therefore have an exact integer representation.
 
 ## Decision
 
-`d-osm` separates three concerns:
+`osm-d` separates three concerns:
 
 1. `decodeHeaderBlock` performs structural protobuf decoding only. It is
    allocation-free, keeps the complete serialized HeaderBlock as raw bytes,

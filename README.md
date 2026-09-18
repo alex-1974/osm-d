@@ -1,6 +1,6 @@
-# d-osm
+# osm-d
 
-`d-osm` is a standalone OpenStreetMap data library for D. It is being built as
+`osm-d` is a standalone OpenStreetMap data library for D. It is being built as
 a reusable component for a future OSM editor, but its public design is not tied
 to that editor.
 
@@ -68,7 +68,7 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 
 ## Shared workspace context
 
-When this repository is used inside the `geospatial-d` workspace, shared
+When this repository is used inside `d-geospatial-workspace`, shared
 workspace documents are linked only into `.workspace/`. Repo-root documents
 remain repository-specific. The helper `tools/link-workspace-docs.sh` manages
 only `.workspace/`.
@@ -101,7 +101,6 @@ Relation decoding, the complete public borrowed `ElementView` layer, the
 production parallel PBF reader, XML/osmChange support, and the compact editable
 store remain future work.
 
-The repository is currently named `d-osm`. A coordinated workspace
-reorganization plans to rename the standalone library/repository to `osm-d`;
-that rename is intentionally not performed as part of this development
-checkpoint.
+The repository was renamed from `d-osm` to `osm-d` during the coordinated
+workspace reorganization on 2026-09-18. The repository and DUB package now use
+the `osm-d` name.

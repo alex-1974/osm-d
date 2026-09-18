@@ -25,7 +25,7 @@ import osm.io.pbf.header_block :
 /** Semantic classification of currently documented HeaderBlock features. */
 enum HeaderFeatureKind : ubyte
 {
-    /// Feature string is not currently understood by d-osm.
+    /// Feature string is not currently understood by osm-d.
     unknown,
     /// OSM data uses schema version 0.6.
     osmSchemaV06,
@@ -79,7 +79,7 @@ struct HeaderFeatureAssessment
     size_t optionalCount;
     /// Number of required occurrences unsupported by the supplied policy.
     size_t unsupportedRequiredCount;
-    /// Number of optional occurrences not currently recognized by d-osm.
+    /// Number of optional occurrences not currently recognized by osm-d.
     size_t unknownOptionalCount;
     /// First unsupported required occurrence, if any.
     HeaderFeatureRef firstUnsupportedRequired;

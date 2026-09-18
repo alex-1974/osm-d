@@ -9,7 +9,7 @@
  *
  * The decoder deliberately rejects more than one correctly encoded `data`
  * oneof occurrence. Generic protobuf runtimes normally let the final oneof
- * member win, but silently shadowing an earlier payload would violate d-osm's
+ * member win, but silently shadowing an earlier payload would violate osm-d's
  * no-silent-loss contract. Raw bytes are still available to lower-level raw
  * handling; the validated Blob representation requires one unambiguous payload.
  *

@@ -1312,7 +1312,7 @@ private int runRegularMain(string[] args) @system
     if (options.helpWanted)
     {
         defaultGetoptPrinter(
-            "d-osm regular Way microbenchmark",
+            "osm-d regular Way microbenchmark",
             options.options);
         return 0;
     }
@@ -1336,7 +1336,7 @@ private int runRegularMain(string[] args) @system
         return 2;
     }
 
-    writeln("d-osm regular Way microbenchmark");
+    writeln("osm-d regular Way microbenchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "ways/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",
@@ -2516,7 +2516,7 @@ version (RegularWayStageBenchmark)
         if (options.helpWanted)
         {
             defaultGetoptPrinter(
-                "d-osm regular Way stage benchmark",
+                "osm-d regular Way stage benchmark",
                 options.options);
             return 0;
         }
@@ -2540,7 +2540,7 @@ version (RegularWayStageBenchmark)
             return 2;
         }
 
-        writeln("d-osm regular Way stage benchmark");
+        writeln("osm-d regular Way stage benchmark");
         writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
         writefln(
             "ways/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",

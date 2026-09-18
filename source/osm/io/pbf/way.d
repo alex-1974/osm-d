@@ -293,7 +293,7 @@ private struct ParsedWay
  * `WayView.refs` contains absolute OSM node IDs. If `LocationsOnWays` data is
  * carried, `WayView.locations` exposes exact nanodegree coordinates in matching
  * order. The decoder intentionally performs no node lookup and no geometric
- * interpretation, keeping the PBF layer composable with higher d-geospatial
+ * interpretation, keeping the PBF layer composable with higher geospatial layers
  * resolver and geometry libraries without forcing either dependency or
  * materialization here.
  */

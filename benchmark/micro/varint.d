@@ -679,7 +679,7 @@ int main(string[] args) @system
     if (options.helpWanted)
     {
         defaultGetoptPrinter(
-            "d-osm protobuf varint microbenchmark",
+            "osm-d protobuf varint microbenchmark",
             options.options);
         return 0;
     }
@@ -713,7 +713,7 @@ int main(string[] args) @system
         return 3;
     }
 
-    writeln("d-osm varint microbenchmark");
+    writeln("osm-d varint microbenchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "values/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",

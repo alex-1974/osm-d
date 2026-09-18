@@ -74,7 +74,7 @@ cool_down_after_build() {
 }
 
 run_benchmark() {
-    local binary="$here/bin/d-osm-bench-varint"
+    local binary="$here/bin/osm-d-bench-varint"
 
     if [[ -n "$bench_cpu" ]]; then
         taskset -c "$bench_cpu" "$binary" "$@"

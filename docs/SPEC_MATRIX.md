@@ -1,7 +1,7 @@
 # OSM Specification and Real-World Compatibility Matrix
 
 This document maps normative OSM and Protocol Buffers requirements to observed
-real-world implementation behavior and to explicit `d-osm` design decisions.
+real-world implementation behavior and to explicit `osm-d` design decisions.
 It is a design input and test plan, not merely background documentation.
 
 Verification date: **2026-09-12**.
@@ -14,7 +14,7 @@ When sources disagree, use this order:
 2. current OSM Editing API behavior/documentation;
 3. documented real-world format behavior;
 4. multiple established implementations;
-5. `d-osm` behavior.
+5. `osm-d` behavior.
 
 No reference implementation defines correctness by itself.
 
@@ -51,7 +51,7 @@ Primary sources are listed in full in `REFERENCES.md`.
 
 ## 1. Identity, IDs and versioning
 
-| Topic | Normative / observed rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Normative / observed rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | Element identity | Node, Way and Relation IDs live in separate namespaces. Type + ID identifies an OSM element. | iD prefixes IDs internally by type. | **MUST:** identity type is `(ElementType, OsmId)`. Never use numeric ID alone as a global key. | Same numeric ID for node, way and relation. |
 | ID width | Current API documents element/member IDs as implementation-dependent signed 64-bit integers. PBF fields are 64-bit integer types. | JOSM uses Java `long`; iD treats server IDs as opaque strings. | **MUST:** `alias OsmId = long`; checked parsing; no narrowing. Treat numeric magnitude as semantically opaque. | `long.min`, `long.max`, large positive IDs, invalid overflow. |
@@ -66,7 +66,7 @@ Sources: N1, N3, N4, N5, R1, R3.
 
 ## 2. Tags
 
-| Topic | Normative / observed rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Normative / observed rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | Key/value length | OSM tag keys and values are Unicode strings up to 255 characters. | API rejects invalid element data. | **MUST:** validated OSM model enforces current API/data-model limits when target policy is API-compatible. | 255 / 256 character boundaries. |
 | Duplicate keys | An OSM element cannot validly contain two tags with the same key; API 0.6 rejects duplicates. | JOSM/iD semantic models use map-like tag storage. | **RAW:** raw parser preserves duplicate tag entries and source order. **REJECT:** conversion to validated OSM model fails on duplicate keys. Never keep-first, keep-last or merge implicitly. | Duplicate identical/different values; XML and PBF. |
@@ -80,7 +80,7 @@ Sources: N2, N5, API duplicate-tag errors, R2.
 
 ## 3. Ways and relations: order, multiplicity and references
 
-| Topic | Normative / observed rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Normative / observed rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | Way node order | A way is an ordered sequence of node references. | All major editors preserve order; JOSM writes in stored order. | **MUST:** preserve exact ref order and duplicates. Generic codec must not simplify or deduplicate. | repeated refs; closed way; roundtrip order. |
 | Relation member order | Relation members are ordered; order is meaningful for several relation types. | iD/JOSM retain member arrays in model. | **MUST:** preserve exact member order. | route/restriction-style ordered members. |
@@ -96,7 +96,7 @@ Sources: N1, N2, N5, R1, R2, R3.
 
 ## 4. Partial datasets and completeness
 
-`d-osm` must distinguish different kinds of completeness. They are not a single
+`osm-d` must distinguish different kinds of completeness. They are not a single
 boolean.
 
 | State | Meaning | Decision |
@@ -119,7 +119,7 @@ Sources: N1, R1.
 
 ## 5. Coordinates
 
-| Topic | Normative / observed rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Normative / observed rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | PBF representation | Coordinates are signed integer values with per-PrimitiveBlock granularity and offsets. Formula is integer nanodegree based. | libosmium uses fixed-point integer locations internally. | **MUST:** authoritative PBF decode uses checked integer arithmetic, never `double`. | non-default granularity/offset; overflow edges. |
 | Default granularity | Default is 100 nanodegrees (1e-7 degree). | Common planet/extract PBFs use this. | **MUST:** defaults come from schema semantics, not producer assumptions. | omitted granularity/offset. |
@@ -133,7 +133,7 @@ Sources: N1, N5, R6.
 
 ## 6. Metadata and history
 
-| Topic | Normative / observed rule | `d-osm` decision | Required tests |
+| Topic | Normative / observed rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | Metadata omission | PBF `Info` may be absent; extracts can omit metadata; XML variants may omit historical attributes. | Every metadata field uses explicit presence. No sentinel substitution in public model. | omitmeta PBF/XML. |
 | `visible` | PBF `visible=false` represents deletion/history state. When writers use it, `HistoricalInformation` is required. | History/current state is explicit. Writer enforces feature/header dependency. | deleted historical object; feature missing. |
@@ -150,7 +150,7 @@ Sources: N3, N5.
 This section is critical. OSM PBF uses a fixed protobuf schema, but the wire
 format permits more encodings than typical OSM producers emit.
 
-| Topic | Protocol Buffers rule | `d-osm` decision | Required tests |
+| Topic | Protocol Buffers rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | Field order | Serialized fields may occur in any order. | **MUST:** never depend on canonical producer ordering. | shuffled fields for every PBF message type. |
 | Unknown fields | Wire type allows parsers to skip unknown fields. | Read-only semantic decode may skip. For promised format roundtrip, preserve opaque field bytes or mark rewrite unsafe. | unknown varint/fixed/LEN field. |
@@ -163,7 +163,7 @@ format permits more encodings than typical OSM producers emit.
 
 The libosmium #389 regression is mandatory corpus data: libosmium 2.20 failed
 to read an unpacked single-element repeated field generated by protobuf-net,
-while JOSM accepted it. libosmium v2.23.0 later fixed this. `d-osm` must pass
+while JOSM accepted it. libosmium v2.23.0 later fixed this. `osm-d` must pass
 this case from the first PBF-capable release.
 
 Sources: N8, R7.
@@ -172,7 +172,7 @@ Sources: N8, R7.
 
 ## 8. PBF file framing and compression
 
-| Topic | Normative / canonical rule | `d-osm` decision | Required tests |
+| Topic | Normative / canonical rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | File framing | 4-byte network-order BlobHeader length, then BlobHeader, then `datasize` bytes of Blob. | Dedicated framing layer; no OSM semantic parsing here. | truncated prefix/header/blob; endian test. |
 | Header ordering | `OSMHeader` must precede the first `OSMData` block. | Strict validated PBF reader rejects missing/late required header state. Raw block scanner may inspect damaged files. | missing header; data before header. |
@@ -188,7 +188,7 @@ Sources: N6, N7.
 
 ## 9. PBF HeaderBlock features
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | unknown required feature | Reader that does not understand a required feature must reject the file and report it. | **REJECT** with feature names. | synthetic `FutureFeature`. |
 | unknown optional feature | May be ignored for interpretation. | Read-only semantic decode allowed. Format rewrite requires preservation or explicit loss acceptance. | opaque optional feature. |
@@ -203,7 +203,7 @@ Sources: N5, N7.
 
 ## 10. PrimitiveBlock and StringTable
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | Block independence | Each PrimitiveBlock is independently parsable and has its own StringTable and coordinate/timestamp parameters. | Natural unit for worker jobs, arena lifetime and parallel decode. | parallel blocks with different granularity/string tables. |
 | StringTable index 0 | Reserved as blank delimiter and is always blank/unused. | Strict PBF validation verifies index 0 representation; Dense tag delimiter is integer 0. | nonempty index 0. |
@@ -217,7 +217,7 @@ Sources: N5.
 
 ## 11. DenseNodes
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | ID/lat/lon | Three repeated delta-coded signed integer columns represent nodes. | Direct cursor decode with independent checked accumulators. | negative deltas, overflow, empty columns. |
 | Column cardinality | One logical ID/lat/lon value is needed per dense node. | **REJECT** inconsistent logical counts after concatenating packed/unpacked segments. | IDs shorter/longer than lat/lon. |
@@ -231,7 +231,7 @@ Sources: N5, PERFORMANCE.md.
 
 ## 12. Ways in PBF
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | refs | Delta-coded repeated signed IDs, order significant. | Borrowed lazy `WayRefRange`/cursor; exact order. | positive/negative deltas, repeated IDs. |
 | LocationsOnWays | Optional lat/lon arrays are delta coded; if used refs/lat/lon counts must match and feature declared. | Validate all three conditions; no partial approximation. | every mismatch combination. |
@@ -243,7 +243,7 @@ Sources: N5, N7.
 
 ## 13. Relations in PBF
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | member columns | `roles_sid`, delta-coded `memids`, and `types` are parallel arrays. | **MUST:** equal logical counts; stream in exact order. | unequal columns, segmented fields. |
 | member type enum | NODE/WAY/RELATION are defined values. | Unknown enum value preserved at raw wire level; validated OSM relation rejects unsupported member type. | enum 3+. |
@@ -259,7 +259,7 @@ Sources: N2, N5.
 OSM XML is a family of closely related interchange forms, not a byte-stable
 canonical serialization.
 
-| Topic | Observed/documented behavior | `d-osm` decision | Required tests |
+| Topic | Observed/documented behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | block order | Conventional/documented entity block order is nodes, ways, relations; blocks may be absent and IDs need not be sorted. | Reader does not require ID sorting. Writer may choose deterministic type order but must document semantic vs format roundtrip mode. | unsorted IDs; missing type blocks. |
 | negative IDs | Negative IDs occur in editor files. | Preserve signed IDs. | JOSM-style local objects. |
@@ -273,7 +273,7 @@ Sources: N3, R2.
 
 ## 15. OsmChange and upload construction
 
-| Topic | Rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** change model contains whole-object states. | tag-only logical edit still serializes full object. |
 | modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
@@ -290,7 +290,7 @@ Sources: N1, N4, R4.
 
 ## 16. OSM API response integrity
 
-| Topic | Rule | `d-osm` decision | Required tests |
+| Topic | Rule | `osm-d` decision | Required tests |
 | --- | --- | --- | --- |
 | HTTP 200 + internal `<error>`/error entry | API documentation explicitly says response can be syntactically correct but incomplete; editing applications MUST discard the whole response. | Network/API adapter stages results transactionally and commits only after document completion validation. | fixture with valid elements followed by error marker commits **zero** elements. |
 | optimistic locking | Wrong current version yields 409 Conflict. | Baseline version retained; conflict surfaced, never automatically overwritten. | stale version fixture. |
@@ -307,7 +307,7 @@ The current documentation shows example values such as 2000 way nodes, 32000
 relation members and 10000 changeset elements, but explicitly states that
 actual values may change.
 
-| Topic | Rule | Reference behavior | `d-osm` decision | Required tests |
+| Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
 | capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **MUST:** API validators take a `CapabilityProfile`; no current server limit is hardcoded as normative model truth. | mocked capability changes. |
 | offline validation | No server may be available. | Editors use defaults/fallbacks. | Separate *format validity* from *target-server uploadability*. Offline policy may carry explicit configured defaults. | same object valid format but invalid against smaller server cap. |
@@ -362,7 +362,7 @@ comparison must therefore always include the canonical wire rules.
 
 ---
 
-## 19. `d-osm` integrity capabilities
+## 19. `osm-d` integrity capabilities
 
 The API should eventually expose these concepts independently rather than one
 `valid` flag:

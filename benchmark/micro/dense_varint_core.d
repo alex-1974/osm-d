@@ -365,7 +365,7 @@ int main(string[] args) @system
         "warmup", "Untimed runs per stage", &warmupIterations);
     if (options.helpWanted)
     {
-        defaultGetoptPrinter("d-osm DenseNodes varint-core benchmark", options.options);
+        defaultGetoptPrinter("osm-d DenseNodes varint-core benchmark", options.options);
         return 0;
     }
     if (nodeCount == 0 || samples == 0 || iterations != 1)
@@ -403,7 +403,7 @@ int main(string[] args) @system
         return 3;
     }
 
-    writeln("d-osm DenseNodes one-byte varint-core benchmark");
+    writeln("osm-d DenseNodes one-byte varint-core benchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "nodes: %s  values: %s  samples: %s  warmup: %s",

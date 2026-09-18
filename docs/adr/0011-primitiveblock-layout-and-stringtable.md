@@ -7,7 +7,7 @@
 
 `PrimitiveBlock` is the performance-critical inner container of OSMPBF data. A
 naive generated-protobuf representation would materialize messages, repeated
-arrays, and strings before entity decoding. That conflicts with d-osm's goals
+arrays, and strings before entity decoding. That conflicts with osm-d's goals
 of city-scale streaming, bounded memory use, zero-copy views, and explicit
 control over hot-path allocation.
 
@@ -24,7 +24,7 @@ add per-entry GC pressure.
 
 ## Decision
 
-`d-osm` uses a two-pass, caller-buffered PrimitiveBlock preparation path:
+`osm-d` uses a two-pass, caller-buffered PrimitiveBlock preparation path:
 
 1. `decodePrimitiveBlockLayout` performs one allocation-free top-level scan. It
    applies protobuf last-one-wins semantics to scalar metadata, counts borrowed

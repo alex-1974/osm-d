@@ -12,7 +12,7 @@ across multiple packed segments, use unpacked occurrences, or merge repeated
 `DenseNodes` submessages. An entirely empty stream means all dense nodes are
 tagless.
 
-The d-osm integrity contract forbids silently dropping malformed tags or
+The osm-d integrity contract forbids silently dropping malformed tags or
 normalizing their order. The streaming architecture also must not allocate a
 `Tag[]` or copy StringTable bytes for each node.
 

@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workspace_root="${1:-}"
 
 if [[ -z "$workspace_root" ]]; then
-    echo "usage: $0 /path/to/d-geospatial" >&2
+    echo "usage: $0 /path/to/d-geospatial-workspace" >&2
     exit 2
 fi
 

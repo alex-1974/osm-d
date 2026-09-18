@@ -905,7 +905,7 @@ int main(string[] args) @system
     if (options.helpWanted)
     {
         defaultGetoptPrinter(
-            "d-osm DenseNodes microbenchmark",
+            "osm-d DenseNodes microbenchmark",
             options.options);
         return 0;
     }
@@ -929,7 +929,7 @@ int main(string[] args) @system
         return 2;
     }
 
-    writeln("d-osm DenseNodes microbenchmark");
+    writeln("osm-d DenseNodes microbenchmark");
     writefln("compiler: %s (%s)", __VENDOR__, __VERSION__);
     writefln(
         "nodes/profile: %s  iterations/sample: %s  samples: %s  warmup: %s",

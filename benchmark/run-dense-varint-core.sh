@@ -29,9 +29,9 @@ for compiler in "${compilers[@]}"; do
         [[ "$cooldown" != "0" ]] && sleep "$cooldown"
         thermal
         if [[ -n "$bench_cpu" ]]; then
-            taskset -c "$bench_cpu" "$here/bin/d-osm-bench-dense-varint-core" "$@"
+            taskset -c "$bench_cpu" "$here/bin/osm-d-bench-dense-varint-core" "$@"
         else
-            "$here/bin/d-osm-bench-dense-varint-core" "$@"
+            "$here/bin/osm-d-bench-dense-varint-core" "$@"
         fi
         thermal
     fi

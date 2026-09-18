@@ -66,7 +66,7 @@ build_benchmark() {
 }
 
 run_benchmark() {
-    local binary="$here/bin/d-osm-bench-regular-ways"
+    local binary="$here/bin/osm-d-bench-regular-ways"
 
     if [[ "$cooldown" != "0" ]]; then
         sleep "$cooldown"
