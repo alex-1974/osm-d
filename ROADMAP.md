@@ -6,33 +6,33 @@
 - [x] Define performance/scalability contract.
 - [x] Define benchmark methodology.
 - [x] Record initial architecture ADRs.
-- [ ] Complete OSM specification/real-world compatibility matrix.
+- [x] Complete OSM specification/real-world compatibility matrix.
 - [ ] Fix supported D compiler/version policy.
 - [ ] Select immutable benchmark datasets and hashes.
 
 ## Phase 1 — Wire and memory foundation
 
 - [ ] Checked endian helpers.
-- [ ] Bounded byte cursor.
-- [ ] Protobuf varint and ZigZag decode.
-- [ ] Protobuf field scanner.
-- [ ] Correct support for packed, unpacked and segmented repeated scalars.
-- [ ] Structured non-allocating decode errors.
+- [x] Bounded byte cursor.
+- [x] Protobuf varint and ZigZag decode.
+- [x] Protobuf field scanner.
+- [x] Correct support for packed, unpacked and segmented repeated scalars.
+- [x] Structured non-allocating decode errors.
 - [ ] Worker-local linear arena.
 - [ ] Reusable owned/borrowed block buffers.
 - [ ] Fuzz and malformed-input harnesses for the wire layer.
 
 ## Phase 2 — PBF vertical slice
 
-- [ ] File framing and resource limits.
-- [ ] Blob decompression abstraction.
-- [ ] HeaderBlock and feature negotiation.
-- [ ] PrimitiveBlock layout scan.
-- [ ] Zero-copy StringTable view.
-- [ ] DenseNodes decode.
-- [ ] DenseInfo decode.
-- [ ] Normal Node decode.
-- [ ] Way decode.
+- [x] File framing and resource limits.
+- [x] Blob decompression abstraction.
+- [x] HeaderBlock and feature negotiation.
+- [x] PrimitiveBlock layout scan.
+- [x] Zero-copy StringTable view.
+- [x] DenseNodes decode.
+- [x] DenseInfo decode.
+- [x] Normal Node decode.
+- [x] Way decode.
 - [ ] Relation decode.
 - [ ] Borrowed `ElementView` API.
 - [ ] Structural validation.

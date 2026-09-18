@@ -90,8 +90,13 @@ Dependencies are evaluated against:
 Mir/`ndslice` is a candidate for compact-store numerical work, not a required
 PBF parser dependency.
 
-## Shared d-geospatial workspace
+## Shared geospatial-d workspace
 
-Repo-root project documents are specific to `d-osm`. Shared workspace context
-is linked into `.workspace/` only. `tools/link-workspace-docs.sh` is restricted
-to managing that directory.
+Repo-root project documents are specific to the standalone OSM library. The
+repository and DUB package are still named `d-osm` at this checkpoint; the
+coordinated repository reorganization plans to rename them to `osm-d`.
+
+Shared `geospatial-d` workspace context is kept in `.workspace/` only.
+`tools/link-workspace-docs.sh` is restricted to managing that directory.
+Library-specific documentation must not modify shared workspace design
+documents merely to record a local development checkpoint.

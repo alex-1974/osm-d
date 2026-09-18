@@ -7,6 +7,13 @@ stable release.
 
 ## Unreleased
 
+- Reused the already validated sole `DenseNodes` payload for implicit-all-tagless
+  coordinate cursors, eliminating one redundant outer `PrimitiveGroup` scan
+  while preserving the generic path for tagged, explicit-delimiter-only,
+  repeated, and unrepresentable-large payloads. Controlled A8e benchmarks show
+  a roughly 75–98 ns/group fixed saving for small and medium tagless groups and
+  measurement-neutral behavior once that fixed cost is amortized.
+
 - Added allocation-free DenseInfo decoding with independently optional metadata columns, packed/unpacked compatibility, checked delta/timestamp arithmetic, StringTable-validated usernames, and explicit presence semantics.
 - Added compile-time-specialized DenseNodes emission, a scalar sink fast path for tag-/metadata-free groups, and targeted hot-path inlining without weakening preflight validation.
 - Added a specialized DenseNodes dispatch boundary that keeps all four tag/DenseInfo variants out of the public decoder while preserving inlining inside the selected hot loop.

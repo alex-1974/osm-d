@@ -68,7 +68,7 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 
 ## Shared workspace context
 
-When this repository is used inside the `d-geospatial` workspace, shared
+When this repository is used inside the `geospatial-d` workspace, shared
 workspace documents are linked only into `.workspace/`. Repo-root documents
 remain repository-specific. The helper `tools/link-workspace-docs.sh` manages
 only `.workspace/`.
@@ -85,7 +85,23 @@ remains useful for fast development cycles.
 
 ## Status
 
-Architecture and conformance requirements are being fixed before the first
-substantial codec implementation. The initial vertical slice is PBF framing ->
-wire decoding -> DenseNodes -> borrowed element views -> validation ->
-benchmarks.
+The first substantial PBF implementation slice is in place. Implemented
+components include bounded PBF framing/decompression, HeaderBlock capability
+handling, PrimitiveBlock layout and StringTable indexing, DenseNodes including
+tags and DenseInfo, regular Node decoding, Way decoding, and reproducible
+microbenchmarks for the current entity hot paths.
+
+DenseNodes scalar hot-path research has progressed through experiments A2-A8.
+The retained A8e implementation reuses the already validated sole DenseNodes
+payload for implicit-all-tagless groups, removing one redundant outer
+PrimitiveGroup scan without narrowing legal protobuf semantics. The detailed
+evidence and rejected alternatives are recorded in `docs/BENCHMARKS.md`.
+
+Relation decoding, the complete public borrowed `ElementView` layer, the
+production parallel PBF reader, XML/osmChange support, and the compact editable
+store remain future work.
+
+The repository is currently named `d-osm`. A coordinated workspace
+reorganization plans to rename the standalone library/repository to `osm-d`;
+that rename is intentionally not performed as part of this development
+checkpoint.
