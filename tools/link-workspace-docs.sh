@@ -12,7 +12,12 @@ fi
 workspace_root="$(cd "$workspace_root" && pwd)"
 workspace_dir="$repo_root/.workspace"
 
-files=(README.md ROADMAP.md DESIGN_PRINCIPLES.md)
+files=(
+    README.md
+    ROADMAP.md
+    DESIGN_PRINCIPLES.md
+    RESEARCH.md
+)
 
 for file in "${files[@]}"; do
     if [[ ! -f "$workspace_root/$file" ]]; then
@@ -21,12 +26,31 @@ for file in "${files[@]}"; do
     fi
 done
 
-# This helper is intentionally restricted to .workspace/.
-rm -rf -- "$workspace_dir"
-mkdir -p -- "$workspace_dir"
+if ! git -C "$repo_root" check-ignore -q .workspace/README.md; then
+    echo "ERROR: .workspace/ is not ignored by this repository" >&2
+    exit 1
+fi
+
+mkdir -p "$workspace_dir"
 
 for file in "${files[@]}"; do
-    ln -- "$workspace_root/$file" "$workspace_dir/$file"
-done
+    source="$workspace_root/$file"
+    target="$workspace_dir/$file"
 
-printf 'linked workspace documents into %s\n' "$workspace_dir"
+    if [[ -e "$target" ]]; then
+        source_inode="$(stat -c '%d:%i' "$source")"
+        target_inode="$(stat -c '%d:%i' "$target")"
+
+        if [[ "$source_inode" == "$target_inode" ]]; then
+            echo "OK   .workspace/$file"
+            continue
+        fi
+
+        echo "ERROR: $target exists but is not the workspace hardlink" >&2
+        echo "       refusing to overwrite it" >&2
+        exit 1
+    fi
+
+    ln "$source" "$target"
+    echo "LINK .workspace/$file"
+done
