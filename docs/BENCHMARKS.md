@@ -1452,3 +1452,327 @@ with SHA-256:
 ```text
 9b8bbd5d6d74fa8ab177b387463e3db3925cf9d65d18fb0acd2206e1ba995c59
 ```
+
+### A8: reuse the validated sole DenseNodes payload for tagless coordinate cursors
+
+A7 established that a specialized Dense coordinate emitter can be cheaper when
+exact serialized spans are already known, but that performing another protobuf
+structure scan solely to discover those spans is not profitable.
+
+A8 therefore started from a narrower observation: `decodePrimitiveGroupLayout()`
+already has to decode the outer `PrimitiveGroup` and already encounters every
+field-2 `DenseNodes` length-delimited payload before `scanDenseNodes()` validates
+its contents. The existing `DenseColumnCursor`, however, independently rescanned
+the complete `PrimitiveGroup` to rediscover that same `DenseNodes` payload before
+looking for coordinate field `1`, `8`, or `9`.
+
+The A8 hypothesis was therefore:
+
+> retain the already-known sole `DenseNodes` payload location as a by-product of
+> mandatory layout validation and let tagless coordinate cursors start directly
+> inside that payload.
+
+The experiment deliberately did **not** add a second structure scan, did not
+cache individual coordinate spans, and did not narrow the legal protobuf
+representations accepted by the generic decoder.
+
+#### A8a: first cache representation perturbed the validator
+
+The first implementation attempted to reclaim the two existing
+`hasLatRange` / `hasLonRange` bytes and derive range presence from coordinate
+counts.
+
+Although semantically valid, that changed generated code in
+`acceptDenseDelta()`: the former boolean checks became wider count-based tests
+and altered register allocation.
+
+A cache-write-disabled control still regressed by approximately **+0.404%**,
+while restoring the independent booleans restored the previous validator
+code generation.
+
+A8a was therefore **REJECTED**. Metadata reuse was still worth investigating,
+but not by perturbing the established Dense validation representation.
+
+#### A8b: six-byte tail-padding cache, consumed by all Dense paths
+
+The revised representation preserved both range booleans and occupied only the
+six bytes of existing 64-bit tail padding in `DenseNodesLayout`:
+
+```text
+offset 112: bool hasLatRange
+offset 113: bool hasLonRange
+offset 114: ubyte[3] DenseNodes payload offset
+offset 117: ubyte[3] DenseNodes payload length
+sizeof(DenseNodesLayout) = 120
+alignof(DenseNodesLayout) = 8
+```
+
+The payload offset and length are stored as little-endian 24-bit integers.
+Values larger than `0xFF_FFFF` are intentionally not cached and retain the
+generic path. This preserves the full parser input domain even though the
+optimization cache itself represents only payloads below approximately 16 MiB.
+
+A zero offset is the no-cache sentinel. A valid field-2 payload cannot begin at
+offset zero because its protobuf key and length prefix necessarily precede the
+payload.
+
+Repeated `DenseNodes` occurrences are also deliberately uncached because
+protobuf message fields merge across occurrences; the existing generic cursor
+remains the semantic fallback.
+
+Static inspection showed:
+
+- `DenseNodesLayout.sizeof == 120`;
+- `PrimitiveGroupLayout.sizeof == 168`;
+- `scanDenseNodes()` unchanged;
+- `acceptDenseDelta()` unchanged.
+
+Decoder-only scaling showed a nearly fixed saving of roughly **80–95 ns per
+decoded group** through the small and medium group sizes.
+
+The general A8b consumer was nevertheless rejected after a targeted
+`mixed/tag-bytes` hardware-counter run showed a real tagged-path regression:
+
+```text
+elapsed       +1.354%
+cycles        +0.934%
+instructions  -0.093%
+branches      ~0%
+IPC           -1.017%
+```
+
+Both elapsed-time pairs and cycle pairs regressed. A8b therefore demonstrated
+that the outer-payload cache itself was useful, but consuming it in every
+semantic specialization was too broad.
+
+#### A8c: consume the cache only in compile-time tagless specializations
+
+A8c retained the cache but restricted the new cursor constructor to
+`HasTags == false`:
+
+```d
+static if (HasTags)
+{
+    DenseColumnCursor ids  = DenseColumnCursor(group.raw, 1);
+    DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
+    DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
+}
+else
+{
+    DenseColumnCursor ids  = DenseColumnCursor(group, 1);
+    DenseColumnCursor lats = DenseColumnCursor(group, 8);
+    DenseColumnCursor lons = DenseColumnCursor(group, 9);
+}
+```
+
+There is therefore no runtime branch in the per-node emission loop.
+
+Under the controlled LLVM JCC build, all six inspected `HasTags=true`
+dispatchers had the same symbol sizes as baseline, and normalized tagged
+dispatcher disassembly was identical.
+
+A targeted tagged hardware-counter confirmation on `mixed/tag-bytes` then
+showed that the A8b regression had disappeared:
+
+```text
+elapsed       -0.028%
+cycles        -0.414%
+instructions  +0.000%
+branches      -0.000%
+IPC           +0.415%
+```
+
+The tagless decoder-only scaling continued to show the expected fixed one-time
+saving.
+
+A recovered end-to-end benchmark was then used so that each timed decode
+included:
+
+```text
+PrimitiveGroup layout decode
++ production decodeDenseNodes preflight
++ emission
++ selected sink work
+```
+
+Under the JCC-controlled build, tagless end-to-end scaling showed approximately:
+
+| Nodes | Typical saving |
+| ---: | ---: |
+| 1 | 76–79 ns/group |
+| 4 | 76–88 ns/group |
+| 16 | 83–96 ns/group |
+| 64 | 80–91 ns/group |
+| 256 | 87–104 ns/group |
+| 1024+ | amortized toward measurement-neutral |
+
+A 200,000-node hardware-counter run was effectively neutral:
+
+```text
+elapsed       +0.010%
+cycles        -0.134%
+ref cycles    -0.134%
+instructions  -0.001%
+branches      -0.001%
+IPC           +0.131%
+```
+
+A mirrored 200,000-node run likewise produced an overall pair median of
+approximately **-0.089%**.
+
+A8c still recorded the payload cache during layout decoding for groups that
+would later dispatch to tagged emitters. A dedicated tagged end-to-end matrix
+was noisy but had a median cell delta of **+0.135%**, motivating one final
+narrowing of cache production.
+
+That matrix also exposed an important semantic distinction: the benchmark's
+`mixed/1` case contains an explicit `keys_vals = [0]` node delimiter but zero
+actual tags. `validateDenseTags()` therefore dispatches it with `HasTags=false`,
+even though the serialized `keys_vals` field is non-empty.
+
+This meant that `keysValsCount > 0` cannot be used as a semantic synonym for
+"has tags".
+
+#### A8d/A8e: conservatively produce the cache only for implicit-all-tagless input
+
+The final design avoids reproducing Dense tag semantics inside
+`scanDenseNodes()` or `decodePrimitiveGroupLayout()`.
+
+The payload cache is produced only when all of the following are already known
+from mandatory layout work:
+
+```text
+DenseNodes occurrences == 1
+keysValsCount == 0
+payload offset <= 0xFF_FFFF
+payload length <= 0xFF_FFFF
+```
+
+An entirely absent logical `keys_vals` stream is the format-defined compact
+representation for all-tagless Dense nodes and is therefore a safe conservative
+proxy for the profitable consumer.
+
+A non-empty `keys_vals` stream containing only zero delimiters is legal and may
+later validate to zero actual tags, but it intentionally remains uncached. This
+avoids duplicating tag-value semantics merely to widen the optimization.
+
+A8d initially cleared the six-byte cache even on the first tagged occurrence.
+Because a freshly initialized layout already contains zero there, A8e removed
+those redundant stores. Only a later `DenseNodes` occurrence must clear a cache
+possibly established by the first occurrence.
+
+Unit coverage verifies:
+
+- exact 24-bit set/read/clear behavior;
+- the canonical sole packed payload cache (`offset=2`, `length=0x14`);
+- explicit zero-delimiter-only `keys_vals` remains uncached;
+- repeated legal `DenseNodes` occurrences clear/disable the cache;
+- the 64-bit structure size and member offsets remain fixed.
+
+All **24 test modules passed under both LDC and DMD**, and `git diff --check`
+remained clean.
+
+#### A8e controlled end-to-end result
+
+The final A8e JCC-controlled candidate was compared against the production
+baseline using A-B-B-A ordering.
+
+Tagless scaling retained the intended fixed-cost improvement:
+
+| Nodes | coordinates | tag IDs | tag bytes |
+| ---: | ---: | ---: | ---: |
+| 1 | -11.878% | -11.929% | -11.647% |
+| 4 | -11.805% | -11.367% | -11.166% |
+| 16 | -7.256% | -7.178% | -6.788% |
+| 64 | -2.809% | -3.241% | -2.942% |
+| 256 | -0.741% | -0.962% | -0.806% |
+| 1024 | +0.013% | -0.016% | -0.071% |
+
+Across the small and medium groups, the absolute saving remained approximately
+**75–98 ns per group**, matching the hypothesis that A8 removes one redundant
+outer `PrimitiveGroup` discovery scan rather than changing per-node complexity.
+
+The apparent 200,000-node regression from the long scaling sequence was tested
+again with mirrored A-B-B-A plus B-A-A-B ordering:
+
+| Path | Mean change | Median paired change |
+| --- | ---: | ---: |
+| coordinates | -0.034% | -0.021% |
+| tag IDs | -0.016% | -0.014% |
+| tag bytes | +0.048% | +0.021% |
+
+The median across all twelve mirrored pair comparisons was **+0.003%**, with no
+checksum failures. The very-large-group result is therefore measurement-neutral,
+as expected when the fixed scan saving is fully amortized.
+
+The final tagged end-to-end matrix was noisier and showed no consistent scaling
+signature. Its median cell delta was **+0.297%**, but only two of seventeen cells
+regressed in both paired comparisons; one of those had a first paired delta of
+only **+0.007%**. Positive and negative group-time deltas varied widely rather
+than behaving like a fixed layout tax.
+
+Static inspection provides the stronger isolation evidence for those non-target
+paths. Relative to the production baseline:
+
+```text
+scanDenseNodes                   3399 -> 3399 bytes
+acceptDenseDelta                  484 ->  484 bytes
+CoordinateSink decodeDenseNodes   967 ->  967 bytes
+TagIdSink decodeDenseNodes        967 ->  967 bytes
+TagByteSink decodeDenseNodes      967 ->  967 bytes
+decodePrimitiveGroupLayout        925 ->  993 bytes
+new layout-based cursor ctor        - ->  174 bytes
+```
+
+After normalizing branch targets and RIP-relative placement, generated
+instruction sequences were **identical** between baseline and A8e for:
+
+- `scanDenseNodes`;
+- `acceptDenseDelta`;
+- `decodeDenseNodes<CoordinateSink>`;
+- `decodeDenseNodes<TagIdSink>`;
+- `decodeDenseNodes<TagByteSink>`.
+
+The optimization is therefore localized to layout discovery and the new
+layout-aware cursor construction. It does not perturb the established Dense
+validation scanner or per-node emitter code generation.
+
+#### A8 classification
+
+A8e is **KEEP**.
+
+It realizes the useful architectural result left by A7: span information
+becomes available as a by-product of work the parser already has to perform,
+rather than through another protobuf scan.
+
+The retained production mechanism is intentionally conservative:
+
+1. preserve the existing Dense validator representation and code generation;
+2. use only six bytes of existing 64-bit structure padding;
+3. cache only the sole implicit-all-tagless `DenseNodes` payload;
+4. retain generic parsing for tagged, explicit-delimiter-only, repeated, and
+   unrepresentable-large payloads;
+5. consume the cache only in compile-time `HasTags=false` specializations;
+6. remove one redundant outer `PrimitiveGroup` scan without changing legal wire
+   semantics.
+
+Principal A8 artifacts:
+
+```text
+/tmp/d-osm-a8b-mixed-tagbytes-counter-abba-20260917-191727
+/tmp/d-osm-a8c-tagged-static-20260917-203414
+/tmp/d-osm-a8c-mixed-tagbytes-counter-abba-20260917-203742
+/tmp/d-osm-a8c-tagless-scaling-abba-20260917-204446
+/tmp/d-osm-a8c-e2e-jcc-build-20260918-094853
+/tmp/d-osm-a8c-e2e-tagless-scaling-abba-20260918-102001
+/tmp/d-osm-a8c-e2e-200k-counter-abba-20260918-103747
+/tmp/d-osm-a8c-e2e-200k-mirrored-20260918-104120
+/tmp/d-osm-a8c-e2e-tagged-layout-tax-20260918-130836
+/tmp/d-osm-a8d-e2e-tagged-layout-tax-20260918-135923
+/tmp/d-osm-a8e-e2e-jcc-build-20260918-142625
+/tmp/d-osm-a8e-e2e-tagged-layout-tax-20260918-142820
+/tmp/d-osm-a8e-e2e-tagless-scaling-abba-20260918-144823
+/tmp/d-osm-a8e-e2e-200k-mirrored-20260918-145741
+/tmp/d-osm-a8e-hot-symbols-20260918-150330
+/tmp/d-osm-a8e-hot-disasm-20260918-150924
+```

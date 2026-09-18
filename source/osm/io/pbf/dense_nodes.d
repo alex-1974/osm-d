@@ -219,9 +219,18 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
         DenseInfoNodeCursor infoNodes = DenseInfoNodeCursor(
             block, group, table, infoValidation);
 
-    DenseColumnCursor ids = DenseColumnCursor(group.raw, 1);
-    DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
-    DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
+    static if (HasTags)
+    {
+        DenseColumnCursor ids = DenseColumnCursor(group.raw, 1);
+        DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
+        DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
+    }
+    else
+    {
+        DenseColumnCursor ids = DenseColumnCursor(group, 1);
+        DenseColumnCursor lats = DenseColumnCursor(group, 8);
+        DenseColumnCursor lons = DenseColumnCursor(group, 9);
+    }
 
     long id;
     long lat;
@@ -391,6 +400,25 @@ public:
     {
         _group = WireCursor(group);
         _fieldNumber = fieldNumber;
+    }
+
+    this(ref const PrimitiveGroupLayout group, uint fieldNumber)
+        @safe nothrow @nogc
+    {
+        _fieldNumber = fieldNumber;
+
+        if (group.dense.occurrences == 1 &&
+            group.dense.densePayloadOffset != 0)
+        {
+            const offset = cast(size_t)group.dense.densePayloadOffset;
+            const length = cast(size_t)group.dense.densePayloadLength;
+            _denseBase = offset;
+            _dense = WireCursor(group.raw[offset .. offset + length]);
+        }
+        else
+        {
+            _group = WireCursor(group.raw);
+        }
     }
 
     // `status` is failure-only here. The enclosing emitter starts with a
