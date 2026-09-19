@@ -7,7 +7,7 @@
 - [x] Define benchmark methodology.
 - [x] Record initial architecture ADRs.
 - [x] Complete OSM specification/real-world compatibility matrix.
-- [ ] Fix supported D compiler/version policy.
+- [x] Fix supported D compiler/version policy.
 - [ ] Select immutable benchmark datasets and hashes.
 
 ## Phase 1 — Wire and memory foundation

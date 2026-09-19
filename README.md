@@ -80,8 +80,10 @@ dub build
 dub test
 ```
 
-The reference compiler for release-performance benchmarks will be LDC. DMD
-remains useful for fast development cycles.
+The reference compiler for release-performance benchmarks is LDC. DMD remains
+the fast development/correctness compiler. The current pre-1.0 supported and
+tested matrix is DMD 2.111.0 and LDC 1.41.0 with DMD frontend 2.111.0; see
+`docs/DEVELOPMENT.md` for the compiler-support policy and canonical checks.
 
 ## Status
 

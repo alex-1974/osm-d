@@ -472,8 +472,9 @@ private bool countPrevalidatedPackedSInt64(
 /**
  * Reconstruct one Way for emission after complete group semantic preflight.
  *
- * Precondition: `wayRef.bytes` are the same immutable bytes previously accepted
- * by `parseWay` with the same PrimitiveBlock and StringTable. The first pass has
+ * Precondition: `wayRef.bytes` are the same bytes previously accepted by
+ * `parseWay`, unchanged since validation, with the same PrimitiveBlock and
+ * StringTable. The first pass has
  * therefore already proved tag StringTable references, checked ref deltas,
  * LocationsOnWays alignment, checked coordinate accumulation/conversion, and
  * required-field semantics for every Way before any sink call.
@@ -663,7 +664,8 @@ private bool decodePrevalidatedWay(
     }
 
     // These are defensive checks. The complete first pass already established
-    // them for the same immutable bytes before this function can run.
+    // them for the same bytes, unchanged since validation, before this function
+    // can run.
     if (!hasId)
     {
         status = PbfStatus.failure(

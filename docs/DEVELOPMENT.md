@@ -6,8 +6,26 @@ DMD is suitable for fast edit/build/test cycles. LDC is the reference compiler
 for release-performance measurements because the production hot paths are
 intended to benefit from LLVM optimization.
 
-Exact minimum supported compiler versions will be fixed only after the first
-working PBF vertical slice and CI matrix exist.
+During pre-1.0 development, the currently supported and tested compiler matrix is:
+
+- DMD 2.111.0;
+- LDC 1.41.0 using DMD frontend 2.111.0.
+
+No compatibility guarantee is currently made for older D frontends. A historical
+minimum frontend will be fixed only when there is evidence that supporting it is
+useful and the corresponding compiler matrix can be tested deliberately. Newer
+compiler releases are added to the supported matrix only after validation.
+
+The canonical local correctness checks are:
+
+```bash
+dub test --compiler=dmd --force
+dub test --compiler=ldc2 --force
+dub build --compiler=ldc2 --build=release --force
+```
+
+CI does not currently define this matrix; until CI is introduced, these local
+checks are the authoritative compiler verification for repository changes.
 
 ## Build profiles
 

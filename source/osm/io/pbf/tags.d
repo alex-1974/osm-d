@@ -172,8 +172,8 @@ bool validateTags(
 /**
  * Build a borrowed TagRange from an already validated element message.
  *
- * `summary` must come from `validateTags` for the same immutable bytes and
- * StringTable.
+ * `summary` must come from `validateTags` for the same bytes, unchanged since
+ * validation, and the same StringTable.
  */
 bool buildTagRange(
     const(ubyte)[] input,
