@@ -1776,3 +1776,67 @@ Principal A8 artifacts:
 /tmp/d-osm-a8e-hot-symbols-20260918-150330
 /tmp/d-osm-a8e-hot-disasm-20260918-150924
 ```
+
+## A9a: remove duplicate DenseNodes column-length guard
+
+A9a revisited fixed decode-time work after the retained A8e payload-cache
+optimization. The candidate removed the second ID/latitude/longitude column
+length comparison from `decodeDenseNodes()`.
+
+The semantic premise is stronger than a heuristic optimization.
+`decodeDenseNodes()` explicitly requires its `PrimitiveGroupLayout` argument to
+have been produced by `decodePrimitiveGroupLayout()`. That layout decoder
+already rejects DenseNodes when the merged ID, latitude, and longitude counts
+differ. Fabricating such a layout, or mutating aliased backing bytes after
+validation, violates the existing validated-layout precondition used by the
+earlier accepted DenseNodes arithmetic optimizations.
+
+The experiment changed only this redundant guard. Dense coordinate preflight,
+DenseInfo validation, dense-tag validation, dispatch, cursor behavior, and
+emission remained unchanged.
+
+Both DMD 2.111.0 and LDC 1.41.0 passed all 24 unit-test modules.
+
+For performance measurement, baseline and candidate were built with LDC 1.41.0
+/ LLVM 19.1.7 and LLVM's Intel JCC 32-byte-boundary mitigation:
+
+```text
+--x86-branches-within-32B-boundaries
+```
+
+The benchmark ran pinned to logical CPU 5 with SMT sibling CPU 11 offline and
+turbo disabled. Fixed binaries were compared in A-B-B-A order on the
+`tagless/coordinates` path. All checksums matched.
+
+| Nodes/group | Mean candidate p50 change | Approx. decode-time delta |
+| ---: | ---: | ---: |
+| 1 | -0.051% | -0.205 ns/decode |
+| 4 | -0.643% | -2.736 ns/decode |
+| 16 | -0.069% | -0.384 ns/decode |
+| 64 | -0.155% | -1.728 ns/decode |
+
+The small differences did not form the approximately constant absolute saving
+expected from removal of fixed per-decode work. The 4-node result was also
+visibly affected by baseline process drift. A9a is therefore classified as
+**runtime-neutral**, not as a demonstrated throughput optimization.
+
+Static code generation did change materially. Each of the three benchmark
+`decodeDenseNodes` sink instantiations shrank from 967 bytes to 862 bytes,
+a reduction of 105 bytes each. The complete executable `.text` section shrank
+by 320 bytes. Whole-binary disassembly counts changed as follows:
+
+```text
+instructions         193147 -> 193068
+conditional jumps     20556 -> 20547
+unconditional jumps    5429 -> 5426
+calls                  8831 -> 8828
+```
+
+All `dispatchDenseNodes` specialization sizes remained unchanged; their
+addresses merely shifted with the smaller preceding code.
+
+A9a is therefore **KEEP** as validated-layout deduplication and static
+code-size cleanup, with no claimed runtime speedup. The removed failure path
+does not protect a supported caller state: an unequal Dense ID/latitude/
+longitude layout has already been rejected by the required
+`decodePrimitiveGroupLayout()` stage.

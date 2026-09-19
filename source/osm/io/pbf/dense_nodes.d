@@ -122,13 +122,6 @@ bool decodeDenseNodes(Sink)(
         return true;
     }
 
-    if (group.dense.idCount != group.dense.latCount ||
-        group.dense.idCount != group.dense.lonCount)
-    {
-        status = PbfStatus.failure(PbfError.denseNodeColumnLengthMismatch, 0, 2);
-        return false;
-    }
-
     if (!preflightCoordinates(block, group, status))
         return false;
 
