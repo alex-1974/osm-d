@@ -88,16 +88,17 @@ remains useful for fast development cycles.
 The first substantial PBF implementation slice is in place. Implemented
 components include bounded PBF framing/decompression, HeaderBlock capability
 handling, PrimitiveBlock layout and StringTable indexing, DenseNodes including
-tags and DenseInfo, regular Node decoding, Way decoding, and reproducible
+tags and DenseInfo, regular Node, Way, and Relation decoding, and reproducible
 microbenchmarks for the current entity hot paths.
 
-DenseNodes scalar hot-path research has progressed through experiments A2-A8.
+DenseNodes scalar hot-path research has progressed through experiments A2-A9a.
 The retained A8e implementation reuses the already validated sole DenseNodes
-payload for implicit-all-tagless groups, removing one redundant outer
-PrimitiveGroup scan without narrowing legal protobuf semantics. The detailed
-evidence and rejected alternatives are recorded in `docs/BENCHMARKS.md`.
+payload for implicit-all-tagless groups, while A9a removes a duplicate
+post-layout DenseNodes column-length guard under the validated-layout contract.
+The detailed evidence and rejected alternatives are recorded in
+`docs/BENCHMARKS.md`.
 
-Relation decoding, the complete public borrowed `ElementView` layer, the
+The complete public borrowed `ElementView` layer, structural validation, the
 production parallel PBF reader, XML/osmChange support, and the compact editable
 store remain future work.
 

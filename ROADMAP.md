@@ -33,7 +33,7 @@
 - [x] DenseInfo decode.
 - [x] Normal Node decode.
 - [x] Way decode.
-- [ ] Relation decode.
+- [x] Relation decode.
 - [ ] Borrowed `ElementView` API.
 - [ ] Structural validation.
 - [ ] First single-thread comparison with libosmium.

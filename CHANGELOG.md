@@ -7,6 +7,12 @@ stable release.
 
 ## Unreleased
 
+- Added allocation-free regular Relation decoding with complete group preflight,
+  borrowed ordered member ranges, packed/unpacked segmented member-column
+  compatibility, checked delta-coded member IDs, StringTable-validated roles,
+  explicit NODE/WAY/RELATION member types, duplicate/order preservation, and
+  failure-before-first-sink semantics.
+
 - Reused the already validated sole `DenseNodes` payload for implicit-all-tagless
   coordinate cursors, eliminating one redundant outer `PrimitiveGroup` scan
   while preserving the generic path for tagged, explicit-delimiter-only,

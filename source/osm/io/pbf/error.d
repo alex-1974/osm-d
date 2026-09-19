@@ -168,6 +168,23 @@ enum PbfError : ubyte
     wayCoordinateOverflow,
     /// A defensive regular-Way rescan disagreed with the validated group summary.
     wayCountMismatch,
+
+    /// A regular Relation message contains malformed or unsupported protobuf wire data.
+    invalidRelationWire,
+    /// A regular Relation is missing required field `id`.
+    missingRelationId,
+    /// Relation `roles_sid`, `memids`, and `types` have different logical lengths.
+    relationMemberColumnLengthMismatch,
+    /// A Relation role StringTable ID is negative after protobuf int32 decoding.
+    invalidRelationRoleStringId,
+    /// A Relation role references a StringTable ID outside the indexed table.
+    relationRoleStringIdOutOfRange,
+    /// Checked accumulation of a delta-coded Relation member ID overflowed int64.
+    relationMemberIdOverflow,
+    /// A Relation member type is not NODE, WAY, or RELATION.
+    unsupportedRelationMemberType,
+    /// A defensive regular-Relation rescan disagreed with the validated group summary.
+    relationCountMismatch,
 }
 
 /**
@@ -314,6 +331,13 @@ struct PbfStatus
         return fromWireAs(PbfError.invalidWayWire, wire, baseOffset);
     }
 
+    /** Translate a generic wire failure inside a regular Relation message. */
+    static PbfStatus fromRelationWire(WireStatus wire, size_t baseOffset = 0)
+        @safe pure nothrow @nogc
+    {
+        return fromWireAs(PbfError.invalidRelationWire, wire, baseOffset);
+    }
+
     /** Translate a generic wire failure inside an Info message. */
     static PbfStatus fromInfoWire(WireStatus wire, size_t baseOffset = 0)
         @safe pure nothrow @nogc
@@ -395,6 +419,10 @@ unittest
     status = PbfStatus.fromWayWire(wire, 105);
     assert(status.error == PbfError.invalidWayWire);
     assert(status.offset == 108);
+
+    status = PbfStatus.fromRelationWire(wire, 107);
+    assert(status.error == PbfError.invalidRelationWire);
+    assert(status.offset == 110);
 
     status = PbfStatus.fromInfoWire(wire, 110);
     assert(status.error == PbfError.invalidInfoWire);
