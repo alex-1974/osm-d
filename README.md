@@ -98,9 +98,11 @@ post-layout DenseNodes column-length guard under the validated-layout contract.
 The detailed evidence and rejected alternatives are recorded in
 `docs/BENCHMARKS.md`.
 
-The complete public borrowed `ElementView` layer, structural validation, the
-production parallel PBF reader, XML/osmChange support, and the compact editable
-store remain future work.
+The format-independent borrowed `ElementView` identity contract is now in
+place, and the current DenseNode, regular Node, Way, and Relation PBF views
+conform to it without changing their codec-owned representations. Structural
+validation, the production parallel PBF reader and public range adapter,
+XML/osmChange support, and the compact editable store remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use

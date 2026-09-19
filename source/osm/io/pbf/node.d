@@ -13,6 +13,7 @@
  */
 module osm.io.pbf.node;
 
+import osm.view.element : ElementType, isElementView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -55,7 +56,16 @@ struct NodeView
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
+
+    /// Semantic OSM element kind.
+    @property ElementType type() const scope
+        @safe pure nothrow @nogc
+    {
+        return ElementType.node;
+    }
 }
+
+static assert(isElementView!NodeView);
 
 /** Summary of one completed regular-Node decode operation. */
 struct NodeDecodeSummary

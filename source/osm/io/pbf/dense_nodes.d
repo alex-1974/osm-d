@@ -14,6 +14,7 @@
  */
 module osm.io.pbf.dense_nodes;
 
+import osm.view.element : ElementType, isElementView;
 import osm.io.pbf.dense_info :
     DenseInfoNodeCursor,
     DenseInfoValidationSummary,
@@ -52,7 +53,16 @@ struct DenseNodeView
     DenseTagRange tags;
     /// Optional decoded metadata from the DenseInfo columns.
     DenseInfoView info;
+
+    /// Semantic OSM element kind, independent of DenseNodes encoding.
+    @property ElementType type() const scope
+        @safe pure nothrow @nogc
+    {
+        return ElementType.node;
+    }
 }
+
+static assert(isElementView!DenseNodeView);
 
 /**
  * Summary of one successfully completed DenseNodes decode operation.

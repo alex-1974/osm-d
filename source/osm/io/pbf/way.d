@@ -19,6 +19,7 @@
  */
 module osm.io.pbf.way;
 
+import osm.view.element : ElementType, isElementView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -258,7 +259,16 @@ struct WayView
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
+
+    /// Semantic OSM element kind.
+    @property ElementType type() const scope
+        @safe pure nothrow @nogc
+    {
+        return ElementType.way;
+    }
 }
+
+static assert(isElementView!WayView);
 
 /** Summary of one completed regular-Way decode operation. */
 struct WayDecodeSummary

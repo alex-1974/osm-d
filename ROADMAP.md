@@ -34,7 +34,7 @@
 - [x] Normal Node decode.
 - [x] Way decode.
 - [x] Relation decode.
-- [ ] Borrowed `ElementView` API.
+- [x] Borrowed `ElementView` identity contract and PBF view conformance.
 - [ ] Structural validation.
 - [ ] First single-thread comparison with libosmium.
 

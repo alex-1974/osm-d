@@ -83,11 +83,17 @@ The public API may expose D ranges:
 ```d
 auto reader = PbfReader("city.osm.pbf");
 foreach (scope element; reader.elements) {
-    // borrowed ElementView
+    // borrowed concrete view satisfying the ElementView contract
 }
 ```
 
 Ranges do not dictate the inner varint implementation.
+
+`ElementView` denotes the format-independent structural contract defined by
+`osm.view.element`, not one mandatory cross-codec storage type. A reader may
+therefore expose a codec-specific borrowed value whose `type` and `id` satisfy
+that contract. Generic semantic consumers can constrain on the contract while
+the codec retains its own cursor and backing-state representation.
 
 ## Borrowed and owned data
 
@@ -97,8 +103,8 @@ worker arena. It must not outlive that block.
 Long-lived data is created explicitly:
 
 ```text
-ElementView -> explicit copy -> owned model
-ElementView -> direct append -> compact store
+borrowed view satisfying ElementView contract -> explicit copy -> owned model
+borrowed view satisfying ElementView contract -> direct append -> compact store
 ```
 
 There is no implicit materialization of every parsed element.

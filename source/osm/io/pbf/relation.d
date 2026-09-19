@@ -20,6 +20,7 @@
  */
 module osm.io.pbf.relation;
 
+import osm.view.element : ElementType, isElementView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -176,7 +177,16 @@ struct RelationView
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
+
+    /// Semantic OSM element kind.
+    @property ElementType type() const scope
+        @safe pure nothrow @nogc
+    {
+        return ElementType.relation;
+    }
 }
+
+static assert(isElementView!RelationView);
 
 
 /** Summary of one completed regular-Relation decode operation. */
