@@ -1840,3 +1840,220 @@ code-size cleanup, with no claimed runtime speedup. The removed failure path
 does not protect a supported caller state: an unequal Dense ID/latitude/
 longitude layout has already been rejected by the required
 `decodePrimitiveGroupLayout()` stage.
+
+## A10a: skip redundant DenseTags String-ID validation during prevalidated node partitioning
+
+A10a revisited the tagged DenseNodes hot path after A9a.
+
+The complete `validateDenseTags()` preflight already proves, for the same
+`PrimitiveGroup` and `StringTable`, that every non-zero logical `keys_vals`
+entry is a valid positive signed-int32 StringTable ID and resolves within the
+indexed table. Production `decodeDenseNodes()` calls this complete preflight
+before selecting a tagged emitter.
+
+Before A10a, `DenseTagNodeCursor.nextNode()` nevertheless repeated
+`validateStringId()` for every non-zero `keys_vals` entry while partitioning
+the already validated stream into per-node ranges. The later `DenseTagRange`
+decode remained independently checked as well.
+
+The public cursor intentionally promises defensive behavior, so simply
+removing its checks would have weakened a supported API contract.
+
+A10a therefore introduced a narrower package-internal path:
+
+```text
+public nextNode()
+    -> retains defensive String-ID validation
+
+package nextPrevalidatedNode()
+    -> requires successful validateDenseTags()
+    -> requires the same backing bytes to remain unchanged
+    -> retains wire decoding, delimiter, pair-structure and node-count checks
+    -> skips only the already-proven String-ID semantic validation
+```
+
+The common implementation uses a compile-time `ValidateStringIds` capability,
+so there is no new runtime branch in the per-value partition loop.
+
+The production `decodeDenseNodes()` emitter uses the package-internal path only
+after its immediately preceding successful `validateDenseTags()` call.
+`DenseTagRange.fromValidated()` and `decodeValidatedPair()` are unchanged in
+A10a; actual range consumption therefore still performs the existing
+per-pair validation and StringTable lookup. Removing that later redundancy is
+explicitly outside A10a and requires a separate experiment.
+
+The stale source comment describing `const` backing bytes as immutable was
+also corrected. The contract is now stated precisely: the complete stream was
+prevalidated and its backing must remain unchanged while the range relies on
+that proof.
+
+### Correctness validation
+
+The A10a source delta passed:
+
+```text
+git diff --check
+DMD 2.111.0: 26 modules passed unittests
+LDC 1.41.0: 26 modules passed unittests
+LDC 1.41.0 release build: PASS
+```
+
+### Controlled benchmark setup
+
+Baseline source:
+
+```text
+a45894c0518461931d0ab263c14b5a60adefda82
+```
+
+Toolchain:
+
+```text
+LDC 1.41.0
+DMD frontend 2.111.0
+LLVM 19.1.7
+target x86_64
+```
+
+Both fixed benchmark binaries were built with LLVM's Intel JCC
+32-byte-boundary mitigation:
+
+```text
+--x86-branches-within-32B-boundaries
+```
+
+The controlled host state was:
+
+```text
+logical CPU:            5
+SMT sibling CPU 11:     offline
+intel_pstate no_turbo:  1
+ordering:                A-B-B-A
+```
+
+Each benchmark phase used:
+
+```text
+nodes:       200000
+iterations:  5 per sample
+samples:     30
+warmup:      2
+profiles:    typical, rich, mixed
+paths:       coordinates, tag-ids, tag-bytes
+CPU:         5
+```
+
+Fixed binary identities:
+
+```text
+baseline:
+4821a910a04e9e93dfa4683ef08877218aa610c1b9d77336af2a18794160f8cd
+
+A10a candidate:
+45a0d9029f2cfc2a045d50d1155ef4f0e73846e0e6a56acea5723c20aad700e8
+```
+
+All compared runs produced the expected matching checksum for a given
+profile/path.
+
+### Coordinates-only result
+
+| Profile | Tags/node | Baseline mean p50 | A10a mean p50 | Saved | A10a vs baseline |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| typical | 2.000 | 106.819 ns/node | 97.057 ns/node | 9.762 ns/node | -9.138% |
+| rich | 8.000 | 258.803 ns/node | 226.029 ns/node | 32.774 ns/node | -12.663% |
+| mixed | 1.625 | 93.241 ns/node | 85.344 ns/node | 7.897 ns/node | -8.469% |
+
+The A phases returned to essentially the same baseline level after the two B
+phases, while both candidate phases remained distinctly faster.
+
+### Full tag-consumption result
+
+| Path | Profile | Baseline mean p50 | A10a mean p50 | Saved | A10a vs baseline |
+| --- | --- | ---: | ---: | ---: | ---: |
+| tag IDs | typical | 135.627 ns/node | 127.812 ns/node | 7.815 ns/node | -5.762% |
+| tag IDs | rich | 358.835 ns/node | 324.054 ns/node | 34.781 ns/node | -9.693% |
+| tag IDs | mixed | 121.016 ns/node | 114.079 ns/node | 6.937 ns/node | -5.732% |
+| tag bytes | typical | 147.971 ns/node | 140.153 ns/node | 7.818 ns/node | -5.283% |
+| tag bytes | rich | 400.510 ns/node | 373.541 ns/node | 26.970 ns/node | -6.734% |
+| tag bytes | mixed | 131.875 ns/node | 123.409 ns/node | 8.466 ns/node | -6.420% |
+
+The optimization therefore remains beneficial when the returned
+`DenseTagRange` is actually traversed and its current checked pair decoder is
+executed. No measured benchmark cell regressed.
+
+### Static code-generation localization
+
+The fixed A10a executable became smaller:
+
+```text
+baseline .text   1,209,485 bytes
+A10a .text       1,204,077 bytes
+delta               -5,408 bytes
+```
+
+The relevant symbol-size changes were confined to the six benchmark
+`dispatchDenseNodes` instantiations with `HasTags=true`:
+
+```text
+CoordinateSink, HasInfo=true    -2606 bytes
+CoordinateSink, HasInfo=false    -640 bytes
+TagIdSink,      HasInfo=true     -224 bytes
+TagIdSink,      HasInfo=false    -864 bytes
+TagByteSink,    HasInfo=true     -224 bytes
+TagByteSink,    HasInfo=false    -864 bytes
+------------------------------------------------
+summed                              -5422 bytes
+```
+
+Relevant surrounding symbols were unchanged in size:
+
+```text
+decodeDenseNodes                 0x35e -> 0x35e
+validateDenseTags                0xe65 -> 0xe65
+DenseTagRange.fromValidated     0x1696 -> 0x1696
+TagIdSink.put                   0x169d -> 0x169d
+TagByteSink.put                 0x177d -> 0x177d
+```
+
+The six tagged dispatcher reductions sum to 5,422 bytes while whole
+executable `.text` decreases by 5,408 bytes. The material code-generation
+change is therefore localized to the expected tagged emitter specializations.
+
+### Reproducibility material
+
+The benchmark implementation remains in `benchmark/micro/dense_nodes.d` and
+the semantic comparison reference remains in
+`benchmark/reference/dense_nodes_cpp.cpp`.
+
+The investigation used transient fixed artifacts and captured logs under:
+
+```text
+/tmp/osm-d-a10-baseline
+/tmp/osm-d-a10-candidate
+/tmp/osm-d-a10-abba
+/tmp/osm-d-a10-tag-consumption-abba
+/tmp/osm-d-a10-static
+```
+
+These `/tmp` paths are diagnostic artifacts, not repository dependencies.
+
+### A10a classification
+
+A10a is **KEEP**.
+
+The retained optimization is deliberately narrow:
+
+1. keep complete hostile-input DenseTags preflight;
+2. keep public `DenseTagNodeCursor.nextNode()` defensive;
+3. expose the assumption only through a package-internal prevalidated path;
+4. retain wire, delimiter, pairing and node-count checks;
+5. remove only StringTable-ID semantic checks already proved by preflight;
+6. leave `DenseTagRange` pair decoding unchanged for A10a.
+
+The controlled runtime result is positive across all nine measured tagged
+workload/path combinations, ranging from **-5.283% to -12.663%**.
+
+A later experiment may investigate redundant String-ID validation during
+actual `DenseTagRange` pair decoding. That is a distinct experiment and is not
+implied by the A10a KEEP decision.

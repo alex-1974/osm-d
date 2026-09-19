@@ -13,6 +13,14 @@ stable release.
   explicit NODE/WAY/RELATION member types, duplicate/order preservation, and
   failure-before-first-sink semantics.
 
+- Added a package-internal prevalidated DenseTags node-partition path used only
+  after successful complete `validateDenseTags()` preflight. The public
+  `DenseTagNodeCursor.nextNode()` remains defensive, while production
+  DenseNodes emission avoids repeating StringTable-ID semantic validation for
+  every non-zero `keys_vals` value during node partitioning. Controlled A10a
+  A-B-B-A measurements improved all nine tagged benchmark combinations by
+  5.3–12.7% and reduced executable `.text` by 5,408 bytes.
+
 - Reused the already validated sole `DenseNodes` payload for implicit-all-tagless
   coordinate cursors, eliminating one redundant outer `PrimitiveGroup` scan
   while preserving the generic path for tagged, explicit-delimiter-only,

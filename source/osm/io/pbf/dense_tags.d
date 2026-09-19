@@ -106,8 +106,9 @@ public:
         DenseTagView next;
         if (!decodeValidatedPair(_stream, _table, next, ignoredStatus))
         {
-            // The complete immutable stream was prevalidated before this range
-            // could be constructed. Reaching this branch therefore indicates
+            // The complete stream was prevalidated and its backing is required
+            // to remain unchanged while this range is used. Reaching this branch
+            // therefore indicates
             // an internal invariant failure rather than hostile input.
             _remaining = 0;
             _front = DenseTagView.init;
@@ -194,6 +195,35 @@ public:
     bool nextNode(out DenseTagRange tags, out PbfStatus status)
         @safe nothrow @nogc
     {
+        return nextNodeImpl!true(tags, status);
+    }
+
+package:
+    /**
+     * Return the next node range after complete DenseTags preflight.
+     *
+     * Preconditions:
+     *   `validateDenseTags` succeeded for this same PrimitiveGroup/StringTable
+     *   pair and the validated backing bytes have not changed since validation.
+     *
+     * This internal decode path retains wire, delimiter, pair-structure, and
+     * node-count checks, but does not repeat StringTable-ID semantic validation
+     * already proved by the complete preflight.
+     */
+    pragma(inline, true)
+    bool nextPrevalidatedNode(out DenseTagRange tags, out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        return nextNodeImpl!false(tags, status);
+    }
+
+private:
+    pragma(inline, true)
+    bool nextNodeImpl(bool ValidateStringIds)(
+        out DenseTagRange tags,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
         tags = DenseTagRange.init;
 
         if (_remainingNodes == 0)
@@ -241,9 +271,17 @@ public:
                 break;
             }
 
-            uint sid;
-            if (!validateStringId(raw, _stream.lastValueOffset, _table, sid, status))
-                return false;
+            static if (ValidateStringIds)
+            {
+                uint sid;
+                if (!validateStringId(
+                    raw,
+                    _stream.lastValueOffset,
+                    _table,
+                    sid,
+                    status))
+                    return false;
+            }
 
             if (!waitingForValue)
                 waitingForValue = true;
@@ -262,6 +300,7 @@ public:
         return true;
     }
 
+public:
     /**
      * Verify that exactly the validated node count consumed the tag stream.
      *
