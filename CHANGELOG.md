@@ -21,6 +21,14 @@ stable release.
   tagged cells; targeted repeats confirmed the noisier boundary cases. The
   benchmark executable `.text` decreased by another 1,088 bytes.
 
+- Extended the DenseNodes benchmark contract with explicit `info-only`,
+  `typical-info`, and `rich-info` workloads. All three sink paths now make
+  DenseInfo observable, while the C++20 semantic reference mirrors complete
+  metadata preflight and streaming emission. D, GCC C++, and Clang C++ matched
+  all 21 profile/path checksum cells; the historical `--profile=all` set remains
+  unchanged for A2-A10 reproducibility. This establishes A11 measurement
+  infrastructure only and makes no performance claim.
+
 - Added a package-internal prevalidated DenseTags node-partition path used only
   after successful complete `validateDenseTags()` preflight. The public
   `DenseTagNodeCursor.nextNode()` remains defensive, while production

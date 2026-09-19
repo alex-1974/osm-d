@@ -127,21 +127,38 @@ D_OSM_BENCH_COOLDOWN=30 \
 
 The deterministic synthetic profiles are:
 
-- `tagless`: no `keys_vals` stream;
-- `typical`: two tags per node;
-- `rich`: eight tags per node;
-- `mixed`: deterministic 0/1/2/3/4-tag mixture.
+- `tagless`: no `keys_vals` stream and no DenseInfo;
+- `typical`: two tags per node and no DenseInfo;
+- `rich`: eight tags per node and no DenseInfo;
+- `mixed`: deterministic 0/1/2/3/4-tag mixture and no DenseInfo;
+- `info-only`: no tags and all six DenseInfo columns;
+- `typical-info`: two tags per node plus all six DenseInfo columns;
+- `rich-info`: eight tags per node plus all six DenseInfo columns.
+
+For reproducibility of the A2-A10 series, `--profile=all` deliberately retains
+only the historical `tagless`, `typical`, `rich`, and `mixed` set. The A11
+DenseInfo profiles are selected explicitly.
 
 The sink paths are:
 
-- `coordinates`: consume only ID and exact nanodegree coordinates;
+- `coordinates`: consume ID, exact nanodegree coordinates, and DenseInfo when
+  present;
 - `tag-ids`: additionally traverse every tag and consume StringTable IDs;
 - `tag-bytes`: additionally touch borrowed key/value bytes.
 
+For DenseInfo-bearing profiles all three sinks make the metadata observable.
+The checksum includes all six presence flags, version, cumulative timestamp
+value, timestamp milliseconds, changeset, uid, user StringTable ID, username
+length and boundary bytes, and visible. An independently checked metadata-node
+count prevents a benchmark path from silently dropping the info payload.
+
 `decodeDenseNodes` always performs its normal full preflight. Therefore the
 `coordinates` path on a tagged workload still includes validation and creation
-of per-node tag ranges; use the `tagless`/`coordinates` combination as the
-cleanest coordinate-core baseline.
+of per-node tag ranges, and a DenseInfo-bearing workload still includes complete
+metadata preflight plus streaming metadata emission. Use the
+`tagless`/`coordinates` combination as the cleanest coordinate-core baseline
+and `info-only` to isolate the metadata-bearing DenseNodes path without tag
+work.
 
 When all three paths are measured in one process, sample order rotates through
 all six permutations. Reported `MiB/s(group)` is serialized in-memory
@@ -152,6 +169,8 @@ Examples:
 ```bash
 ./benchmark/run-dense-nodes.sh --profile=tagless --path=coordinates
 ./benchmark/run-dense-nodes.sh --profile=typical --path=all
+./benchmark/run-dense-nodes.sh --profile=info-only --path=all
+./benchmark/run-dense-nodes.sh --profile=typical-info --path=all
 ./benchmark/run-dense-nodes.sh --nodes=500000 --iterations=8 --samples=40
 ```
 
@@ -160,10 +179,12 @@ correctness validation, sorting and reporting are outside the timed region.
 
 ### Conservative C++ reference
 
-`reference/dense_nodes_cpp.cpp` is a C++20 reference for the same canonical
-no-DenseInfo workloads used by `micro/dense_nodes.d`. It retains complete
-`keys_vals` preflight, checked delta accumulation, per-node tag partitioning,
-borrowed StringTable lookup and the same three observable checksum sinks.
+`reference/dense_nodes_cpp.cpp` is a C++20 semantic reference for the same
+canonical DenseNodes workloads used by `micro/dense_nodes.d`, including the
+explicit A11 DenseInfo profiles. It retains complete tag and metadata preflight,
+checked delta accumulation, per-node tag partitioning, borrowed StringTable
+lookup, streaming DenseInfo emission, and the same three observable checksum
+sinks.
 
 Unlike current D production, the C++ reference still performs checked coordinate
 conversion for every emitted node. D production validates the complete
@@ -207,10 +228,18 @@ For every compared profile/path, verify that `nodes`, `tags`, `group-bytes` and
 Differences must be investigated before changing representation or adding
 benchmark-only fast paths.
 
-The initial C++ reference intentionally refuses DenseInfo-bearing workloads.
-Once the D benchmark gains metadata profiles, the C++ reference must implement
-the same DenseInfo preflight and emission contract before those profiles may be
-compared.
+For the A11 DenseInfo workloads the C++ reference implements the same semantic
+contract as the D benchmark: six independently optional columns, packed and
+unpacked scalar compatibility in the decoder, checked timestamp/changeset/uid/
+user_sid accumulation, uid range checks, StringTable-valid user IDs, exact
+`date_granularity` scaling, complete preflight before emission, and borrowed
+username bytes.
+
+Before using an A11 metadata profile for performance work, D and C++ semantic
+runs must first agree on the observable checksum for the same profile/path.
+The initial A11 benchmark-infrastructure gate verified all seven profiles over
+all three sinks with both GCC and Clang C++ builds: 21/21 checksum cells matched
+the D implementation for each compiler.
 
 ### DenseNodes coordinate-stage diagnostics
 

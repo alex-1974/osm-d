@@ -2277,3 +2277,139 @@ unclaimed because of its bimodal baseline. The retained engineering conclusion
 is that removing this duplicate SID validation is semantically justified,
 reduces code size, and has no observed performance regression under the
 controlled benchmark set.
+
+## A11-Bench: DenseInfo semantic workload contract
+
+A11 starts with measurement infrastructure before any DenseInfo production
+optimization.
+
+This step changes only the DenseNodes D microbenchmark and its conservative
+C++20 semantic reference. No production source under `source/` is changed.
+
+### Motivation
+
+The pre-A11 DenseNodes benchmark covered tags and coordinates but generated no
+DenseInfo. The C++ reference likewise explicitly refused metadata-bearing
+workloads. Optimizing `DenseInfoNodeCursor` under that contract would therefore
+have produced measurements that did not exercise the code under investigation.
+
+A11-Bench closes that gap before changing production code.
+
+### Workload profiles
+
+The historical A2-A10 profiles remain unchanged:
+
+- `tagless`: no tags and no DenseInfo;
+- `typical`: two tags per node and no DenseInfo;
+- `rich`: eight tags per node and no DenseInfo;
+- `mixed`: deterministic mixed tag counts and no DenseInfo.
+
+Three explicit metadata profiles are added:
+
+- `info-only`: zero tags plus all six DenseInfo columns;
+- `typical-info`: two tags per node plus all six DenseInfo columns;
+- `rich-info`: eight tags per node plus all six DenseInfo columns.
+
+`--profile=all` intentionally remains the historical four-profile set. This
+preserves direct reproducibility of the A2-A10 benchmark series; A11 metadata
+profiles are selected explicitly.
+
+The canonical performance workload stores each DenseInfo column in one packed
+occurrence. Packed/unpacked compatibility remains part of decoder correctness
+rather than multiplying the primary performance matrix.
+
+The generated metadata contains:
+
+- direct `version`;
+- delta-coded `timestamp`;
+- delta-coded `changeset`;
+- delta-coded `uid`;
+- delta-coded `user_sid`;
+- direct `visible`;
+- the default `date_granularity` of 1000; and
+- a borrowed `"benchmark-user"` StringTable entry at SID 17.
+
+### Observable metadata contract
+
+DenseInfo is consumed by all three sink paths whenever present.
+
+The checksum mixes:
+
+1. all six `has*` presence flags;
+2. `version`;
+3. cumulative `timestampValue`;
+4. exact `timestampMillis`;
+5. cumulative `changeset`;
+6. cumulative `uid`;
+7. cumulative `userSid`;
+8. borrowed username length;
+9. first and last username byte when non-empty; and
+10. `visible`.
+
+An independent `infoCount` is carried through `DecodeRun`, warm-up validation,
+timed aggregation, and workload self-validation. A metadata-bearing path
+therefore cannot silently stop observing DenseInfo while still satisfying the
+benchmark consistency checks.
+
+Tag-ID and tag-byte sinks additionally retain their existing tag observations.
+
+### Semantic-reference contract
+
+`benchmark/reference/dense_nodes_cpp.cpp` now implements DenseInfo rather than
+using the previous empty metadata cursor.
+
+Its metadata path mirrors the relevant production semantics:
+
+- complete DenseInfo preflight before the first emitted node;
+- independently optional columns;
+- packed and unpacked repeated scalar decoding;
+- present-column length equal to `nodeCount`;
+- checked timestamp, changeset, uid, and user_sid delta accumulation;
+- cumulative uid constrained to the schema `int32` domain;
+- cumulative user_sid constrained to the indexed StringTable;
+- checked timestamp scaling by `date_granularity`;
+- six streaming column cursors during emission;
+- borrowed username bytes from the StringTable; and
+- no metadata materialization arrays.
+
+The C++ reference remains conservative for coordinate emission: unlike current
+D production it retains per-node checked coordinate arithmetic. It is therefore
+a semantic and comparative reference, not a claim of cycle-for-cycle identical
+generated code.
+
+### Initial semantic gate
+
+Before any A11 performance experiment:
+
+- the D DenseNodes benchmark built successfully with LDC;
+- the C++20 reference built successfully with both GCC and Clang;
+- seven profiles were exercised:
+  `tagless`, `typical`, `rich`, `mixed`, `info-only`, `typical-info`,
+  `rich-info`;
+- each profile was exercised through `coordinates`, `tag-ids`, and
+  `tag-bytes`; and
+- D, GCC C++, and Clang C++ produced identical observable checksums for every
+  profile/path combination.
+
+That is 21/21 semantic checksum cells matching for each independently compiled
+C++ reference.
+
+The historical `--profile=all` expansion was also verified on both D and C++ as
+exactly:
+
+    tagless
+    typical
+    rich
+    mixed
+
+### Classification
+
+A11-Bench is retained as benchmark infrastructure.
+
+The short smoke-run timings used while establishing semantic parity are **not**
+an A11 performance baseline and support no performance conclusion. Their sole
+purpose was to prove that the new paths execute and produce the same observable
+semantics.
+
+The first production A11 optimization must start from a frozen build of this
+benchmark contract and be measured separately against that fixed baseline.
