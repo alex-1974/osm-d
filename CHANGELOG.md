@@ -13,6 +13,14 @@ stable release.
   explicit NODE/WAY/RELATION member types, duplicate/order preservation, and
   failure-before-first-sink semantics.
 
+- Reused the construction-controlled validated-state proof carried by
+  `DenseTagRange` while decoding tag pairs. A10b removes repeated String-ID
+  domain/range validation after the same IDs have already been proved valid,
+  while retaining cursor decoding and defensive `StringTableView.get()` bounds
+  checks. Stable-gated A-B-B-A measurements favored A10b in all nine measured
+  tagged cells; targeted repeats confirmed the noisier boundary cases. The
+  benchmark executable `.text` decreased by another 1,088 bytes.
+
 - Added a package-internal prevalidated DenseTags node-partition path used only
   after successful complete `validateDenseTags()` preflight. The public
   `DenseTagNodeCursor.nextNode()` remains defensive, while production

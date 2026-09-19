@@ -93,14 +93,16 @@ handling, PrimitiveBlock layout and StringTable indexing, DenseNodes including
 tags and DenseInfo, regular Node, Way, and Relation decoding, and reproducible
 microbenchmarks for the current entity hot paths.
 
-DenseNodes scalar hot-path research has progressed through experiments A2-A10a.
+DenseNodes scalar hot-path research has progressed through experiments A2-A10b.
 The retained A8e implementation reuses the already validated sole DenseNodes
 payload for implicit-all-tagless groups, A9a removes a duplicate post-layout
-DenseNodes column-length guard under the validated-layout contract, and A10a
-uses the completed DenseTags preflight to avoid repeating StringTable-ID
-semantic validation while partitioning tags during internal emission. The
-public defensive DenseTag cursor remains checked. Detailed evidence and
-rejected alternatives are recorded in `docs/BENCHMARKS.md`.
+DenseNodes column-length guard under the validated-layout contract, A10a uses
+the completed DenseTags preflight to avoid repeating StringTable-ID semantic
+validation while partitioning tags during internal emission, and A10b carries
+that construction-controlled proof into `DenseTagRange` pair decoding. Public
+defensive validation and `StringTableView.get()` bounds checks remain intact.
+Detailed evidence and rejected alternatives are recorded in
+`docs/BENCHMARKS.md`.
 
 The format-independent borrowed `ElementView` identity contract is now in
 place, and the current DenseNode, regular Node, Way, and Relation PBF views

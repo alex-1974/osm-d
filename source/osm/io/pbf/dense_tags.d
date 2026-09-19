@@ -104,7 +104,7 @@ public:
 
         PbfStatus ignoredStatus;
         DenseTagView next;
-        if (!decodeValidatedPair(_stream, _table, next, ignoredStatus))
+        if (!decodePrevalidatedPair(_stream, _table, next, ignoredStatus))
         {
             // The complete stream was prevalidated and its backing is required
             // to remain unchanged while this range is used. Reaching this branch
@@ -133,7 +133,7 @@ private:
 
         if (pairCount != 0)
         {
-            if (!decodeValidatedPair(range._stream, table, range._front, status))
+            if (!decodePrevalidatedPair(range._stream, table, range._front, status))
             {
                 range = DenseTagRange.init;
                 return false;
@@ -475,7 +475,15 @@ private bool validateStringId(
 }
 
 pragma(inline, true)
-private bool decodeValidatedPair(
+/**
+ * Decode one tag pair from a construction-controlled prevalidated node range.
+ *
+ * The caller guarantees that both logical values were already proven to be
+ * valid positive int32 StringTable IDs for this same table and that the
+ * validated backing bytes have not changed. StringTableView.get() remains
+ * defensive for the actual borrowed-string lookup.
+ */
+private bool decodePrevalidatedPair(
     ref KeysValsCursor stream,
     StringTableView table,
     out DenseTagView tag,
@@ -495,11 +503,13 @@ private bool decodeValidatedPair(
         return false;
     const valueOffset = stream.lastValueOffset;
 
-    uint keySid;
-    uint valueSid;
-    if (!validateStringId(rawKey, keyOffset, table, keySid, status) ||
-        !validateStringId(rawValue, valueOffset, table, valueSid, status))
-        return false;
+    // DenseTagRange is construction-controlled: its stream is produced only
+    // after the corresponding node segment has established valid non-zero
+    // StringTable IDs, either defensively in nextNode() or through the complete
+    // validateDenseTags() proof required by nextPrevalidatedNode(). The backing
+    // bytes must remain unchanged while the range relies on that proof.
+    const keySid = cast(uint)rawKey;
+    const valueSid = cast(uint)rawValue;
 
     const(ubyte)[] key;
     const(ubyte)[] value;

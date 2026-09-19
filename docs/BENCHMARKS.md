@@ -2057,3 +2057,223 @@ workload/path combinations, ranging from **-5.283% to -12.663%**.
 A later experiment may investigate redundant String-ID validation during
 actual `DenseTagRange` pair decoding. That is a distinct experiment and is not
 implied by the A10a KEEP decision.
+
+## A10b: reuse validated DenseTagRange String IDs during pair decoding
+
+A10b continues the validated-state deduplication introduced by A10a.
+
+### Premise
+
+`DenseTagRange` is construction-controlled inside `dense_tags.d`. Its stream,
+table, front value, and remaining count are private, and its private
+`fromValidated()` constructor is reached only through `DenseTagNodeCursor`.
+
+There are two supported non-empty construction paths:
+
+1. public `nextNode()`, which defensively validates every non-zero StringTable
+   ID while partitioning the node segment; and
+2. package-internal `nextPrevalidatedNode()`, which is used by production
+   DenseNodes emission only after complete `validateDenseTags()` validation of
+   the same PrimitiveGroup/StringTable pair.
+
+Both paths therefore establish that every raw key/value ID subsequently
+consumed by the produced range is a positive int32 value within the same
+StringTable. The validated backing bytes are required to remain unchanged
+while the range relies on this proof.
+
+Before A10b, `DenseTagRange.fromValidated()` and later `popFront()` still
+called a pair decoder that repeated `validateStringId()` for both key and
+value.
+
+### A10b scope
+
+A10b renames that internal helper to `decodePrevalidatedPair()` and removes
+only the repeated String-ID domain/range validation from the range pair
+decoder.
+
+It retains:
+
+- `KeysValsCursor.next()` and its wire decoding;
+- the construction-controlled `DenseTagRange`;
+- complete hostile-input validation in `validateDenseTags()`;
+- defensive String-ID validation in public `DenseTagNodeCursor.nextNode()`;
+- the A10a package-internal prevalidated node-partition contract;
+- both `StringTableView.get()` calls;
+- `StringTableView.get()` index bounds checks; and
+- `StringRef` offset/length validation against the borrowed block.
+
+The raw values are converted to `uint` only after the range's validated-state
+precondition has already proved that conversion valid.
+
+This remains a Level-1 validated-state optimization with construction control
+provided by the private range representation; no new public unchecked API or
+freely fabricable capability is introduced.
+
+### Correctness
+
+Before performance measurement the candidate passed:
+
+    git diff --check
+    DMD 2.111.0: 26 modules passed unittests
+    LDC 1.41.0: 26 modules passed unittests
+    LDC 1.41.0 release build: PASS
+
+### Fixed benchmark artifacts
+
+A10a baseline:
+
+    45a0d9029f2cfc2a045d50d1155ef4f0e73846e0e6a56acea5723c20aad700e8
+
+A10b candidate:
+
+    639f148b60b1d76287f83d79ec416649cb322dd52116d960d21fbeabbcc83438
+
+Frozen A10b patch:
+
+    ae18b73912971b3f876106b059abd5b9ea188a9a4f00e5b223028b4260c410db
+
+The A10a baseline rebuilt from commit `e1b9de8` was bit-identical to the
+previously measured A10a candidate, providing a direct continuation of the
+A10 experiment series.
+
+Both binaries used LDC 1.41.0 / LLVM 19.1.7, release all-at-once compilation,
+and LLVM's Intel JCC 32-byte-boundary mitigation.
+
+### Rejected first A10b timing series
+
+The first full A-B-B-A attempt was rejected before making a KEEP/REJECT
+decision because the host entered two visibly different execution states
+during the matrix. In particular, `rich/coordinates` changed from roughly
+450 ns/node to roughly 227 ns/node inside one A-B-B-A cell.
+
+That series is diagnostic evidence only and is not used for the retained
+performance conclusion.
+
+A subsequent six-run baseline stability probe produced:
+
+    min       226.030 ns/node
+    median    226.353 ns/node
+    max       227.919 ns/node
+    max/min     0.836 %
+
+A simultaneous `perf stat` probe reported nearly identical cycles and
+ref-cycles, consistent with the controlled nominal-frequency state.
+
+### Stable-gated full matrix
+
+The retained full matrix used:
+
+- logical CPU 5;
+- SMT sibling CPU 11 offline;
+- Intel turbo disabled;
+- `performance` governor;
+- scaling min/max fixed at 2.6 GHz;
+- 200,000 nodes;
+- 5 iterations per sample;
+- 30 samples;
+- 2 warmups; and
+- A-B-B-A ordering.
+
+Before every benchmark phase a short fixed A10a `rich/coordinates` sentinel
+was run. Across all 36 sentinels:
+
+    min       225.570 ns/node
+    median    226.526 ns/node
+    max       230.293 ns/node
+    max/min     2.094 %
+
+Core and package thermal-throttle counters both changed by zero during the
+matrix.
+
+Results:
+
+| Path | Profile | A10a mean p50 | A10b mean p50 | Saved | A10b vs A10a |
+| --- | --- | ---: | ---: | ---: | ---: |
+| coordinates | typical | 97.189 ns/node | 95.534 ns/node | 1.655 ns/node | -1.703% |
+| coordinates | rich | 226.406 ns/node | 224.608 ns/node | 1.798 ns/node | -0.794% |
+| coordinates | mixed | 85.582 ns/node | 85.134 ns/node | 0.448 ns/node | -0.524% |
+| tag IDs | typical | 127.445 ns/node | 125.645 ns/node | 1.800 ns/node | -1.412% |
+| tag IDs | rich | 323.099 ns/node | 321.385 ns/node | 1.714 ns/node | -0.530% |
+| tag IDs | mixed | 113.555 ns/node | 111.725 ns/node | 1.831 ns/node | -1.612% |
+| tag bytes | typical | 139.712 ns/node | 138.936 ns/node | 0.776 ns/node | -0.555% |
+| tag bytes | rich | 369.046 ns/node | 366.776 ns/node | 2.269 ns/node | -0.615% |
+| tag bytes | mixed | 129.201 ns/node | 121.791 ns/node | 7.410 ns/node | -5.735% |
+
+All A/B phases produced identical expected checksums for the corresponding
+path/profile.
+
+The `mixed/tag-bytes` magnitude was treated cautiously because its A10a phases
+showed a bimodal baseline despite stable sentinels. Its sign therefore
+required a targeted repeat rather than accepting the apparent 5.735% result
+at face value.
+
+### Targeted mirrored confirmation
+
+Three cells were repeated with eight phases each:
+
+    A1 B1 B2 A2 B3 A3 A4 B4
+
+This tested the previously noisy `mixed/tag-bytes`, the higher-variance
+`rich/tag-bytes`, and the small-effect `mixed/coordinates` cell.
+
+| Path | Profile | A10a mean | A10b mean | A10b vs A10a | first half | second half |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| tag bytes | mixed | 128.124 | 121.040 | -5.529% | -5.107% | -5.950% |
+| tag bytes | rich | 369.321 | 364.788 | -1.227% | -1.907% | -0.541% |
+| coordinates | mixed | 85.451 | 83.602 | -2.165% | -2.147% | -2.182% |
+
+The targeted run used 24 sentinels:
+
+    min       225.009 ns/node
+    median    225.982 ns/node
+    max       231.653 ns/node
+    max/min     2.953 %
+
+All repeated phases again retained identical checksums.
+
+`mixed/tag-bytes` continued to show two A10a timing bands, so its approximate
+5.5% magnitude should not be interpreted as a clean estimate of the isolated
+optimization cost. What is durable is that both independently ordered halves
+favored A10b, while the candidate itself remained in a much tighter timing
+band.
+
+### Static code generation
+
+A10b further reduced executable `.text`:
+
+    A10a baseline    1,204,077 bytes
+    A10b candidate   1,202,989 bytes
+    delta               -1,088 bytes
+
+The initially inspected relevant symbol changes were localized to the expected
+range/sink machinery:
+
+    DenseTagRange.fromValidated    -515 bytes
+    TagIdSink.put                  -312 bytes
+    TagByteSink.put                -312 bytes
+
+The coordinate path benefits through the eager first-pair decode performed by
+`DenseTagRange.fromValidated()`. Tag-consuming paths additionally benefit when
+subsequent `popFront()` operations decode the remaining pairs.
+
+### A10b classification
+
+A10b is **KEEP**.
+
+The decision rests on the combination of:
+
+1. a narrow construction-controlled validated-state premise;
+2. no weakening of hostile-input validation at the public cursor boundary;
+3. retained defensive `StringTableView.get()` bounds checking;
+4. DMD and LDC correctness validation;
+5. reduced generated code size;
+6. a stable-gated full matrix with all nine cells favoring A10b;
+7. checksum identity across baseline and candidate; and
+8. targeted mirrored confirmation of the three noisier or smaller-effect
+   cells.
+
+The precise percentage for `mixed/tag-bytes` remains intentionally
+unclaimed because of its bimodal baseline. The retained engineering conclusion
+is that removing this duplicate SID validation is semantically justified,
+reduces code size, and has no observed performance regression under the
+controlled benchmark set.
