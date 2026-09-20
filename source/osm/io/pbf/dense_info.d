@@ -534,8 +534,12 @@ private bool validateColumnLength(
  * Sequential cursor producing DenseInfo metadata for each dense node.
  *
  * Construct this only after `validateDenseInfo` succeeds for the same block,
- * group, and StringTable. The cursor performs defensive checked decoding again
- * while yielding one independent value view per node.
+ * group, and StringTable.
+ *
+ * The public `nextNode` path remains defensive and repeats semantic arithmetic
+ * and range checks. Production DenseNodes emission may use the package-internal
+ * prevalidated path only while the validated block/group/StringTable backing is
+ * unchanged.
  */
 struct DenseInfoNodeCursor
 {
@@ -576,9 +580,39 @@ public:
         _remainingNodes = group.dense.nodeCount;
     }
 
-    /** Decode metadata for the next dense node. */
+    /** Decode metadata for the next dense node defensively. */
     pragma(inline, true)
     bool nextNode(out DenseInfoView info, out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        return nextNodeImpl!true(info, status);
+    }
+
+package:
+    /**
+     * Decode the next node after complete DenseInfo semantic preflight.
+     *
+     * Preconditions:
+     * - `validateDenseInfo` succeeded for the same block, PrimitiveGroup, and
+     *   StringTable used to construct this cursor;
+     * - their backing bytes and StringTable index remain unchanged.
+     *
+     * Wire decoding, column presence/cardinality observation, cursor failures,
+     * and StringTable materialization remain checked. Only semantic arithmetic
+     * and ID-domain checks already proved by preflight are omitted.
+     */
+    pragma(inline, true)
+    bool nextPrevalidatedNode(out DenseInfoView info, out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        return nextNodeImpl!false(info, status);
+    }
+
+private:
+    pragma(inline, true)
+    bool nextNodeImpl(bool ValidateSemanticChecks)(
+        out DenseInfoView info,
+        out PbfStatus status)
         @safe nothrow @nogc
     {
         info = DenseInfoView.init;
@@ -611,16 +645,33 @@ public:
                 return false;
             if (!hasValue)
                 return missingValue(2, status);
+
             long next;
-            if (!checkedAdd(_timestamp, value, next))
-                return deltaOverflow(2, status);
-            _timestamp = next;
-            long millis;
-            if (!checkedMulAdd(0, _dateGranularity, next, millis))
+            static if (ValidateSemanticChecks)
             {
-                status = PbfStatus.failure(PbfError.denseInfoTimestampOverflow, 0, 2);
-                return false;
+                if (!checkedAdd(_timestamp, value, next))
+                    return deltaOverflow(2, status);
             }
+            else
+                next = _timestamp + value;
+
+            _timestamp = next;
+
+            long millis;
+            static if (ValidateSemanticChecks)
+            {
+                if (!checkedMulAdd(0, _dateGranularity, next, millis))
+                {
+                    status = PbfStatus.failure(
+                        PbfError.denseInfoTimestampOverflow,
+                        0,
+                        2);
+                    return false;
+                }
+            }
+            else
+                millis = _dateGranularity * next;
+
             info.hasTimestamp = true;
             info.timestampValue = next;
             info.timestampMillis = millis;
@@ -632,9 +683,16 @@ public:
                 return false;
             if (!hasValue)
                 return missingValue(3, status);
+
             long next;
-            if (!checkedAdd(_changeset, value, next))
-                return deltaOverflow(3, status);
+            static if (ValidateSemanticChecks)
+            {
+                if (!checkedAdd(_changeset, value, next))
+                    return deltaOverflow(3, status);
+            }
+            else
+                next = _changeset + value;
+
             _changeset = next;
             info.hasChangeset = true;
             info.changeset = next;
@@ -646,14 +704,25 @@ public:
                 return false;
             if (!hasValue)
                 return missingValue(4, status);
+
             long next;
-            if (!checkedAdd(_uid, value, next))
-                return deltaOverflow(4, status);
-            if (next < int.min || next > int.max)
+            static if (ValidateSemanticChecks)
             {
-                status = PbfStatus.failure(PbfError.denseInfoUidOutOfRange, 0, 4);
-                return false;
+                if (!checkedAdd(_uid, value, next))
+                    return deltaOverflow(4, status);
+
+                if (next < int.min || next > int.max)
+                {
+                    status = PbfStatus.failure(
+                        PbfError.denseInfoUidOutOfRange,
+                        0,
+                        4);
+                    return false;
+                }
             }
+            else
+                next = _uid + value;
+
             _uid = next;
             info.hasUid = true;
             info.uid = cast(int)next;
@@ -665,17 +734,26 @@ public:
                 return false;
             if (!hasValue)
                 return missingValue(5, status);
+
             long next;
-            if (!checkedAdd(_userSid, value, next))
-                return deltaOverflow(5, status);
-            if (next < 0 || cast(ulong)next >= cast(ulong)_table.length)
+            static if (ValidateSemanticChecks)
             {
-                status = PbfStatus.failure(
-                    PbfError.denseInfoUserStringIdOutOfRange,
-                    0,
-                    5);
-                return false;
+                if (!checkedAdd(_userSid, value, next))
+                    return deltaOverflow(5, status);
+
+                if (next < 0 || cast(ulong)next >= cast(ulong)_table.length)
+                {
+                    status = PbfStatus.failure(
+                        PbfError.denseInfoUserStringIdOutOfRange,
+                        0,
+                        5);
+                    return false;
+                }
             }
+            else
+                next = _userSid + value;
+
+            // Materialization remains defensive even on the prevalidated path.
             const(ubyte)[] user;
             if (!_table.get(cast(size_t)next, user))
             {
@@ -685,6 +763,7 @@ public:
                     5);
                 return false;
             }
+
             _userSid = next;
             info.hasUser = true;
             info.userSid = cast(uint)next;
@@ -706,6 +785,7 @@ public:
         return true;
     }
 
+public:
     /** Verify that all prevalidated columns were consumed exactly. */
     bool finish(out PbfStatus status) @safe nothrow @nogc
     {

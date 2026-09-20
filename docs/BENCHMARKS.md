@@ -2441,3 +2441,96 @@ semantics.
 
 The first production A11 optimization must start from a frozen build of this
 benchmark contract and be measured separately against that fixed baseline.
+
+## A11a: DenseInfo prevalidated semantic-check elision
+
+A11a applies the same validated-state principle already retained for DenseTags
+to DenseInfo emission.
+
+`validateDenseInfo()` completes semantic preflight before the first DenseNode is
+published. For the exact same `PrimitiveBlockLayout`, `PrimitiveGroupLayout`,
+and `StringTableView` backing, it has already proved:
+
+- cumulative timestamp delta arithmetic;
+- timestamp scaling by `date_granularity`;
+- cumulative changeset arithmetic;
+- cumulative UID arithmetic and the signed 32-bit UID domain;
+- cumulative `user_sid` arithmetic and StringTable-ID range; and
+- DenseInfo column cardinality.
+
+The public `DenseInfoNodeCursor.nextNode()` remains defensive. A package-internal
+`nextPrevalidatedNode()` is used by production DenseNodes emission only after
+successful complete DenseInfo validation for the same unchanged backing.
+
+The prevalidated path omits only the semantic arithmetic/domain checks already
+proved by preflight. It deliberately retains:
+
+- wire decoding and cursor failure handling;
+- per-column presence/cardinality observation;
+- the remaining-node guard;
+- `StringTableView.get()` username materialization/bounds checking; and
+- the existing final `finish()` checks.
+
+This is a Level-1 validated-state provenance optimization: correctness depends
+on successful prior validation plus unchanged backing and preserved provenance.
+
+### Correctness and binary-size gate
+
+The A11a candidate was rebuilt against the corrected A11 benchmark contract
+introduced by commit `080855f`.
+
+Baseline and candidate:
+
+- used the same corrected benchmark sources;
+- were compiled with LDC 1.41.0 / LLVM 19.1.7;
+- used `--x86-branches-within-32B-boundaries`;
+- matched in all 21 DenseNodes profile/path semantic checksum cells; and
+- passed the existing DMD and LDC unit-test suites.
+
+The benchmark executable `.text` size changed from 1,214,901 bytes to
+1,211,149 bytes, a reduction of 3,752 bytes.
+
+### Controlled performance result
+
+The final decision run used CPU 5 pinned at 2.6 GHz with the SMT sibling
+offline, turbo disabled, and the `performance` governor. Each of the nine
+DenseInfo profile/path cells used an A-B-B-A sequence with a baseline sentinel
+before every phase.
+
+Raw candidate deltas were:
+
+| Profile | Path | Candidate vs baseline |
+| --- | --- | ---: |
+| `info-only` | `coordinates` | -7.147% |
+| `info-only` | `tag-ids` | -8.186% |
+| `info-only` | `tag-bytes` | -7.597% |
+| `typical-info` | `coordinates` | -5.108% |
+| `typical-info` | `tag-ids` | -4.899% |
+| `typical-info` | `tag-bytes` | -3.985% |
+| `rich-info` | `coordinates` | -3.678% |
+| `rich-info` | `tag-ids` | -3.560% |
+| `rich-info` | `tag-bytes` | -3.205% |
+
+All nine raw cells favored A11a. Both mirrored A/B halves also favored A11a in
+every cell.
+
+A secondary normalization divided each phase result by its immediately
+preceding baseline sentinel. All nine normalized cells still favored A11a, with
+normalized deltas ranging from -2.499% to -8.351%.
+
+The global sentinel max/min spread was 3.536%, so the mechanical 3% sentinel
+gate is recorded as `REVIEW`, not `PASS`. Only three of 36 sentinels were more
+than 1% from the median and two were more than 2% from it. The sentinel
+excursions did not reverse any raw mirrored comparison, and sentinel
+normalization preserved the candidate advantage in all nine cells.
+
+### Classification
+
+**KEEP.**
+
+A11a removes checks whose exact semantics were already proved by complete
+DenseInfo preflight, preserves the public defensive API and remaining
+materialization/wire checks, reduces generated code size, and shows a
+consistent performance improvement across every corrected DenseInfo workload.
+The measured percentages describe this controlled benchmark setup and are not
+claimed as universal application-level speedups.

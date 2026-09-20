@@ -299,7 +299,11 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
             DenseInfoView info;
             static if (HasInfo)
             {
-                if (!infoNodes.nextNode(info, status))
+                // validateDenseInfo() has already proved cumulative arithmetic,
+                // timestamp scaling, UID range, user_sid range, and column
+                // cardinality for this exact block/group/StringTable backing.
+                // Retain wire decoding and username materialization checks.
+                if (!infoNodes.nextPrevalidatedNode(info, status))
                     return false;
             }
 

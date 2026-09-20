@@ -38,6 +38,18 @@ stable release.
   matched all 21 profile/path checksum cells. Pre-correction A11 timings are not
   used as the frozen performance baseline.
 
+- Added a package-internal prevalidated DenseInfo emission path after complete
+  `validateDenseInfo()` preflight. The public cursor remains defensive, while
+  internal DenseNodes emission avoids repeating already-proved cumulative
+  arithmetic, timestamp-scaling, UID-domain, and `user_sid`-domain checks.
+  Wire/cursor checks and defensive StringTable materialization remain intact.
+  Against the corrected A11 benchmark contract, all 21 baseline/candidate
+  semantic checksum cells matched, executable `.text` decreased by 3,752
+  bytes, and all nine controlled DenseInfo A-B-B-A cells favored the candidate
+  by 3.2-8.2%. All mirrored halves and all nine sentinel-normalized comparisons
+  also favored the candidate; the global sentinel 3% gate remained `REVIEW`
+  because of isolated excursions.
+
 - Added a package-internal prevalidated DenseTags node-partition path used only
   after successful complete `validateDenseTags()` preflight. The public
   `DenseTagNodeCursor.nextNode()` remains defensive, while production
