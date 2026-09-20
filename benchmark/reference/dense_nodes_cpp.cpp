@@ -1965,7 +1965,7 @@ bool build_workload(WorkloadProfile profile, std::size_t node_count, Workload& w
             append_varint(uids, zigzag64(uid - previous_uid));
 
             append_varint(user_sids, zigzag64(i == 0 ? 17LL : 0LL));
-            append_varint(visibles, (i & 1U) == 0 ? 1U : 0U);
+            append_varint(visibles, 1U);
         }
 
         const auto tags = tag_count_for_node(profile, i);

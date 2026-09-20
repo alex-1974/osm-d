@@ -29,6 +29,15 @@ stable release.
   unchanged for A2-A10 reproducibility. This establishes A11 measurement
   infrastructure only and makes no performance claim.
 
+- Corrected the A11 DenseInfo benchmark fixture so generated `visible` values
+  are consistently `true` in both the D workload builder and C++20 semantic
+  reference. The initial shared alternating `true`/`false` fixture escaped
+  cross-implementation parity because both generators contained the same
+  defect. After correction, the metadata-profile checksums changed as expected,
+  the four historical profiles remained unchanged, and D/GCC/Clang again
+  matched all 21 profile/path checksum cells. Pre-correction A11 timings are not
+  used as the frozen performance baseline.
+
 - Added a package-internal prevalidated DenseTags node-partition path used only
   after successful complete `validateDenseTags()` preflight. The public
   `DenseTagNodeCursor.nextNode()` remains defensive, while production

@@ -2325,7 +2325,7 @@ The generated metadata contains:
 - delta-coded `changeset`;
 - delta-coded `uid`;
 - delta-coded `user_sid`;
-- direct `visible`;
+- direct `visible`, set to `true` for every generated metadata-bearing node;
 - the default `date_granularity` of 1000; and
 - a borrowed `"benchmark-user"` StringTable entry at SID 17.
 
@@ -2401,6 +2401,34 @@ exactly:
     typical
     rich
     mixed
+
+### Benchmark-fixture correction
+
+The first A11-Bench implementation generated the direct `visible` column as
+alternating `true`/`false` values in both the D workload builder and the C++20
+semantic reference. Because the same fixture defect existed independently of
+the decoder under test in both benchmark implementations, D/GCC/Clang checksum
+parity could not detect it.
+
+The intended synthetic A11 metadata contract is now explicit: every generated
+metadata-bearing node has `hasVisible == true` and `visible == true`. The D and
+C++ workload builders therefore encode `1` for every generated `visible`
+value.
+
+After correcting the fixture:
+
+- the four historical `tagless`, `typical`, `rich`, and `mixed` profiles remain
+  unchanged;
+- the observable checksums of the three metadata profiles change as expected;
+- D, GCC C++, and Clang C++ again match in all 21 profile/path checksum cells;
+  and
+- the historical `--profile=all` expansion remains exactly the original four
+  A2-A10 profiles.
+
+Performance measurements made with the pre-correction A11 binaries are retained
+only as exploratory evidence and are not used as the frozen baseline for an A11
+production optimization. Baseline and candidate binaries must both be rebuilt
+from the corrected benchmark contract before a performance decision is made.
 
 ### Classification
 

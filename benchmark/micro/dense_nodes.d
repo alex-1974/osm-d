@@ -872,7 +872,7 @@ private bool buildWorkload(
 
             // "benchmark-user" is appended after the historical 17 strings.
             appendVarint(userSids, zigZag64(i == 0 ? 17L : 0L));
-            appendVarint(visibles, (i & 1) == 0 ? 1 : 0);
+            appendVarint(visibles, 1);
         }
 
         const tags = tagCountForNode(profile, i);
