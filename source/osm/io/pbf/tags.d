@@ -102,7 +102,7 @@ public:
         TagView next;
         if (!decodeValidatedPair(_keys, _vals, _table, next, ignored))
         {
-            // Immutable bytes were completely prevalidated before construction.
+            // The backing bytes were completely prevalidated and must remain unchanged.
             _remaining = 0;
             _front = TagView.init;
             return;

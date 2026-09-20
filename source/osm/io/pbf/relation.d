@@ -563,7 +563,7 @@ bool validateRelationMembers(
 /**
  * Build a borrowed Relation member range from already validated bytes.
  *
- * `summary` must come from `validateRelationMembers` for the same immutable
+ * `summary` must come from `validateRelationMembers` for the same unchanged
  * bytes and StringTable.
  */
 bool buildRelationMemberRange(

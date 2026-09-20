@@ -129,7 +129,7 @@ public:
         long next;
         if (!checkedAdd(_current, delta, next))
         {
-            // Immutable bytes were completely preflighted before construction.
+            // The backing bytes were completely preflighted and must remain unchanged.
             _remaining = 0;
             _front = 0;
             return;
@@ -406,7 +406,7 @@ bool decodeWays(Sink)(
  * Count one already-valid packed uint32 occurrence without repeating tag
  * StringTable semantics.
  *
- * This helper is used only by the emission pass after the complete immutable
+ * This helper is used only by the emission pass after the complete backing
  * PrimitiveGroup has passed `parseWay` preflight.
  */
 pragma(inline, true)
