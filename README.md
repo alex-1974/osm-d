@@ -93,7 +93,7 @@ handling, PrimitiveBlock layout and StringTable indexing, DenseNodes including
 tags and DenseInfo, regular Node, Way, and Relation decoding, and reproducible
 microbenchmarks for the current entity hot paths.
 
-DenseNodes scalar hot-path research has progressed through experiments A2-A11a.
+DenseNodes scalar hot-path research has progressed through experiments A2-A11b.
 The retained A8e implementation reuses the already validated sole DenseNodes
 payload for implicit-all-tagless groups, A9a removes a duplicate post-layout
 DenseNodes column-length guard under the validated-layout contract, A10a uses
@@ -103,7 +103,10 @@ that construction-controlled proof into `DenseTagRange` pair decoding. A11a
 applies the same validated-state principle to DenseInfo emission, avoiding
 repeated semantic arithmetic and ID-domain checks after complete preflight.
 Public defensive validation and StringTable materialization checks remain
-intact.
+intact. A11b investigated reuse of preflight-discovered canonical packed
+DenseInfo column locations. Its fixed per-group saving was measurable under
+amplification but not robust on the measured real-PBF workload, so the
+additional fast path was not retained.
 Detailed evidence and rejected alternatives are recorded in
 `docs/BENCHMARKS.md`.
 

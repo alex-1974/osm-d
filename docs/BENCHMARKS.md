@@ -2534,3 +2534,271 @@ materialization/wire checks, reduces generated code size, and shows a
 consistent performance improvement across every corrected DenseInfo workload.
 The measured percentages describe this controlled benchmark setup and are not
 claimed as universal application-level speedups.
+
+## A11b: canonical packed DenseInfo column reuse
+
+A11b investigated whether DenseInfo structural information discovered during
+preflight could be reused during emission.
+
+The experiment started from the retained A11a baseline at commit `a5edcf9`.
+A11a already removes repeated semantic checks after complete DenseInfo
+validation. A11b targeted a different remaining cost: locating the six
+DenseInfo column streams themselves.
+
+### Hypothesis
+
+The generic emission path uses six independent `DenseInfoColumnCursor`
+instances for `version`, `timestamp`, `changeset`, `uid`, `user_sid`, and
+`visible`.
+
+Complete DenseInfo preflight has already traversed the same serialized
+structure before the first node is emitted. A11b therefore tested preserving
+the packed-column locations discovered during validation and using them to seed
+the emission cursors directly.
+
+Legal non-canonical protobuf representations had to continue using the generic
+decoder. Canonical layout was an optimization capability only, never a
+validity requirement.
+
+### Real-corpus shape
+
+Six real PBF extracts were profiled:
+
+- Geofabrik Monaco;
+- Geofabrik Andorra;
+- Geofabrik Liechtenstein;
+- openstreetmap.fr Monaco;
+- openstreetmap.fr Andorra; and
+- openstreetmap.fr San Marino.
+
+Aggregate DenseInfo population:
+
+    groups                210
+    nodes           1,658,095
+    mean nodes/group   7,895.69
+
+All 210 observed DenseInfo groups had the researched canonical form:
+
+- one DenseNodes message per group;
+- one DenseInfo message;
+- fields 1-5 packed once in ascending order;
+- no `visible` field;
+- no unknown DenseInfo field; and
+- no wrong wire type.
+
+Provider diversity does not by itself establish independent writer diversity,
+but the canonical shape was universal in this sampled corpus.
+
+### v1: rejected template-axis design
+
+The first implementation introduced a dedicated canonical DenseInfo cursor and
+a compile-time `CanonicalInfo` dispatch axis.
+
+The cursor representation itself was substantially smaller:
+
+    generic cursor      896 bytes
+    canonical cursor    256 bytes
+
+However, DenseNodes dispatch specializations increased from 12 to 18 and
+actual executable `.text` grew from:
+
+    baseline      746,784 bytes
+    A11b v1       885,536 bytes
+    delta        +138,752 bytes  (+18.58%)
+
+Approximately 136 KiB of that increase was attributable to the expanded
+dispatch family.
+
+A11b v1 was therefore classified **REWORK** before performance timing.
+
+### v2: runtime-selected canonical layout
+
+A11b v2 removed the compile-time canonical axis.
+
+Preflight instead produced a package-internal canonical layout containing
+packed offset/length spans, a presence mask, and canonical-layout provenance.
+On the measured target the layout occupied 52 bytes.
+
+`DenseInfoNodeCursor.fromPrevalidatedLayout()` selected once during cursor
+construction between:
+
+1. the existing generic protobuf traversal; and
+2. direct packed-column cursors seeded from the preflight-proven spans.
+
+The compile-time axes remained only:
+
+    HasTags × HasInfo × Sink
+
+There was no per-node canonical branch and no new public API.
+
+The measured candidate diff SHA-256 was:
+
+    3168cc46c95d342529f3eb7982178fb03919e092f582e2c1b2b642f47eec4903
+
+### Correctness and static-size gate
+
+A11b v2 passed:
+
+- DMD tests;
+- LDC tests;
+- LDC release build; and
+- all 21 synthetic DenseNodes profile/path semantic checksum cells.
+
+The candidate retained exactly 12 DenseNodes dispatch specializations.
+
+Actual executable `.text` changed from:
+
+    A11a baseline    746,784 bytes
+    A11b v2          748,960 bytes
+    delta             +2,176 bytes  (+0.291%)
+
+The v1 code-size failure was therefore removed, but the remaining complexity
+still required measurable runtime justification.
+
+### Fixed-cost amplification
+
+Initial measurements at 4,096-200,000 nodes/group showed only noisy
+sub-percent differences.
+
+A deliberately amplified experiment then used canonical info-only groups of:
+
+    16
+    64
+    256
+    1,024
+
+nodes while keeping total decoded work approximately constant.
+
+All four sizes favored the candidate in both raw and normalized comparisons.
+Regression against `1/N` produced approximately:
+
+    fixed saving/group      1.57 us
+    R^2                     0.997
+
+This confirms the hypothesized fixed per-group saving.
+
+The mechanism is therefore real. The problem is its amortization: at the
+real-corpus mean of approximately 7,896 nodes/group, a few microseconds of
+saved group setup become a very small per-node effect.
+
+### Real-PBF semantic gate
+
+A disposable real-data harness prepared PBF framing, Blob decoding,
+decompression, PrimitiveBlock layout, StringTable indexing, and PrimitiveGroup
+layout outside the timed region.
+
+The prepared corpus contained:
+
+    files                       6
+    OSMData blocks            236
+    DenseNodes groups         210
+    DenseInfo nodes     1,658,095
+
+Both the frozen A11a baseline and A11b v2 decoded every real group through the
+production `decodeDenseNodes` entry point.
+
+Per-file output and aggregate output were identical. The common aggregate
+checksum was:
+
+    10687467426028546419
+
+Thus real-PBF semantic parity passed for all 1,658,095 DenseInfo nodes.
+
+### Real-PBF A-B-B-A timing
+
+The controlled run used CPU 5 fixed at 2.6 GHz, its SMT sibling offline,
+turbo disabled, and the `performance` governor.
+
+Phase medians:
+
+| Phase | ns/node |
+| --- | ---: |
+| A1 | 286.108653 |
+| B1 | 285.518845 |
+| B2 | 285.004847 |
+| A2 | 285.556709 |
+
+Direct comparison:
+
+    A mean               285.832681 ns/node
+    B mean               285.261846 ns/node
+    raw B vs A               -0.1997%
+    mirrored half 1          -0.2061%
+    mirrored half 2          -0.1933%
+    apparent saved/group     +4.507 us
+
+Both raw mirrored halves favored the candidate.
+
+However, sentinel normalization reversed the result to `+0.1786%`. The four
+sentinel medians had only 0.652% max/min spread, but the final sentinel moved
+without a corresponding shift in the immediately following A2 phase.
+
+At an effect size near 0.2%, this normalization was too sensitive to serve as
+the deciding statistic. The run therefore showed a possible small benefit,
+not a robust KEEP result.
+
+### Paired real-PBF replication
+
+A second experiment used eight direct A/B pairs with alternating order.
+
+All semantic observations remained identical.
+
+Two baseline processes, pairs 2 and 8, entered a distinct approximately
+417 ns/node regime while normal processes were approximately 284-288 ns/node.
+Because the whole process phase shifted rather than isolated samples, those
+runs represent a different execution state and make the eight-pair aggregate
+unsuitable for estimating A11b.
+
+The six pairs remaining in the normal timing regime were:
+
+| Pair | B vs A |
+| --- | ---: |
+| 1 | -0.2715% |
+| 3 | -0.4547% |
+| 4 | +0.1741% |
+| 5 | -0.3758% |
+| 6 | +0.1106% |
+| 7 | +0.7067% |
+
+Descriptively:
+
+    candidate faster     3/6
+    baseline faster      3/6
+    mean B vs A         -0.0184%
+    median B vs A       -0.0805%
+    range               -0.4547% .. +0.7067%
+
+These six observations are not promoted to a replacement formal estimator.
+They demonstrate only that, once the clearly different 417 ns/node process
+state does not dominate the arithmetic, the real-data measurements show no
+robust directional advantage.
+
+### Classification
+
+**DROP.**
+
+A11b established that:
+
+1. canonical packed DenseInfo is common in the sampled corpus;
+2. preflight-discovered packed spans can eliminate a real fixed per-group cost;
+3. the small-group `1/N` experiment demonstrates that mechanism strongly; and
+4. the runtime-selected v2 avoids the unacceptable template expansion of v1.
+
+However, the measured real workload contains approximately 7,896 DenseInfo
+nodes per group. At that scale the fixed saving is heavily amortized.
+
+No reproducible real-PBF advantage remained above ordinary sub-percent
+run-to-run variation, while the candidate still added generated code,
+canonical-layout provenance, and a second cursor-construction path.
+
+The tradeoff therefore does not satisfy the project's requirement that
+hot-path complexity be justified by reproducible benchmark evidence on an
+actual consumer workload.
+
+The A11b production changes are not retained. Production remains at the A11a
+implementation from `a5edcf9`.
+
+This negative result is retained deliberately. The idea should be reconsidered
+only if a future measured consumer has materially smaller DenseInfo groups, or
+if preflight structure can be reused with substantially less additional
+production complexity.
