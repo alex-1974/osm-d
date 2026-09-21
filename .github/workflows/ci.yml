@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: DMD 2.111.0
+            package: dmd-2.111.0
+            compiler: dmd
+            release_build: false
+          - name: LDC 1.41.0
+            package: ldc-1.41.0
+            compiler: ldc2
+            release_build: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install compiler and run checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/dlang"
+          curl -fsS https://dlang.org/install.sh -o "$HOME/dlang/install.sh"
+          chmod +x "$HOME/dlang/install.sh"
+
+          source "$("$HOME/dlang/install.sh" install "${{ matrix.package }}" -a)"
+
+          echo '=== TOOLCHAIN ==='
+          "${{ matrix.compiler }}" --version
+          dub --version
+
+          echo
+          echo '=== UNIT TESTS ==='
+          dub test --compiler="${{ matrix.compiler }}" --force
+
+          echo
+          echo '=== DIP1000 NEGATIVE TESTS ==='
+          DIP1000_COMPILERS="${{ matrix.compiler }}" \
+            tests/run-dip1000-negative.sh
+
+          if [[ "${{ matrix.release_build }}" == "true" ]]; then
+            echo
+            echo '=== RELEASE BUILD ==='
+            dub build \
+              --compiler="${{ matrix.compiler }}" \
+              --build=release \
+              --force
+          fi

@@ -49,7 +49,9 @@ run_negative()
         "$compiler" "$(basename "$source")"
 }
 
-for compiler in dmd ldc2; do
+read -r -a compilers <<< "${DIP1000_COMPILERS:-dmd ldc2}"
+
+for compiler in "${compilers[@]}"; do
     command -v "$compiler" >/dev/null 2>&1 || {
         echo "required compiler not found: $compiler" >&2
         exit 2

@@ -22,10 +22,12 @@ The canonical local correctness checks are:
 dub test --compiler=dmd --force
 dub test --compiler=ldc2 --force
 dub build --compiler=ldc2 --build=release --force
+tests/run-dip1000-negative.sh
 ```
 
-CI does not currently define this matrix; until CI is introduced, these local
-checks are the authoritative compiler verification for repository changes.
+GitHub Actions runs the supported DMD/LDC matrix for pushes to `main` and pull
+requests. Each compiler job runs its unit tests and DIP1000 lifetime-negative
+checks; the LDC job additionally performs the release build.
 
 ## Public module surface during pre-1.0
 
