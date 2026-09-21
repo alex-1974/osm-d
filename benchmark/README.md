@@ -98,8 +98,39 @@ measure file I/O, decompression, PBF framing, DenseNodes, validation or complete
 OSM parsing.
 
 `benchmark/data/`, `benchmark/results/` and `benchmark/bin/` are intentionally
-ignored. Dataset metadata and hashes belong in a future tracked `datasets.toml`;
-large extracts do not belong in Git.
+ignored. Large extracts do not belong in Git.
+
+## Pinned real-data baseline
+
+The initial real-data baseline uses immutable Geofabrik snapshots dated
+2026-09-01. Their identities are tracked in
+`datasets/geofabrik-2026-09-01.tsv`; the manifest records dataset class,
+purpose, provider, snapshot date, verification date, filename, compressed
+size, SHA-256, MD5 and the dated source URL.
+
+The pinned sets are:
+
+- `monaco-260901` — small smoke/end-to-end workload;
+- `liechtenstein-260901` — small real workload;
+- `bremen-260901` — city/editor-scale workload;
+- `austria-260901` — country-scale throughput/stress workload.
+
+SHA-256 is the benchmark identity used by this project. The recorded MD5 also
+matches the checksum published by Geofabrik when the baseline was selected.
+
+Download or verify datasets from the repository root:
+
+```bash
+benchmark/fetch-datasets.sh fetch
+benchmark/fetch-datasets.sh verify
+benchmark/fetch-datasets.sh fetch bremen-260901
+benchmark/fetch-datasets.sh verify bremen-260901
+```
+
+By default the files live under
+`benchmark/data/geofabrik-2026-09-01/`, which remains ignored by Git. Set
+`OSM_D_BENCH_DATA` to use another local storage location. Unknown explicitly
+requested dataset IDs are rejected before any dataset is processed.
 
 ## DenseNodes microbenchmark
 

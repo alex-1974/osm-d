@@ -20,8 +20,18 @@ Use immutable snapshots identified by cryptographic hash.
 | country | scaling and stress |
 | larger | optional stress/throughput runs |
 
-Suggested public extracts can be selected later. Dataset identity must never be
-"latest" in a published comparison.
+Dataset identity must never be "latest" in a published comparison.
+
+The initial pinned real-data baseline is recorded in
+`../benchmark/datasets/geofabrik-2026-09-01.tsv`. It uses dated Geofabrik
+snapshots for Monaco and Liechtenstein (`small`), Bremen (`city`) and Austria
+(`country`). The large PBF files remain local under ignored `benchmark/data/`
+storage and are acquired or verified with `../benchmark/fetch-datasets.sh`.
+
+SHA-256 is the authoritative benchmark identity. The manifest also records the
+snapshot date, verification date, compressed byte size and Geofabrik MD5 value
+as additional acquisition evidence. The optional `larger` class remains
+unpinned until a concrete stress/throughput experiment requires it.
 
 ## Required scenarios
 
