@@ -8,7 +8,7 @@
 - [x] Record initial architecture ADRs.
 - [x] Complete OSM specification/real-world compatibility matrix.
 - [x] Fix supported D compiler/version policy.
-- [ ] Select immutable benchmark datasets and hashes.
+- [x] Select immutable benchmark datasets and hashes.
 
 ## Phase 1 — Wire and memory foundation
 
