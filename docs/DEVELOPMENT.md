@@ -27,6 +27,37 @@ dub build --compiler=ldc2 --build=release --force
 CI does not currently define this matrix; until CI is introduced, these local
 checks are the authoritative compiler verification for repository changes.
 
+## Public module surface during pre-1.0
+
+D module visibility and package support are separate concerns. A source module
+being directly importable does not by itself make every declaration in that
+module part of a compatibility promise.
+
+The current pre-1.0 surface is classified as follows:
+
+- `osm` is the curated package root. It intentionally does not re-export the
+  evolving implementation surface yet.
+- `osm.view.element` is a supported semantic direct-import API. Its
+  `ElementType`, `OsmId`, and structural `isElementView` contract form the
+  format-independent borrowed element identity boundary described by ADR 0016.
+- `osm.io.pbf.*` is an evolving codec-development surface. Its documented
+  decoding APIs may be used directly during pre-1.0 development, but their
+  module organization and callable signatures are not frozen until the public
+  PBF reader/range boundary is established.
+- `osm.wire.*` and `osm.util.*` are implementation-oriented modules. They are
+  technically importable because D source modules are visible to consumers, but
+  no source-compatibility promise is made for direct external use.
+
+`package` visibility is not treated as a security, trust, or validated-state
+provenance boundary. Construction-controlled invariants must rely on actual
+representation/construction control rather than on a caller being outside a D
+package namespace.
+
+Before a stable API freeze, this classification must be reviewed against real
+consumers. Stable direct imports, callable parameter names, template
+instantiability, and representative named-argument forms must then be protected
+by external-consumer compile tests across the supported compiler matrix.
+
 ## Build profiles
 
 During early development keep correctness and performance work separable:

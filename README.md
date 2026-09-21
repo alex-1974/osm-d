@@ -85,6 +85,11 @@ the fast development/correctness compiler. The current pre-1.0 supported and
 tested matrix is DMD 2.111.0 and LDC 1.41.0 with DMD frontend 2.111.0; see
 `docs/DEVELOPMENT.md` for the compiler-support policy and canonical checks.
 
+The package is still pre-1.0. `import osm;` is the curated package root but
+currently re-exports no implementation modules. The supported direct-import
+surface and the distinction between semantic API, evolving codec API, and
+implementation modules are documented in `docs/DEVELOPMENT.md`.
+
 ## Status
 
 The first substantial PBF implementation slice is in place. Implemented
