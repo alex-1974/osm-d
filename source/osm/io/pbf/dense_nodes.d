@@ -288,7 +288,10 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
             DenseTagRange tags;
             static if (HasTags)
             {
-                if (!tagNodes.nextNode(tags, status))
+                // validateDenseTags() already proved StringTable-ID semantics
+                // for this same stream/table pair. Retain wire and partition
+                // checks without repeating that semantic validation.
+                if (!tagNodes.nextPrevalidatedNode(tags, status))
                     return false;
                 summary.tagCount += tags.length;
             }
@@ -296,7 +299,11 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
             DenseInfoView info;
             static if (HasInfo)
             {
-                if (!infoNodes.nextNode(info, status))
+                // validateDenseInfo() has already proved cumulative arithmetic,
+                // timestamp scaling, UID range, user_sid range, and column
+                // cardinality for this exact block/group/StringTable backing.
+                // Retain wire decoding and username materialization checks.
+                if (!infoNodes.nextPrevalidatedNode(info, status))
                     return false;
             }
 

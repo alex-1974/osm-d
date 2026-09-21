@@ -19,6 +19,7 @@
  */
 module benchmark.micro.dense_nodes;
 
+import osm.io.pbf.dense_info : DenseInfoView;
 import osm.io.pbf.dense_nodes :
     DenseNodeDecodeSummary,
     DenseNodeView,
@@ -46,6 +47,9 @@ private enum WorkloadProfile
     typical,
     rich,
     mixed,
+    infoOnly,
+    typicalInfo,
+    richInfo,
 }
 
 private enum SinkPath
@@ -60,6 +64,7 @@ private struct DecodeRun
     ulong checksum;
     size_t nodeCount;
     size_t tagCount;
+    size_t infoCount;
     bool ok;
 }
 
@@ -89,6 +94,7 @@ private struct Workload
     StringTableView table;
     size_t nodeCount;
     size_t tagCount;
+    size_t infoCount;
     ulong coordinateChecksum;
     ulong tagIdChecksum;
     ulong tagByteChecksum;
@@ -98,6 +104,7 @@ private struct CoordinateSink
 {
     ulong checksum;
     size_t nodeCount;
+    size_t infoCount;
 
     void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
     {
@@ -112,6 +119,7 @@ private struct CoordinateSink
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
         checksum = mix(checksum, cast(ulong)node.lonNano);
+        consumeInfo(checksum, infoCount, node.info);
         ++nodeCount;
     }
 }
@@ -121,6 +129,7 @@ private struct TagIdSink
     ulong checksum;
     size_t nodeCount;
     size_t tagCount;
+    size_t infoCount;
 
     void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
     {
@@ -135,6 +144,7 @@ private struct TagIdSink
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
         checksum = mix(checksum, cast(ulong)node.lonNano);
+        consumeInfo(checksum, infoCount, node.info);
 
         auto tags = node.tags;
         while (!tags.empty)
@@ -155,6 +165,7 @@ private struct TagByteSink
     ulong checksum;
     size_t nodeCount;
     size_t tagCount;
+    size_t infoCount;
 
     void putDenseNodeScalars(long id, long latNano, long lonNano) @safe nothrow @nogc
     {
@@ -169,6 +180,7 @@ private struct TagByteSink
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
         checksum = mix(checksum, cast(ulong)node.lonNano);
+        consumeInfo(checksum, infoCount, node.info);
 
         auto tags = node.tags;
         while (!tags.empty)
@@ -204,6 +216,57 @@ private ulong mix(ulong state, ulong value) @safe pure nothrow @nogc
     return state ^ (value + 0x9e37_79b9_7f4a_7c15UL + (state << 6) + (state >> 2));
 }
 
+pragma(inline, true)
+private void consumeInfo(
+    ref ulong checksum,
+    ref size_t infoCount,
+    scope ref DenseInfoView info)
+    @safe nothrow @nogc
+{
+    const present = info.hasVersion || info.hasTimestamp || info.hasChangeset ||
+        info.hasUid || info.hasUser || info.hasVisible;
+    if (!present)
+        return;
+
+    checksum = mix(checksum, cast(ulong)info.hasVersion);
+    checksum = mix(checksum, cast(ulong)info.hasTimestamp);
+    checksum = mix(checksum, cast(ulong)info.hasChangeset);
+    checksum = mix(checksum, cast(ulong)info.hasUid);
+    checksum = mix(checksum, cast(ulong)info.hasUser);
+    checksum = mix(checksum, cast(ulong)info.hasVisible);
+
+    if (info.hasVersion)
+        checksum = mix(checksum, cast(ulong)info.version_);
+
+    if (info.hasTimestamp)
+    {
+        checksum = mix(checksum, cast(ulong)info.timestampValue);
+        checksum = mix(checksum, cast(ulong)info.timestampMillis);
+    }
+
+    if (info.hasChangeset)
+        checksum = mix(checksum, cast(ulong)info.changeset);
+
+    if (info.hasUid)
+        checksum = mix(checksum, cast(ulong)info.uid);
+
+    if (info.hasUser)
+    {
+        checksum = mix(checksum, info.userSid);
+        checksum = mix(checksum, info.user.length);
+        if (info.user.length != 0)
+        {
+            checksum = mix(checksum, info.user[0]);
+            checksum = mix(checksum, info.user[$ - 1]);
+        }
+    }
+
+    if (info.hasVisible)
+        checksum = mix(checksum, cast(ulong)info.visible);
+
+    ++infoCount;
+}
+
 private DecodeRun decodeCoordinates(ref const Workload workload)
     @safe nothrow @nogc
 {
@@ -222,6 +285,7 @@ private DecodeRun decodeCoordinates(ref const Workload workload)
         sink.checksum,
         summary.nodeCount,
         summary.tagCount,
+        sink.infoCount,
         ok && sink.nodeCount == summary.nodeCount);
 }
 
@@ -243,6 +307,7 @@ private DecodeRun decodeTagIds(ref const Workload workload)
         sink.checksum,
         summary.nodeCount,
         summary.tagCount,
+        sink.infoCount,
         ok && sink.nodeCount == summary.nodeCount &&
             sink.tagCount == summary.tagCount);
 }
@@ -265,6 +330,7 @@ private DecodeRun decodeTagBytes(ref const Workload workload)
         sink.checksum,
         summary.nodeCount,
         summary.tagCount,
+        sink.infoCount,
         ok && sink.nodeCount == summary.nodeCount &&
             sink.tagCount == summary.tagCount);
 }
@@ -307,6 +373,7 @@ private bool validateRun(
     return aggregate.ok &&
         aggregate.nodeCount == workload.nodeCount * cast(size_t)iterations &&
         aggregate.tagCount == workload.tagCount * cast(size_t)iterations &&
+        aggregate.infoCount == workload.infoCount * cast(size_t)iterations &&
         aggregate.checksum == expectedChecksum(workload, path) * iterations;
 }
 
@@ -322,6 +389,7 @@ private bool warmup(
         if (!run.ok ||
             run.nodeCount != workload.nodeCount ||
             run.tagCount != workload.tagCount ||
+            run.infoCount != workload.infoCount ||
             run.checksum != expectedChecksum(workload, path))
             return false;
     }
@@ -339,6 +407,7 @@ private long timePath(
     ulong aggregateChecksum;
     size_t aggregateNodes;
     size_t aggregateTags;
+    size_t aggregateInfos;
     bool ok = true;
 
     foreach (_; 0 .. iterations)
@@ -347,6 +416,7 @@ private long timePath(
         aggregateChecksum += run.checksum;
         aggregateNodes += run.nodeCount;
         aggregateTags += run.tagCount;
+        aggregateInfos += run.infoCount;
         ok = ok && run.ok;
     }
 
@@ -357,6 +427,7 @@ private long timePath(
         aggregateChecksum,
         aggregateNodes,
         aggregateTags,
+        aggregateInfos,
         ok);
     if (!validateRun(workload, path, iterations, aggregate))
         return -1;
@@ -568,6 +639,9 @@ private bool parseProfile(string name, out WorkloadProfile profile)
     case "typical": profile = WorkloadProfile.typical; return true;
     case "rich": profile = WorkloadProfile.rich; return true;
     case "mixed": profile = WorkloadProfile.mixed; return true;
+    case "info-only": profile = WorkloadProfile.infoOnly; return true;
+    case "typical-info": profile = WorkloadProfile.typicalInfo; return true;
+    case "rich-info": profile = WorkloadProfile.richInfo; return true;
     default: profile = WorkloadProfile.init; return false;
     }
 }
@@ -603,6 +677,9 @@ private string profileName(WorkloadProfile profile) @safe pure nothrow
     case WorkloadProfile.typical: return "typical";
     case WorkloadProfile.rich: return "rich";
     case WorkloadProfile.mixed: return "mixed";
+    case WorkloadProfile.infoOnly: return "info-only";
+    case WorkloadProfile.typicalInfo: return "typical-info";
+    case WorkloadProfile.richInfo: return "rich-info";
     }
 }
 
@@ -612,10 +689,13 @@ private size_t tagCountForNode(WorkloadProfile profile, size_t nodeIndex)
     final switch (profile)
     {
     case WorkloadProfile.tagless:
+    case WorkloadProfile.infoOnly:
         return 0;
     case WorkloadProfile.typical:
+    case WorkloadProfile.typicalInfo:
         return 2;
     case WorkloadProfile.rich:
+    case WorkloadProfile.richInfo:
         return 8;
     case WorkloadProfile.mixed:
         switch (nodeIndex & 7)
@@ -631,6 +711,19 @@ private size_t tagCountForNode(WorkloadProfile profile, size_t nodeIndex)
         default: assert(0);
         }
     }
+}
+
+private bool hasInfo(WorkloadProfile profile) @safe pure nothrow @nogc
+{
+    return profile == WorkloadProfile.infoOnly ||
+        profile == WorkloadProfile.typicalInfo ||
+        profile == WorkloadProfile.richInfo;
+}
+
+private bool hasTags(WorkloadProfile profile) @safe pure nothrow @nogc
+{
+    return profile != WorkloadProfile.tagless &&
+        profile != WorkloadProfile.infoOnly;
 }
 
 private long latitudeDelta(size_t nodeIndex) @safe pure nothrow @nogc
@@ -728,11 +821,19 @@ private bool buildWorkload(
     ubyte[] stringTable;
     foreach (value; strings)
         appendString(stringTable, value);
+    if (hasInfo(profile))
+        appendString(stringTable, "benchmark-user");
 
     ubyte[] ids;
     ubyte[] lats;
     ubyte[] lons;
     ubyte[] keysVals;
+    ubyte[] versions;
+    ubyte[] timestamps;
+    ubyte[] changesets;
+    ubyte[] uids;
+    ubyte[] userSids;
+    ubyte[] visibles;
     size_t totalTags;
 
     foreach (i; 0 .. nodeCount)
@@ -741,9 +842,42 @@ private bool buildWorkload(
         appendVarint(lats, zigZag64(latitudeDelta(i)));
         appendVarint(lons, zigZag64(longitudeDelta(i)));
 
+        if (hasInfo(profile))
+        {
+            // DenseInfo version is direct int32; fields 2-5 below are deltas.
+            appendVarint(versions, 1 + (i & 7));
+
+            const timestamp =
+                1_700_000_000L + cast(long)(i % 86_400);
+            const previousTimestamp = i == 0
+                ? 0L
+                : 1_700_000_000L + cast(long)((i - 1) % 86_400);
+            appendVarint(
+                timestamps,
+                zigZag64(timestamp - previousTimestamp));
+
+            const changeset = 10_000_000L + cast(long)i;
+            const previousChangeset = i == 0
+                ? 0L
+                : 10_000_000L + cast(long)(i - 1);
+            appendVarint(
+                changesets,
+                zigZag64(changeset - previousChangeset));
+
+            const uid = 1_000L + cast(long)(i & 1023);
+            const previousUid = i == 0
+                ? 0L
+                : 1_000L + cast(long)((i - 1) & 1023);
+            appendVarint(uids, zigZag64(uid - previousUid));
+
+            // "benchmark-user" is appended after the historical 17 strings.
+            appendVarint(userSids, zigZag64(i == 0 ? 17L : 0L));
+            appendVarint(visibles, 1);
+        }
+
         const tags = tagCountForNode(profile, i);
         totalTags += tags;
-        if (profile != WorkloadProfile.tagless)
+        if (hasTags(profile))
         {
             foreach (tagIndex; 0 .. tags)
             {
@@ -757,12 +891,27 @@ private bool buildWorkload(
         }
     }
     workload.tagCount = totalTags;
+    workload.infoCount = hasInfo(profile) ? nodeCount : 0;
 
     ubyte[] dense;
     appendLengthDelimited(dense, 1, ids);
+
+    if (hasInfo(profile))
+    {
+        // Canonical A11 benchmark form: one packed occurrence per column.
+        ubyte[] info;
+        appendLengthDelimited(info, 1, versions);
+        appendLengthDelimited(info, 2, timestamps);
+        appendLengthDelimited(info, 3, changesets);
+        appendLengthDelimited(info, 4, uids);
+        appendLengthDelimited(info, 5, userSids);
+        appendLengthDelimited(info, 6, visibles);
+        appendLengthDelimited(dense, 5, info);
+    }
+
     appendLengthDelimited(dense, 8, lats);
     appendLengthDelimited(dense, 9, lons);
-    if (profile != WorkloadProfile.tagless)
+    if (hasTags(profile))
         appendLengthDelimited(dense, 10, keysVals);
 
     ubyte[] group;
@@ -798,6 +947,8 @@ private bool buildWorkload(
 
     if (workload.group.dense.nodeCount != nodeCount)
         return false;
+    if (workload.group.dense.hasDenseInfo != hasInfo(profile))
+        return false;
 
     const coordinates = decodeCoordinates(workload);
     const tagIds = decodeTagIds(workload);
@@ -805,10 +956,13 @@ private bool buildWorkload(
     if (!coordinates.ok || !tagIds.ok || !tagBytes.ok ||
         coordinates.nodeCount != nodeCount ||
         coordinates.tagCount != totalTags ||
+        coordinates.infoCount != workload.infoCount ||
         tagIds.nodeCount != nodeCount ||
         tagIds.tagCount != totalTags ||
+        tagIds.infoCount != workload.infoCount ||
         tagBytes.nodeCount != nodeCount ||
-        tagBytes.tagCount != totalTags)
+        tagBytes.tagCount != totalTags ||
+        tagBytes.infoCount != workload.infoCount)
         return false;
 
     workload.coordinateChecksum = coordinates.checksum;
@@ -878,7 +1032,8 @@ private bool runWorkload(
  * - `--iterations`: complete DenseNodes decodes per timed sample;
  * - `--samples`: timed samples;
  * - `--warmup`: untimed decodes before measurement;
- * - `--profile`: `all`, `tagless`, `typical`, `rich`, or `mixed`;
+ * - `--profile`: `all`, `tagless`, `typical`, `rich`, `mixed`,
+ *   `info-only`, `typical-info`, or `rich-info`;
  * - `--path`: `all`, `coordinates`, `tag-ids`, or `tag-bytes`.
  *
  * Returns:
@@ -899,7 +1054,9 @@ int main(string[] args) @system
         "iterations", "Complete DenseNodes decodes per timed sample", &iterations,
         "samples", "Timed samples; robust quantiles are reported", &samples,
         "warmup", "Untimed decodes before measurement", &warmupIterations,
-        "profile", "all|tagless|typical|rich|mixed", &selectedProfile,
+        "profile",
+        "all|tagless|typical|rich|mixed|info-only|typical-info|rich-info",
+        &selectedProfile,
         "path", "all|coordinates|tag-ids|tag-bytes", &selectedPathName);
 
     if (options.helpWanted)
@@ -947,6 +1104,8 @@ int main(string[] args) @system
     writeln("MiB/s(group) is serialized PrimitiveGroup memory throughput, not compressed PBF I/O");
     writeln();
 
+    // Preserve the historical A2-A10 `--profile=all` set exactly.
+    // A11 DenseInfo profiles are intentionally selected explicitly.
     static immutable WorkloadProfile[4] allProfiles = [
         WorkloadProfile.tagless,
         WorkloadProfile.typical,

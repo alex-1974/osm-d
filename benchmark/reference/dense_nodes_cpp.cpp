@@ -2,9 +2,10 @@
 //
 // Conservative C++20 reference for the osm-d DenseNodes hot path.
 //
-// This benchmark uses the same canonical no-DenseInfo workloads, complete dense
-// tag preflight, checked delta accumulation, per-node tag-range construction,
-// and observable sink checksums as the production D benchmark. Unlike current
+// This benchmark uses the same canonical DenseNodes workloads, including the
+// A11 DenseInfo profiles, complete semantic preflight, checked delta
+// accumulation, per-node borrowed views, and observable sink checksums as the
+// production D benchmark. Unlike current
 // D production, it still performs checked coordinate conversion for every
 // emitted node. Workload generation, PrimitiveBlock/PrimitiveGroup layout
 // discovery and StringTable indexing remain outside the timed region.
@@ -650,21 +651,498 @@ private:
     bool implicit_all_tagless_;
 };
 
-// The current D synthetic benchmark profiles deliberately omit DenseInfo. The
-// production D path still constructs and advances an empty metadata cursor for
-// every node. Keep the same per-node state transition here; metadata-bearing
-// profiles will extend this reference before they are compared.
-class EmptyDenseInfoNodeCursor {
+struct DenseInfoView {
+    bool has_version = false;
+    std::int32_t version = 0;
+
+    bool has_timestamp = false;
+    std::int64_t timestamp_value = 0;
+    std::int64_t timestamp_millis = 0;
+
+    bool has_changeset = false;
+    std::int64_t changeset = 0;
+
+    bool has_uid = false;
+    std::int32_t uid = 0;
+
+    bool has_user = false;
+    std::uint32_t user_sid = 0;
+    Bytes user;
+
+    bool has_visible = false;
+    bool visible = false;
+};
+
+struct DenseInfoValidationSummary {
+    std::size_t version_count = 0;
+    std::size_t timestamp_count = 0;
+    std::size_t changeset_count = 0;
+    std::size_t uid_count = 0;
+    std::size_t user_sid_count = 0;
+    std::size_t visible_count = 0;
+
+    [[nodiscard]] bool has_version() const noexcept { return version_count != 0; }
+    [[nodiscard]] bool has_timestamp() const noexcept { return timestamp_count != 0; }
+    [[nodiscard]] bool has_changeset() const noexcept { return changeset_count != 0; }
+    [[nodiscard]] bool has_uid() const noexcept { return uid_count != 0; }
+    [[nodiscard]] bool has_user() const noexcept { return user_sid_count != 0; }
+    [[nodiscard]] bool has_visible() const noexcept { return visible_count != 0; }
+
+    [[nodiscard]] bool has_any() const noexcept {
+        return has_version() || has_timestamp() || has_changeset() ||
+               has_uid() || has_user() || has_visible();
+    }
+};
+
+struct DenseInfoPreflightState {
+    DenseInfoValidationSummary summary;
+    std::int64_t timestamp = 0;
+    std::int64_t changeset = 0;
+    std::int64_t uid = 0;
+    std::int64_t user_sid = 0;
+};
+
+bool read_dense_info_value(
+    Cursor& cursor,
+    std::uint32_t field_number,
+    std::int64_t& value) noexcept {
+
+    value = 0;
+
+    switch (field_number) {
+        case 1: {
+            std::uint64_t raw = 0;
+            if (!read_varint64(cursor, raw)) return false;
+
+            const auto low = static_cast<std::uint32_t>(raw);
+            if (low <= 0x7fffffffU) {
+                value = static_cast<std::int64_t>(low);
+            } else {
+                value = static_cast<std::int64_t>(low) - (1LL << 32);
+            }
+            return true;
+        }
+
+        case 2:
+        case 3:
+            return read_svarint64(cursor, value);
+
+        case 4:
+        case 5: {
+            std::int64_t narrow = 0;
+            if (!read_svarint64(cursor, narrow)) return false;
+            if (narrow < std::numeric_limits<std::int32_t>::min() ||
+                narrow > std::numeric_limits<std::int32_t>::max()) return false;
+            value = narrow;
+            return true;
+        }
+
+        case 6: {
+            std::uint64_t raw = 0;
+            if (!read_varint64(cursor, raw)) return false;
+            value = raw == 0 ? 0 : 1;
+            return true;
+        }
+
+        default:
+            return false;
+    }
+}
+
+bool accept_dense_info_value(
+    std::uint32_t field_number,
+    std::int64_t value,
+    const BlockLayout& block,
+    const StringTableView& table,
+    DenseInfoPreflightState& state) noexcept {
+
+    std::int64_t next = 0;
+
+    switch (field_number) {
+        case 1:
+            ++state.summary.version_count;
+            return true;
+
+        case 2: {
+            if (!checked_add(state.timestamp, value, next)) return false;
+            state.timestamp = next;
+
+            std::int64_t millis = 0;
+            if (!checked_mul_add(
+                    0,
+                    static_cast<std::int64_t>(block.date_granularity),
+                    next,
+                    millis)) return false;
+
+            ++state.summary.timestamp_count;
+            return true;
+        }
+
+        case 3:
+            if (!checked_add(state.changeset, value, next)) return false;
+            state.changeset = next;
+            ++state.summary.changeset_count;
+            return true;
+
+        case 4:
+            if (!checked_add(state.uid, value, next)) return false;
+            if (next < std::numeric_limits<std::int32_t>::min() ||
+                next > std::numeric_limits<std::int32_t>::max()) return false;
+            state.uid = next;
+            ++state.summary.uid_count;
+            return true;
+
+        case 5:
+            if (!checked_add(state.user_sid, value, next)) return false;
+            if (next < 0 ||
+                static_cast<std::uint64_t>(next) >=
+                    static_cast<std::uint64_t>(table.length())) return false;
+            state.user_sid = next;
+            ++state.summary.user_sid_count;
+            return true;
+
+        case 6:
+            ++state.summary.visible_count;
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+bool scan_dense_info_message(
+    Bytes info,
+    const BlockLayout& block,
+    const StringTableView& table,
+    DenseInfoPreflightState& state) noexcept {
+
+    Cursor cursor(info);
+
+    while (!cursor.empty()) {
+        FieldHeader field;
+        if (!read_field_header(cursor, field)) return false;
+
+        if (field.number >= 1 && field.number <= 6) {
+            if (field.wire == 0) {
+                std::int64_t value = 0;
+                if (!read_dense_info_value(cursor, field.number, value)) return false;
+                if (!accept_dense_info_value(
+                        field.number, value, block, table, state)) return false;
+                continue;
+            }
+
+            if (field.wire == 2) {
+                Bytes packed;
+                if (!read_length_delimited(cursor, packed)) return false;
+
+                Cursor packed_cursor(packed);
+                while (!packed_cursor.empty()) {
+                    std::int64_t value = 0;
+                    if (!read_dense_info_value(
+                            packed_cursor, field.number, value)) return false;
+                    if (!accept_dense_info_value(
+                            field.number, value, block, table, state)) return false;
+                }
+                continue;
+            }
+        }
+
+        if (!skip_field_value(cursor, field)) return false;
+    }
+
+    return true;
+}
+
+bool scan_dense_info_in_dense_nodes(
+    Bytes dense,
+    const BlockLayout& block,
+    const StringTableView& table,
+    DenseInfoPreflightState& state) noexcept {
+
+    Cursor cursor(dense);
+
+    while (!cursor.empty()) {
+        FieldHeader field;
+        if (!read_field_header(cursor, field)) return false;
+
+        if (field.number == 5 && field.wire == 2) {
+            Bytes info;
+            if (!read_length_delimited(cursor, info)) return false;
+            if (!scan_dense_info_message(info, block, table, state)) return false;
+            continue;
+        }
+
+        if (!skip_field_value(cursor, field)) return false;
+    }
+
+    return true;
+}
+
+bool validate_dense_info(
+    const BlockLayout& block,
+    const GroupLayout& group,
+    const StringTableView& table,
+    DenseInfoValidationSummary& summary) noexcept {
+
+    summary = DenseInfoValidationSummary{};
+
+    if (!group.has_dense_nodes() || !group.dense.has_dense_info) return true;
+
+    DenseInfoPreflightState state;
+    Cursor group_cursor(group.raw);
+
+    while (!group_cursor.empty()) {
+        FieldHeader field;
+        if (!read_field_header(group_cursor, field)) return false;
+
+        if (field.number == 2 && field.wire == 2) {
+            Bytes dense;
+            if (!read_length_delimited(group_cursor, dense)) return false;
+            if (!scan_dense_info_in_dense_nodes(
+                    dense, block, table, state)) return false;
+            continue;
+        }
+
+        if (!skip_field_value(group_cursor, field)) return false;
+    }
+
+    const auto node_count = group.dense.node_count;
+
+    const auto valid_length = [node_count](std::size_t count) noexcept {
+        return count == 0 || count == node_count;
+    };
+
+    if (!valid_length(state.summary.version_count) ||
+        !valid_length(state.summary.timestamp_count) ||
+        !valid_length(state.summary.changeset_count) ||
+        !valid_length(state.summary.uid_count) ||
+        !valid_length(state.summary.user_sid_count) ||
+        !valid_length(state.summary.visible_count)) return false;
+
+    summary = state.summary;
+    return true;
+}
+
+class DenseInfoColumnCursor {
 public:
-    explicit EmptyDenseInfoNodeCursor(std::size_t nodes) noexcept : remaining_(nodes) {}
-    bool next_node() noexcept {
-        if (remaining_ == 0) return false;
-        --remaining_;
+    DenseInfoColumnCursor(Bytes group, std::uint32_t field_number) noexcept
+        : group_(group), field_number_(field_number) {}
+
+    bool next(std::int64_t& value, bool& has_value) noexcept {
+        value = 0;
+        has_value = false;
+
+        for (;;) {
+            if (!packed_.empty()) {
+                if (!read_dense_info_value(packed_, field_number_, value)) return false;
+                has_value = true;
+                return true;
+            }
+
+            while (!info_.empty()) {
+                FieldHeader field;
+                if (!read_field_header(info_, field)) return false;
+
+                if (field.number == field_number_ && field.wire == 0) {
+                    if (!read_dense_info_value(info_, field_number_, value)) return false;
+                    has_value = true;
+                    return true;
+                }
+
+                if (field.number == field_number_ && field.wire == 2) {
+                    Bytes packed;
+                    if (!read_length_delimited(info_, packed)) return false;
+                    packed_ = Cursor(packed);
+                    break;
+                }
+
+                if (!skip_field_value(info_, field)) return false;
+            }
+
+            if (!packed_.empty() || !info_.empty()) continue;
+
+            while (!dense_.empty()) {
+                FieldHeader field;
+                if (!read_field_header(dense_, field)) return false;
+
+                if (field.number == 5 && field.wire == 2) {
+                    Bytes info;
+                    if (!read_length_delimited(dense_, info)) return false;
+                    info_ = Cursor(info);
+                    break;
+                }
+
+                if (!skip_field_value(dense_, field)) return false;
+            }
+
+            if (!info_.empty() || !dense_.empty()) continue;
+
+            while (!group_.empty()) {
+                FieldHeader field;
+                if (!read_field_header(group_, field)) return false;
+
+                if (field.number == 2 && field.wire == 2) {
+                    Bytes dense;
+                    if (!read_length_delimited(group_, dense)) return false;
+                    dense_ = Cursor(dense);
+                    break;
+                }
+
+                if (!skip_field_value(group_, field)) return false;
+            }
+
+            if (!dense_.empty()) continue;
+
+            if (group_.empty()) return true;
+        }
+    }
+
+private:
+    Cursor group_;
+    Cursor dense_;
+    Cursor info_;
+    Cursor packed_;
+    std::uint32_t field_number_ = 0;
+};
+
+class DenseInfoNodeCursor {
+public:
+    DenseInfoNodeCursor(
+        const BlockLayout& block,
+        const GroupLayout& group,
+        const StringTableView& table,
+        DenseInfoValidationSummary summary) noexcept
+        : versions_(group.raw, 1),
+          timestamps_(group.raw, 2),
+          changesets_(group.raw, 3),
+          uids_(group.raw, 4),
+          user_sids_(group.raw, 5),
+          visibles_(group.raw, 6),
+          summary_(summary),
+          table_(&table),
+          date_granularity_(block.date_granularity),
+          remaining_nodes_(group.dense.node_count) {}
+
+    bool next_node(DenseInfoView& info) noexcept {
+        info = DenseInfoView{};
+
+        if (remaining_nodes_ == 0) return false;
+
+        std::int64_t value = 0;
+        bool has_value = false;
+
+        if (summary_.has_version()) {
+            if (!versions_.next(value, has_value) || !has_value) return false;
+            info.has_version = true;
+            info.version = static_cast<std::int32_t>(value);
+        }
+
+        if (summary_.has_timestamp()) {
+            if (!timestamps_.next(value, has_value) || !has_value) return false;
+
+            std::int64_t next = 0;
+            if (!checked_add(timestamp_, value, next)) return false;
+            timestamp_ = next;
+
+            std::int64_t millis = 0;
+            if (!checked_mul_add(
+                    0,
+                    static_cast<std::int64_t>(date_granularity_),
+                    next,
+                    millis)) return false;
+
+            info.has_timestamp = true;
+            info.timestamp_value = next;
+            info.timestamp_millis = millis;
+        }
+
+        if (summary_.has_changeset()) {
+            if (!changesets_.next(value, has_value) || !has_value) return false;
+
+            std::int64_t next = 0;
+            if (!checked_add(changeset_, value, next)) return false;
+            changeset_ = next;
+
+            info.has_changeset = true;
+            info.changeset = next;
+        }
+
+        if (summary_.has_uid()) {
+            if (!uids_.next(value, has_value) || !has_value) return false;
+
+            std::int64_t next = 0;
+            if (!checked_add(uid_, value, next)) return false;
+            if (next < std::numeric_limits<std::int32_t>::min() ||
+                next > std::numeric_limits<std::int32_t>::max()) return false;
+            uid_ = next;
+
+            info.has_uid = true;
+            info.uid = static_cast<std::int32_t>(next);
+        }
+
+        if (summary_.has_user()) {
+            if (!user_sids_.next(value, has_value) || !has_value) return false;
+
+            std::int64_t next = 0;
+            if (!checked_add(user_sid_, value, next)) return false;
+            if (next < 0 ||
+                static_cast<std::uint64_t>(next) >=
+                    static_cast<std::uint64_t>(table_->length())) return false;
+
+            Bytes user;
+            if (!table_->get(static_cast<std::size_t>(next), user)) return false;
+
+            user_sid_ = next;
+            info.has_user = true;
+            info.user_sid = static_cast<std::uint32_t>(next);
+            info.user = user;
+        }
+
+        if (summary_.has_visible()) {
+            if (!visibles_.next(value, has_value) || !has_value) return false;
+            info.has_visible = true;
+            info.visible = value != 0;
+        }
+
+        --remaining_nodes_;
         return true;
     }
-    bool finish() const noexcept { return remaining_ == 0; }
+
+    bool finish() noexcept {
+        if (remaining_nodes_ != 0) return false;
+
+        if (summary_.has_version() && !finish_column(versions_)) return false;
+        if (summary_.has_timestamp() && !finish_column(timestamps_)) return false;
+        if (summary_.has_changeset() && !finish_column(changesets_)) return false;
+        if (summary_.has_uid() && !finish_column(uids_)) return false;
+        if (summary_.has_user() && !finish_column(user_sids_)) return false;
+        if (summary_.has_visible() && !finish_column(visibles_)) return false;
+
+        return true;
+    }
+
 private:
-    std::size_t remaining_;
+    static bool finish_column(DenseInfoColumnCursor& cursor) noexcept {
+        std::int64_t ignored = 0;
+        bool has_extra = false;
+        return cursor.next(ignored, has_extra) && !has_extra;
+    }
+
+    DenseInfoColumnCursor versions_;
+    DenseInfoColumnCursor timestamps_;
+    DenseInfoColumnCursor changesets_;
+    DenseInfoColumnCursor uids_;
+    DenseInfoColumnCursor user_sids_;
+    DenseInfoColumnCursor visibles_;
+
+    DenseInfoValidationSummary summary_;
+    const StringTableView* table_ = nullptr;
+    std::int64_t date_granularity_ = 1000;
+    std::int64_t timestamp_ = 0;
+    std::int64_t changeset_ = 0;
+    std::int64_t uid_ = 0;
+    std::int64_t user_sid_ = 0;
+    std::size_t remaining_nodes_ = 0;
 };
 
 struct DenseNodeView {
@@ -672,7 +1150,66 @@ struct DenseNodeView {
     std::int64_t lat_nano = 0;
     std::int64_t lon_nano = 0;
     DenseTagRange tags;
+    DenseInfoView info;
 };
+
+inline void consume_info(
+    std::uint64_t& checksum,
+    std::size_t& info_count,
+    const DenseInfoView& info) noexcept {
+
+    const bool present =
+        info.has_version || info.has_timestamp || info.has_changeset ||
+        info.has_uid || info.has_user || info.has_visible;
+
+    if (!present) return;
+
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_version));
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_timestamp));
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_changeset));
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_uid));
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_user));
+    checksum = mix(checksum, static_cast<std::uint64_t>(info.has_visible));
+
+    if (info.has_version) {
+        checksum = mix(
+            checksum,
+            static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(info.version)));
+    }
+
+    if (info.has_timestamp) {
+        checksum = mix(checksum, static_cast<std::uint64_t>(info.timestamp_value));
+        checksum = mix(checksum, static_cast<std::uint64_t>(info.timestamp_millis));
+    }
+
+    if (info.has_changeset) {
+        checksum = mix(checksum, static_cast<std::uint64_t>(info.changeset));
+    }
+
+    if (info.has_uid) {
+        checksum = mix(
+            checksum,
+            static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(info.uid)));
+    }
+
+    if (info.has_user) {
+        checksum = mix(checksum, info.user_sid);
+        checksum = mix(checksum, info.user.size());
+
+        if (!info.user.empty()) {
+            checksum = mix(checksum, info.user.front());
+            checksum = mix(checksum, info.user.back());
+        }
+    }
+
+    if (info.has_visible) {
+        checksum = mix(checksum, static_cast<std::uint64_t>(info.visible));
+    }
+
+    ++info_count;
+}
 
 struct DecodeSummary {
     std::size_t node_count = 0;
@@ -682,6 +1219,7 @@ struct DecodeSummary {
 struct CoordinateSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
+    std::size_t info_count = 0;
     void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
                                 std::int64_t lon_nano) noexcept {
         checksum = mix(checksum, static_cast<std::uint64_t>(id));
@@ -690,7 +1228,11 @@ struct CoordinateSink {
         ++node_count;
     }
     void put(DenseNodeView node) noexcept {
-        put_dense_node_scalars(node.id, node.lat_nano, node.lon_nano);
+        checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
+        checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
+        checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
+        consume_info(checksum, info_count, node.info);
+        ++node_count;
     }
 };
 
@@ -698,6 +1240,7 @@ struct TagIdSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
+    std::size_t info_count = 0;
     void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
                                 std::int64_t lon_nano) noexcept {
         checksum = mix(checksum, static_cast<std::uint64_t>(id));
@@ -709,6 +1252,7 @@ struct TagIdSink {
         checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
+        consume_info(checksum, info_count, node.info);
         auto tags = node.tags;
         while (!tags.empty()) {
             const auto tag = tags.front();
@@ -725,6 +1269,7 @@ struct TagByteSink {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
+    std::size_t info_count = 0;
     void put_dense_node_scalars(std::int64_t id, std::int64_t lat_nano,
                                 std::int64_t lon_nano) noexcept {
         checksum = mix(checksum, static_cast<std::uint64_t>(id));
@@ -736,6 +1281,7 @@ struct TagByteSink {
         checksum = mix(checksum, static_cast<std::uint64_t>(node.id));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lat_nano));
         checksum = mix(checksum, static_cast<std::uint64_t>(node.lon_nano));
+        consume_info(checksum, info_count, node.info);
         auto tags = node.tags;
         while (!tags.empty()) {
             const auto tag = tags.front();
@@ -758,138 +1304,190 @@ struct TagByteSink {
     }
 };
 
-template <bool HasTags, typename Sink>
-bool emit_dense_nodes(const BlockLayout& block, const GroupLayout& group,
-                      const StringTableView& table,
-                      const DenseTagValidationSummary& tag_validation,
-                      Sink& sink, DecodeSummary& summary) noexcept {
-    if constexpr (HasTags) {
-        DenseTagNodeCursor tag_nodes(group, table);
-        DenseColumnCursor ids(group.raw, 1);
-        DenseColumnCursor lats(group.raw, 8);
-        DenseColumnCursor lons(group.raw, 9);
+template <bool HasTags, bool HasInfo, typename Sink>
+bool emit_dense_nodes(
+    const BlockLayout& block,
+    const GroupLayout& group,
+    const StringTableView& table,
+    const DenseTagValidationSummary& tag_validation,
+    const DenseInfoValidationSummary& info_validation,
+    Sink& sink,
+    DecodeSummary& summary) noexcept {
 
-        std::int64_t id = 0, lat = 0, lon = 0;
-        for (std::size_t i = 0; i < group.dense.node_count; ++i) {
-            std::int64_t id_delta = 0, lat_delta = 0, lon_delta = 0;
-            bool has_id = false, has_lat = false, has_lon = false;
-            if (!ids.next(id_delta, has_id) || !lats.next(lat_delta, has_lat) ||
-                !lons.next(lon_delta, has_lon)) return false;
-            if (!has_id || !has_lat || !has_lon) return false;
+    DenseColumnCursor ids(group.raw, 1);
+    DenseColumnCursor lats(group.raw, 8);
+    DenseColumnCursor lons(group.raw, 9);
 
-            std::int64_t next_id = 0, next_lat = 0, next_lon = 0;
-            if (!checked_add(id, id_delta, next_id) ||
-                !checked_add(lat, lat_delta, next_lat) ||
-                !checked_add(lon, lon_delta, next_lon)) return false;
-            id = next_id; lat = next_lat; lon = next_lon;
+    DenseTagNodeCursor tag_nodes(group, table);
+    DenseInfoNodeCursor info_nodes(block, group, table, info_validation);
 
-            std::int64_t lat_nano = 0, lon_nano = 0;
-            const auto factor = static_cast<std::int64_t>(block.granularity);
-            if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
-                !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
+    std::int64_t id = 0;
+    std::int64_t lat = 0;
+    std::int64_t lon = 0;
 
-            DenseTagRange tags;
+    for (std::size_t i = 0; i < group.dense.node_count; ++i) {
+        std::int64_t id_delta = 0;
+        std::int64_t lat_delta = 0;
+        std::int64_t lon_delta = 0;
+        bool has_id = false;
+        bool has_lat = false;
+        bool has_lon = false;
+
+        if (!ids.next(id_delta, has_id) ||
+            !lats.next(lat_delta, has_lat) ||
+            !lons.next(lon_delta, has_lon)) return false;
+
+        if (!has_id || !has_lat || !has_lon) return false;
+
+        std::int64_t next_id = 0;
+        std::int64_t next_lat = 0;
+        std::int64_t next_lon = 0;
+
+        if (!checked_add(id, id_delta, next_id) ||
+            !checked_add(lat, lat_delta, next_lat) ||
+            !checked_add(lon, lon_delta, next_lon)) return false;
+
+        id = next_id;
+        lat = next_lat;
+        lon = next_lon;
+
+        std::int64_t lat_nano = 0;
+        std::int64_t lon_nano = 0;
+        const auto factor = static_cast<std::int64_t>(block.granularity);
+
+        if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
+            !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
+
+        DenseTagRange tags;
+        if constexpr (HasTags) {
             if (!tag_nodes.next_node(tags)) return false;
             summary.tag_count += tags.length();
-            DenseNodeView node{id, lat_nano, lon_nano, tags};
-            sink.put(node);
-            ++summary.node_count;
         }
 
-        std::int64_t extra = 0;
-        bool has_extra = false;
-        if (!ids.next(extra, has_extra) || has_extra) return false;
-        if (!lats.next(extra, has_extra) || has_extra) return false;
-        if (!lons.next(extra, has_extra) || has_extra) return false;
-        if (!tag_nodes.finish()) return false;
-        return summary.tag_count == tag_validation.tag_count;
-    } else {
-        DenseColumnCursor ids(group.raw, 1);
-        DenseColumnCursor lats(group.raw, 8);
-        DenseColumnCursor lons(group.raw, 9);
+        DenseInfoView info;
+        if constexpr (HasInfo) {
+            if (!info_nodes.next_node(info)) return false;
+        }
 
-        std::int64_t id = 0, lat = 0, lon = 0;
-        for (std::size_t i = 0; i < group.dense.node_count; ++i) {
-            std::int64_t id_delta = 0, lat_delta = 0, lon_delta = 0;
-            bool has_id = false, has_lat = false, has_lon = false;
-            if (!ids.next(id_delta, has_id) || !lats.next(lat_delta, has_lat) ||
-                !lons.next(lon_delta, has_lon)) return false;
-            if (!has_id || !has_lat || !has_lon) return false;
-
-            std::int64_t next_id = 0, next_lat = 0, next_lon = 0;
-            if (!checked_add(id, id_delta, next_id) ||
-                !checked_add(lat, lat_delta, next_lat) ||
-                !checked_add(lon, lon_delta, next_lon)) return false;
-            id = next_id; lat = next_lat; lon = next_lon;
-
-            std::int64_t lat_nano = 0, lon_nano = 0;
-            const auto factor = static_cast<std::int64_t>(block.granularity);
-            if (!checked_mul_add(block.lat_offset, factor, lat, lat_nano) ||
-                !checked_mul_add(block.lon_offset, factor, lon, lon_nano)) return false;
-
+        if constexpr (!HasTags && !HasInfo) {
             if constexpr (requires {
                 sink.put_dense_node_scalars(id, lat_nano, lon_nano);
             }) {
                 sink.put_dense_node_scalars(id, lat_nano, lon_nano);
             } else {
-                DenseNodeView node{id, lat_nano, lon_nano, DenseTagRange{}};
+                DenseNodeView node{id, lat_nano, lon_nano, DenseTagRange{}, DenseInfoView{}};
                 sink.put(node);
             }
-            ++summary.node_count;
+        } else {
+            DenseNodeView node{id, lat_nano, lon_nano, tags, info};
+            sink.put(node);
         }
 
-        std::int64_t extra = 0;
-        bool has_extra = false;
-        if (!ids.next(extra, has_extra) || has_extra) return false;
-        if (!lats.next(extra, has_extra) || has_extra) return false;
-        if (!lons.next(extra, has_extra) || has_extra) return false;
-        return summary.tag_count == tag_validation.tag_count;
+        ++summary.node_count;
     }
+
+    std::int64_t extra = 0;
+    bool has_extra = false;
+
+    if (!ids.next(extra, has_extra) || has_extra) return false;
+    if (!lats.next(extra, has_extra) || has_extra) return false;
+    if (!lons.next(extra, has_extra) || has_extra) return false;
+
+    if constexpr (HasTags) {
+        if (!tag_nodes.finish()) return false;
+    }
+
+    if constexpr (HasInfo) {
+        if (!info_nodes.finish()) return false;
+    }
+
+    return summary.tag_count == tag_validation.tag_count;
 }
 
 template <typename Sink>
-bool decode_dense_nodes(const BlockLayout& block, const GroupLayout& group,
-                        const StringTableView& table, Sink& sink,
-                        DecodeSummary& summary) noexcept {
+bool decode_dense_nodes(
+    const BlockLayout& block,
+    const GroupLayout& group,
+    const StringTableView& table,
+    Sink& sink,
+    DecodeSummary& summary) noexcept {
+
     summary = DecodeSummary{};
+
     if (!group.has_dense_nodes()) return true;
+
     if (group.dense.id_count != group.dense.lat_count ||
         group.dense.id_count != group.dense.lon_count) return false;
 
     const auto factor = static_cast<std::int64_t>(block.granularity);
     std::int64_t ignored = 0;
+
     if (group.dense.has_lat_range) {
-        if (!checked_mul_add(block.lat_offset, factor, group.dense.min_lat, ignored) ||
-            !checked_mul_add(block.lat_offset, factor, group.dense.max_lat, ignored)) return false;
-    }
-    if (group.dense.has_lon_range) {
-        if (!checked_mul_add(block.lon_offset, factor, group.dense.min_lon, ignored) ||
-            !checked_mul_add(block.lon_offset, factor, group.dense.max_lon, ignored)) return false;
+        if (!checked_mul_add(
+                block.lat_offset, factor, group.dense.min_lat, ignored) ||
+            !checked_mul_add(
+                block.lat_offset, factor, group.dense.max_lat, ignored)) return false;
     }
 
-    // Current comparison workloads carry no DenseInfo. Refuse accidental
-    // asymmetric work until both reference implementations benchmark the same
-    // DenseInfo profiles.
-    if (group.dense.has_dense_info) return false;
+    if (group.dense.has_lon_range) {
+        if (!checked_mul_add(
+                block.lon_offset, factor, group.dense.min_lon, ignored) ||
+            !checked_mul_add(
+                block.lon_offset, factor, group.dense.max_lon, ignored)) return false;
+    }
+
+    DenseInfoValidationSummary info_validation;
+    if (!validate_dense_info(block, group, table, info_validation)) return false;
 
     DenseTagValidationSummary tag_validation;
     if (!validate_dense_tags(group, table, tag_validation)) return false;
 
-    if (tag_validation.tag_count != 0) {
-        return emit_dense_nodes<true>(
-            block, group, table, tag_validation, sink, summary);
+    const bool has_tags = tag_validation.tag_count != 0;
+    const bool has_info = info_validation.has_any();
+
+    if (has_tags) {
+        if (has_info) {
+            return emit_dense_nodes<true, true>(
+                block, group, table,
+                tag_validation, info_validation,
+                sink, summary);
+        }
+
+        return emit_dense_nodes<true, false>(
+            block, group, table,
+            tag_validation, info_validation,
+            sink, summary);
     }
-    return emit_dense_nodes<false>(
-        block, group, table, tag_validation, sink, summary);
+
+    if (has_info) {
+        return emit_dense_nodes<false, true>(
+            block, group, table,
+            tag_validation, info_validation,
+            sink, summary);
+    }
+
+    return emit_dense_nodes<false, false>(
+        block, group, table,
+        tag_validation, info_validation,
+        sink, summary);
 }
 
-enum class WorkloadProfile { tagless, typical, rich, mixed };
+enum class WorkloadProfile {
+    tagless,
+    typical,
+    rich,
+    mixed,
+    info_only,
+    typical_info,
+    rich_info
+};
 enum class SinkPath { coordinates, tag_ids, tag_bytes };
 
 struct DecodeRun {
     std::uint64_t checksum = 0;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
+    std::size_t info_count = 0;
     bool ok = false;
 };
 
@@ -916,6 +1514,7 @@ struct Workload {
     StringTableView table;
     std::size_t node_count = 0;
     std::size_t tag_count = 0;
+    std::size_t info_count = 0;
     std::uint64_t coordinate_checksum = 0;
     std::uint64_t tag_id_checksum = 0;
     std::uint64_t tag_byte_checksum = 0;
@@ -925,26 +1524,38 @@ DecodeRun decode_coordinates(const Workload& workload) noexcept {
     CoordinateSink sink;
     DecodeSummary summary;
     const bool ok = decode_dense_nodes(workload.block, workload.group, workload.table, sink, summary);
-    return DecodeRun{sink.checksum, summary.node_count, summary.tag_count,
-                     ok && sink.node_count == summary.node_count};
+    return DecodeRun{
+        sink.checksum,
+        summary.node_count,
+        summary.tag_count,
+        sink.info_count,
+        ok && sink.node_count == summary.node_count};
 }
 
 DecodeRun decode_tag_ids(const Workload& workload) noexcept {
     TagIdSink sink;
     DecodeSummary summary;
     const bool ok = decode_dense_nodes(workload.block, workload.group, workload.table, sink, summary);
-    return DecodeRun{sink.checksum, summary.node_count, summary.tag_count,
-                     ok && sink.node_count == summary.node_count &&
-                     sink.tag_count == summary.tag_count};
+    return DecodeRun{
+        sink.checksum,
+        summary.node_count,
+        summary.tag_count,
+        sink.info_count,
+        ok && sink.node_count == summary.node_count &&
+        sink.tag_count == summary.tag_count};
 }
 
 DecodeRun decode_tag_bytes(const Workload& workload) noexcept {
     TagByteSink sink;
     DecodeSummary summary;
     const bool ok = decode_dense_nodes(workload.block, workload.group, workload.table, sink, summary);
-    return DecodeRun{sink.checksum, summary.node_count, summary.tag_count,
-                     ok && sink.node_count == summary.node_count &&
-                     sink.tag_count == summary.tag_count};
+    return DecodeRun{
+        sink.checksum,
+        summary.node_count,
+        summary.tag_count,
+        sink.info_count,
+        ok && sink.node_count == summary.node_count &&
+        sink.tag_count == summary.tag_count};
 }
 
 DecodeRun decode_selected(const Workload& workload, SinkPath path) noexcept {
@@ -968,16 +1579,22 @@ std::uint64_t expected_checksum(const Workload& workload, SinkPath path) noexcep
 bool validate_run(const Workload& workload, SinkPath path, std::uint32_t iterations,
                   const DecodeRun& aggregate) noexcept {
     return aggregate.ok &&
-           aggregate.node_count == workload.node_count * static_cast<std::size_t>(iterations) &&
-           aggregate.tag_count == workload.tag_count * static_cast<std::size_t>(iterations) &&
+           aggregate.node_count ==
+               workload.node_count * static_cast<std::size_t>(iterations) &&
+           aggregate.tag_count ==
+               workload.tag_count * static_cast<std::size_t>(iterations) &&
+           aggregate.info_count ==
+               workload.info_count * static_cast<std::size_t>(iterations) &&
            aggregate.checksum == expected_checksum(workload, path) * iterations;
 }
 
 bool warmup(const Workload& workload, SinkPath path, std::uint32_t iterations) noexcept {
     for (std::uint32_t i = 0; i < iterations; ++i) {
         const auto run = decode_selected(workload, path);
-        if (!run.ok || run.node_count != workload.node_count ||
+        if (!run.ok ||
+            run.node_count != workload.node_count ||
             run.tag_count != workload.tag_count ||
+            run.info_count != workload.info_count ||
             run.checksum != expected_checksum(workload, path)) return false;
     }
     return true;
@@ -989,17 +1606,24 @@ std::int64_t time_path(const Workload& workload, SinkPath path, std::uint32_t it
     std::uint64_t aggregate_checksum = 0;
     std::size_t aggregate_nodes = 0;
     std::size_t aggregate_tags = 0;
+    std::size_t aggregate_infos = 0;
     bool ok = true;
     for (std::uint32_t i = 0; i < iterations; ++i) {
         const auto run = decode_selected(workload, path);
         aggregate_checksum += run.checksum;
         aggregate_nodes += run.node_count;
         aggregate_tags += run.tag_count;
+        aggregate_infos += run.info_count;
         ok = ok && run.ok;
     }
     const auto stop = std::chrono::steady_clock::now();
     observable_checksum = aggregate_checksum;
-    const DecodeRun aggregate{aggregate_checksum, aggregate_nodes, aggregate_tags, ok};
+    const DecodeRun aggregate{
+        aggregate_checksum,
+        aggregate_nodes,
+        aggregate_tags,
+        aggregate_infos,
+        ok};
     if (!validate_run(workload, path, iterations, aggregate)) return -1;
     return std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 }
@@ -1137,6 +1761,12 @@ bool parse_profile(std::string_view name, WorkloadProfile& profile) noexcept {
     if (name == "typical") { profile = WorkloadProfile::typical; return true; }
     if (name == "rich") { profile = WorkloadProfile::rich; return true; }
     if (name == "mixed") { profile = WorkloadProfile::mixed; return true; }
+    if (name == "info-only") { profile = WorkloadProfile::info_only; return true; }
+    if (name == "typical-info") {
+        profile = WorkloadProfile::typical_info;
+        return true;
+    }
+    if (name == "rich-info") { profile = WorkloadProfile::rich_info; return true; }
     return false;
 }
 
@@ -1153,15 +1783,24 @@ std::string_view profile_name(WorkloadProfile profile) noexcept {
         case WorkloadProfile::typical: return "typical";
         case WorkloadProfile::rich: return "rich";
         case WorkloadProfile::mixed: return "mixed";
+        case WorkloadProfile::info_only: return "info-only";
+        case WorkloadProfile::typical_info: return "typical-info";
+        case WorkloadProfile::rich_info: return "rich-info";
     }
     return "unknown";
 }
 
 std::size_t tag_count_for_node(WorkloadProfile profile, std::size_t node_index) noexcept {
     switch (profile) {
-        case WorkloadProfile::tagless: return 0;
-        case WorkloadProfile::typical: return 2;
-        case WorkloadProfile::rich: return 8;
+        case WorkloadProfile::tagless:
+        case WorkloadProfile::info_only:
+            return 0;
+        case WorkloadProfile::typical:
+        case WorkloadProfile::typical_info:
+            return 2;
+        case WorkloadProfile::rich:
+        case WorkloadProfile::rich_info:
+            return 8;
         case WorkloadProfile::mixed:
             switch (node_index & 7U) {
                 case 0: return 0; case 1: return 1; case 2: return 2; case 3: return 3;
@@ -1169,6 +1808,17 @@ std::size_t tag_count_for_node(WorkloadProfile profile, std::size_t node_index) 
             }
     }
     return 0;
+}
+
+bool has_info(WorkloadProfile profile) noexcept {
+    return profile == WorkloadProfile::info_only ||
+           profile == WorkloadProfile::typical_info ||
+           profile == WorkloadProfile::rich_info;
+}
+
+bool has_tags(WorkloadProfile profile) noexcept {
+    return profile != WorkloadProfile::tagless &&
+           profile != WorkloadProfile::info_only;
 }
 
 std::int64_t latitude_delta(std::size_t node_index) noexcept {
@@ -1269,22 +1919,58 @@ bool build_workload(WorkloadProfile profile, std::size_t node_count, Workload& w
 
     std::vector<Byte> string_table;
     for (const auto value : strings) append_string(string_table, value);
+    if (has_info(profile)) append_string(string_table, "benchmark-user");
 
     std::vector<Byte> ids, lats, lons, keys_vals;
+    std::vector<Byte> versions, timestamps, changesets, uids, user_sids, visibles;
     std::size_t total_tags = 0;
     ids.reserve(node_count);
     lats.reserve(node_count);
     lons.reserve(node_count);
-    if (profile != WorkloadProfile::tagless) keys_vals.reserve(node_count * 5);
+    if (has_tags(profile)) keys_vals.reserve(node_count * 5);
 
     for (std::size_t i = 0; i < node_count; ++i) {
         append_varint(ids, zigzag64(1));
         append_varint(lats, zigzag64(latitude_delta(i)));
         append_varint(lons, zigzag64(longitude_delta(i)));
 
+        if (has_info(profile)) {
+            append_varint(versions, 1U + (i & 7U));
+
+            const auto timestamp =
+                1'700'000'000LL + static_cast<std::int64_t>(i % 86'400U);
+            const auto previous_timestamp = i == 0
+                ? 0LL
+                : 1'700'000'000LL +
+                    static_cast<std::int64_t>((i - 1) % 86'400U);
+            append_varint(
+                timestamps,
+                zigzag64(timestamp - previous_timestamp));
+
+            const auto changeset =
+                10'000'000LL + static_cast<std::int64_t>(i);
+            const auto previous_changeset = i == 0
+                ? 0LL
+                : 10'000'000LL + static_cast<std::int64_t>(i - 1);
+            append_varint(
+                changesets,
+                zigzag64(changeset - previous_changeset));
+
+            const auto uid =
+                1'000LL + static_cast<std::int64_t>(i & 1023U);
+            const auto previous_uid = i == 0
+                ? 0LL
+                : 1'000LL +
+                    static_cast<std::int64_t>((i - 1) & 1023U);
+            append_varint(uids, zigzag64(uid - previous_uid));
+
+            append_varint(user_sids, zigzag64(i == 0 ? 17LL : 0LL));
+            append_varint(visibles, 1U);
+        }
+
         const auto tags = tag_count_for_node(profile, i);
         total_tags += tags;
-        if (profile != WorkloadProfile::tagless) {
+        if (has_tags(profile)) {
             for (std::size_t tag_index = 0; tag_index < tags; ++tag_index) {
                 const auto pair = (i + tag_index) & 7U;
                 const auto key_sid = 1U + static_cast<std::uint32_t>(pair * 2U);
@@ -1296,13 +1982,35 @@ bool build_workload(WorkloadProfile profile, std::size_t node_count, Workload& w
         }
     }
     workload.tag_count = total_tags;
+    workload.info_count = has_info(profile) ? node_count : 0;
 
     std::vector<Byte> dense;
     append_length_delimited(dense, 1, Bytes(ids.data(), ids.size()));
+
+    if (has_info(profile)) {
+        std::vector<Byte> info;
+        append_length_delimited(
+            info, 1, Bytes(versions.data(), versions.size()));
+        append_length_delimited(
+            info, 2, Bytes(timestamps.data(), timestamps.size()));
+        append_length_delimited(
+            info, 3, Bytes(changesets.data(), changesets.size()));
+        append_length_delimited(
+            info, 4, Bytes(uids.data(), uids.size()));
+        append_length_delimited(
+            info, 5, Bytes(user_sids.data(), user_sids.size()));
+        append_length_delimited(
+            info, 6, Bytes(visibles.data(), visibles.size()));
+        append_length_delimited(
+            dense, 5, Bytes(info.data(), info.size()));
+    }
+
     append_length_delimited(dense, 8, Bytes(lats.data(), lats.size()));
     append_length_delimited(dense, 9, Bytes(lons.data(), lons.size()));
-    if (profile != WorkloadProfile::tagless) {
-        append_length_delimited(dense, 10, Bytes(keys_vals.data(), keys_vals.size()));
+
+    if (has_tags(profile)) {
+        append_length_delimited(
+            dense, 10, Bytes(keys_vals.data(), keys_vals.size()));
     }
 
     std::vector<Byte> group;
@@ -1314,16 +2022,22 @@ bool build_workload(WorkloadProfile profile, std::size_t node_count, Workload& w
     workload.block_bytes = std::move(block);
 
     if (!decode_block_scaffolding(workload)) return false;
-    if (workload.group.dense.node_count != node_count ||
-        workload.group.dense.has_dense_info) return false;
+    if (workload.group.dense.node_count != node_count) return false;
+    if (workload.group.dense.has_dense_info != has_info(profile)) return false;
 
     const auto coordinates = decode_coordinates(workload);
     const auto tag_ids = decode_tag_ids(workload);
     const auto tag_bytes = decode_tag_bytes(workload);
     if (!coordinates.ok || !tag_ids.ok || !tag_bytes.ok ||
-        coordinates.node_count != node_count || coordinates.tag_count != total_tags ||
-        tag_ids.node_count != node_count || tag_ids.tag_count != total_tags ||
-        tag_bytes.node_count != node_count || tag_bytes.tag_count != total_tags) return false;
+        coordinates.node_count != node_count ||
+        coordinates.tag_count != total_tags ||
+        coordinates.info_count != workload.info_count ||
+        tag_ids.node_count != node_count ||
+        tag_ids.tag_count != total_tags ||
+        tag_ids.info_count != workload.info_count ||
+        tag_bytes.node_count != node_count ||
+        tag_bytes.tag_count != total_tags ||
+        tag_bytes.info_count != workload.info_count) return false;
 
     workload.coordinate_checksum = coordinates.checksum;
     workload.tag_id_checksum = tag_ids.checksum;
@@ -1383,7 +2097,7 @@ void print_help() {
         << "  --iterations=N\n"
         << "  --samples=N\n"
         << "  --warmup=N\n"
-        << "  --profile=all|tagless|typical|rich|mixed\n"
+        << "  --profile=all|tagless|typical|rich|mixed|info-only|typical-info|rich-info\n"
         << "  --path=all|coordinates|tag-ids|tag-bytes\n";
 }
 
@@ -1473,9 +2187,11 @@ int main(int argc, char** argv) {
     std::cout << "statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50\n";
     std::cout << "timed: semantic-reference DenseNodes preflight + emission + selected sink work\n";
     std::cout << "excluded: workload generation, block/group layout, StringTable indexing, validation, sorting and reporting\n";
-    std::cout << "comparison scope: no DenseInfo; full tag preflight; checked deltas; C++ retains per-node checked coordinates; identical sink checksum\n";
+    std::cout << "comparison scope: canonical DenseInfo profiles; full metadata/tag preflight; checked deltas; C++ retains per-node checked coordinates; identical sink checksum\n";
     std::cout << "MiB/s(group) is serialized PrimitiveGroup memory throughput, not compressed PBF I/O\n\n";
 
+    // Preserve the historical A2-A10 `--profile=all` set exactly.
+    // A11 DenseInfo profiles are selected explicitly.
     static constexpr std::array<WorkloadProfile, 4> all_profiles{
         WorkloadProfile::tagless, WorkloadProfile::typical,
         WorkloadProfile::rich, WorkloadProfile::mixed

@@ -13,6 +13,51 @@ stable release.
   explicit NODE/WAY/RELATION member types, duplicate/order preservation, and
   failure-before-first-sink semantics.
 
+- Reused the construction-controlled validated-state proof carried by
+  `DenseTagRange` while decoding tag pairs. A10b removes repeated String-ID
+  domain/range validation after the same IDs have already been proved valid,
+  while retaining cursor decoding and defensive `StringTableView.get()` bounds
+  checks. Stable-gated A-B-B-A measurements favored A10b in all nine measured
+  tagged cells; targeted repeats confirmed the noisier boundary cases. The
+  benchmark executable `.text` decreased by another 1,088 bytes.
+
+- Extended the DenseNodes benchmark contract with explicit `info-only`,
+  `typical-info`, and `rich-info` workloads. All three sink paths now make
+  DenseInfo observable, while the C++20 semantic reference mirrors complete
+  metadata preflight and streaming emission. D, GCC C++, and Clang C++ matched
+  all 21 profile/path checksum cells; the historical `--profile=all` set remains
+  unchanged for A2-A10 reproducibility. This establishes A11 measurement
+  infrastructure only and makes no performance claim.
+
+- Corrected the A11 DenseInfo benchmark fixture so generated `visible` values
+  are consistently `true` in both the D workload builder and C++20 semantic
+  reference. The initial shared alternating `true`/`false` fixture escaped
+  cross-implementation parity because both generators contained the same
+  defect. After correction, the metadata-profile checksums changed as expected,
+  the four historical profiles remained unchanged, and D/GCC/Clang again
+  matched all 21 profile/path checksum cells. Pre-correction A11 timings are not
+  used as the frozen performance baseline.
+
+- Added a package-internal prevalidated DenseInfo emission path after complete
+  `validateDenseInfo()` preflight. The public cursor remains defensive, while
+  internal DenseNodes emission avoids repeating already-proved cumulative
+  arithmetic, timestamp-scaling, UID-domain, and `user_sid`-domain checks.
+  Wire/cursor checks and defensive StringTable materialization remain intact.
+  Against the corrected A11 benchmark contract, all 21 baseline/candidate
+  semantic checksum cells matched, executable `.text` decreased by 3,752
+  bytes, and all nine controlled DenseInfo A-B-B-A cells favored the candidate
+  by 3.2-8.2%. All mirrored halves and all nine sentinel-normalized comparisons
+  also favored the candidate; the global sentinel 3% gate remained `REVIEW`
+  because of isolated excursions.
+
+- Added a package-internal prevalidated DenseTags node-partition path used only
+  after successful complete `validateDenseTags()` preflight. The public
+  `DenseTagNodeCursor.nextNode()` remains defensive, while production
+  DenseNodes emission avoids repeating StringTable-ID semantic validation for
+  every non-zero `keys_vals` value during node partitioning. Controlled A10a
+  A-B-B-A measurements improved all nine tagged benchmark combinations by
+  5.3–12.7% and reduced executable `.text` by 5,408 bytes.
+
 - Reused the already validated sole `DenseNodes` payload for implicit-all-tagless
   coordinate cursors, eliminating one redundant outer `PrimitiveGroup` scan
   while preserving the generic path for tagged, explicit-delimiter-only,

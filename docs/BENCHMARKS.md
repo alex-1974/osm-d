@@ -1840,3 +1840,965 @@ code-size cleanup, with no claimed runtime speedup. The removed failure path
 does not protect a supported caller state: an unequal Dense ID/latitude/
 longitude layout has already been rejected by the required
 `decodePrimitiveGroupLayout()` stage.
+
+## A10a: skip redundant DenseTags String-ID validation during prevalidated node partitioning
+
+A10a revisited the tagged DenseNodes hot path after A9a.
+
+The complete `validateDenseTags()` preflight already proves, for the same
+`PrimitiveGroup` and `StringTable`, that every non-zero logical `keys_vals`
+entry is a valid positive signed-int32 StringTable ID and resolves within the
+indexed table. Production `decodeDenseNodes()` calls this complete preflight
+before selecting a tagged emitter.
+
+Before A10a, `DenseTagNodeCursor.nextNode()` nevertheless repeated
+`validateStringId()` for every non-zero `keys_vals` entry while partitioning
+the already validated stream into per-node ranges. The later `DenseTagRange`
+decode remained independently checked as well.
+
+The public cursor intentionally promises defensive behavior, so simply
+removing its checks would have weakened a supported API contract.
+
+A10a therefore introduced a narrower package-internal path:
+
+```text
+public nextNode()
+    -> retains defensive String-ID validation
+
+package nextPrevalidatedNode()
+    -> requires successful validateDenseTags()
+    -> requires the same backing bytes to remain unchanged
+    -> retains wire decoding, delimiter, pair-structure and node-count checks
+    -> skips only the already-proven String-ID semantic validation
+```
+
+The common implementation uses a compile-time `ValidateStringIds` capability,
+so there is no new runtime branch in the per-value partition loop.
+
+The production `decodeDenseNodes()` emitter uses the package-internal path only
+after its immediately preceding successful `validateDenseTags()` call.
+`DenseTagRange.fromValidated()` and `decodeValidatedPair()` are unchanged in
+A10a; actual range consumption therefore still performs the existing
+per-pair validation and StringTable lookup. Removing that later redundancy is
+explicitly outside A10a and requires a separate experiment.
+
+The stale source comment describing `const` backing bytes as immutable was
+also corrected. The contract is now stated precisely: the complete stream was
+prevalidated and its backing must remain unchanged while the range relies on
+that proof.
+
+### Correctness validation
+
+The A10a source delta passed:
+
+```text
+git diff --check
+DMD 2.111.0: 26 modules passed unittests
+LDC 1.41.0: 26 modules passed unittests
+LDC 1.41.0 release build: PASS
+```
+
+### Controlled benchmark setup
+
+Baseline source:
+
+```text
+a45894c0518461931d0ab263c14b5a60adefda82
+```
+
+Toolchain:
+
+```text
+LDC 1.41.0
+DMD frontend 2.111.0
+LLVM 19.1.7
+target x86_64
+```
+
+Both fixed benchmark binaries were built with LLVM's Intel JCC
+32-byte-boundary mitigation:
+
+```text
+--x86-branches-within-32B-boundaries
+```
+
+The controlled host state was:
+
+```text
+logical CPU:            5
+SMT sibling CPU 11:     offline
+intel_pstate no_turbo:  1
+ordering:                A-B-B-A
+```
+
+Each benchmark phase used:
+
+```text
+nodes:       200000
+iterations:  5 per sample
+samples:     30
+warmup:      2
+profiles:    typical, rich, mixed
+paths:       coordinates, tag-ids, tag-bytes
+CPU:         5
+```
+
+Fixed binary identities:
+
+```text
+baseline:
+4821a910a04e9e93dfa4683ef08877218aa610c1b9d77336af2a18794160f8cd
+
+A10a candidate:
+45a0d9029f2cfc2a045d50d1155ef4f0e73846e0e6a56acea5723c20aad700e8
+```
+
+All compared runs produced the expected matching checksum for a given
+profile/path.
+
+### Coordinates-only result
+
+| Profile | Tags/node | Baseline mean p50 | A10a mean p50 | Saved | A10a vs baseline |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| typical | 2.000 | 106.819 ns/node | 97.057 ns/node | 9.762 ns/node | -9.138% |
+| rich | 8.000 | 258.803 ns/node | 226.029 ns/node | 32.774 ns/node | -12.663% |
+| mixed | 1.625 | 93.241 ns/node | 85.344 ns/node | 7.897 ns/node | -8.469% |
+
+The A phases returned to essentially the same baseline level after the two B
+phases, while both candidate phases remained distinctly faster.
+
+### Full tag-consumption result
+
+| Path | Profile | Baseline mean p50 | A10a mean p50 | Saved | A10a vs baseline |
+| --- | --- | ---: | ---: | ---: | ---: |
+| tag IDs | typical | 135.627 ns/node | 127.812 ns/node | 7.815 ns/node | -5.762% |
+| tag IDs | rich | 358.835 ns/node | 324.054 ns/node | 34.781 ns/node | -9.693% |
+| tag IDs | mixed | 121.016 ns/node | 114.079 ns/node | 6.937 ns/node | -5.732% |
+| tag bytes | typical | 147.971 ns/node | 140.153 ns/node | 7.818 ns/node | -5.283% |
+| tag bytes | rich | 400.510 ns/node | 373.541 ns/node | 26.970 ns/node | -6.734% |
+| tag bytes | mixed | 131.875 ns/node | 123.409 ns/node | 8.466 ns/node | -6.420% |
+
+The optimization therefore remains beneficial when the returned
+`DenseTagRange` is actually traversed and its current checked pair decoder is
+executed. No measured benchmark cell regressed.
+
+### Static code-generation localization
+
+The fixed A10a executable became smaller:
+
+```text
+baseline .text   1,209,485 bytes
+A10a .text       1,204,077 bytes
+delta               -5,408 bytes
+```
+
+The relevant symbol-size changes were confined to the six benchmark
+`dispatchDenseNodes` instantiations with `HasTags=true`:
+
+```text
+CoordinateSink, HasInfo=true    -2606 bytes
+CoordinateSink, HasInfo=false    -640 bytes
+TagIdSink,      HasInfo=true     -224 bytes
+TagIdSink,      HasInfo=false    -864 bytes
+TagByteSink,    HasInfo=true     -224 bytes
+TagByteSink,    HasInfo=false    -864 bytes
+------------------------------------------------
+summed                              -5422 bytes
+```
+
+Relevant surrounding symbols were unchanged in size:
+
+```text
+decodeDenseNodes                 0x35e -> 0x35e
+validateDenseTags                0xe65 -> 0xe65
+DenseTagRange.fromValidated     0x1696 -> 0x1696
+TagIdSink.put                   0x169d -> 0x169d
+TagByteSink.put                 0x177d -> 0x177d
+```
+
+The six tagged dispatcher reductions sum to 5,422 bytes while whole
+executable `.text` decreases by 5,408 bytes. The material code-generation
+change is therefore localized to the expected tagged emitter specializations.
+
+### Reproducibility material
+
+The benchmark implementation remains in `benchmark/micro/dense_nodes.d` and
+the semantic comparison reference remains in
+`benchmark/reference/dense_nodes_cpp.cpp`.
+
+The investigation used transient fixed artifacts and captured logs under:
+
+```text
+/tmp/osm-d-a10-baseline
+/tmp/osm-d-a10-candidate
+/tmp/osm-d-a10-abba
+/tmp/osm-d-a10-tag-consumption-abba
+/tmp/osm-d-a10-static
+```
+
+These `/tmp` paths are diagnostic artifacts, not repository dependencies.
+
+### A10a classification
+
+A10a is **KEEP**.
+
+The retained optimization is deliberately narrow:
+
+1. keep complete hostile-input DenseTags preflight;
+2. keep public `DenseTagNodeCursor.nextNode()` defensive;
+3. expose the assumption only through a package-internal prevalidated path;
+4. retain wire, delimiter, pairing and node-count checks;
+5. remove only StringTable-ID semantic checks already proved by preflight;
+6. leave `DenseTagRange` pair decoding unchanged for A10a.
+
+The controlled runtime result is positive across all nine measured tagged
+workload/path combinations, ranging from **-5.283% to -12.663%**.
+
+A later experiment may investigate redundant String-ID validation during
+actual `DenseTagRange` pair decoding. That is a distinct experiment and is not
+implied by the A10a KEEP decision.
+
+## A10b: reuse validated DenseTagRange String IDs during pair decoding
+
+A10b continues the validated-state deduplication introduced by A10a.
+
+### Premise
+
+`DenseTagRange` is construction-controlled inside `dense_tags.d`. Its stream,
+table, front value, and remaining count are private, and its private
+`fromValidated()` constructor is reached only through `DenseTagNodeCursor`.
+
+There are two supported non-empty construction paths:
+
+1. public `nextNode()`, which defensively validates every non-zero StringTable
+   ID while partitioning the node segment; and
+2. package-internal `nextPrevalidatedNode()`, which is used by production
+   DenseNodes emission only after complete `validateDenseTags()` validation of
+   the same PrimitiveGroup/StringTable pair.
+
+Both paths therefore establish that every raw key/value ID subsequently
+consumed by the produced range is a positive int32 value within the same
+StringTable. The validated backing bytes are required to remain unchanged
+while the range relies on this proof.
+
+Before A10b, `DenseTagRange.fromValidated()` and later `popFront()` still
+called a pair decoder that repeated `validateStringId()` for both key and
+value.
+
+### A10b scope
+
+A10b renames that internal helper to `decodePrevalidatedPair()` and removes
+only the repeated String-ID domain/range validation from the range pair
+decoder.
+
+It retains:
+
+- `KeysValsCursor.next()` and its wire decoding;
+- the construction-controlled `DenseTagRange`;
+- complete hostile-input validation in `validateDenseTags()`;
+- defensive String-ID validation in public `DenseTagNodeCursor.nextNode()`;
+- the A10a package-internal prevalidated node-partition contract;
+- both `StringTableView.get()` calls;
+- `StringTableView.get()` index bounds checks; and
+- `StringRef` offset/length validation against the borrowed block.
+
+The raw values are converted to `uint` only after the range's validated-state
+precondition has already proved that conversion valid.
+
+This remains a Level-1 validated-state optimization with construction control
+provided by the private range representation; no new public unchecked API or
+freely fabricable capability is introduced.
+
+### Correctness
+
+Before performance measurement the candidate passed:
+
+    git diff --check
+    DMD 2.111.0: 26 modules passed unittests
+    LDC 1.41.0: 26 modules passed unittests
+    LDC 1.41.0 release build: PASS
+
+### Fixed benchmark artifacts
+
+A10a baseline:
+
+    45a0d9029f2cfc2a045d50d1155ef4f0e73846e0e6a56acea5723c20aad700e8
+
+A10b candidate:
+
+    639f148b60b1d76287f83d79ec416649cb322dd52116d960d21fbeabbcc83438
+
+Frozen A10b patch:
+
+    ae18b73912971b3f876106b059abd5b9ea188a9a4f00e5b223028b4260c410db
+
+The A10a baseline rebuilt from commit `e1b9de8` was bit-identical to the
+previously measured A10a candidate, providing a direct continuation of the
+A10 experiment series.
+
+Both binaries used LDC 1.41.0 / LLVM 19.1.7, release all-at-once compilation,
+and LLVM's Intel JCC 32-byte-boundary mitigation.
+
+### Rejected first A10b timing series
+
+The first full A-B-B-A attempt was rejected before making a KEEP/REJECT
+decision because the host entered two visibly different execution states
+during the matrix. In particular, `rich/coordinates` changed from roughly
+450 ns/node to roughly 227 ns/node inside one A-B-B-A cell.
+
+That series is diagnostic evidence only and is not used for the retained
+performance conclusion.
+
+A subsequent six-run baseline stability probe produced:
+
+    min       226.030 ns/node
+    median    226.353 ns/node
+    max       227.919 ns/node
+    max/min     0.836 %
+
+A simultaneous `perf stat` probe reported nearly identical cycles and
+ref-cycles, consistent with the controlled nominal-frequency state.
+
+### Stable-gated full matrix
+
+The retained full matrix used:
+
+- logical CPU 5;
+- SMT sibling CPU 11 offline;
+- Intel turbo disabled;
+- `performance` governor;
+- scaling min/max fixed at 2.6 GHz;
+- 200,000 nodes;
+- 5 iterations per sample;
+- 30 samples;
+- 2 warmups; and
+- A-B-B-A ordering.
+
+Before every benchmark phase a short fixed A10a `rich/coordinates` sentinel
+was run. Across all 36 sentinels:
+
+    min       225.570 ns/node
+    median    226.526 ns/node
+    max       230.293 ns/node
+    max/min     2.094 %
+
+Core and package thermal-throttle counters both changed by zero during the
+matrix.
+
+Results:
+
+| Path | Profile | A10a mean p50 | A10b mean p50 | Saved | A10b vs A10a |
+| --- | --- | ---: | ---: | ---: | ---: |
+| coordinates | typical | 97.189 ns/node | 95.534 ns/node | 1.655 ns/node | -1.703% |
+| coordinates | rich | 226.406 ns/node | 224.608 ns/node | 1.798 ns/node | -0.794% |
+| coordinates | mixed | 85.582 ns/node | 85.134 ns/node | 0.448 ns/node | -0.524% |
+| tag IDs | typical | 127.445 ns/node | 125.645 ns/node | 1.800 ns/node | -1.412% |
+| tag IDs | rich | 323.099 ns/node | 321.385 ns/node | 1.714 ns/node | -0.530% |
+| tag IDs | mixed | 113.555 ns/node | 111.725 ns/node | 1.831 ns/node | -1.612% |
+| tag bytes | typical | 139.712 ns/node | 138.936 ns/node | 0.776 ns/node | -0.555% |
+| tag bytes | rich | 369.046 ns/node | 366.776 ns/node | 2.269 ns/node | -0.615% |
+| tag bytes | mixed | 129.201 ns/node | 121.791 ns/node | 7.410 ns/node | -5.735% |
+
+All A/B phases produced identical expected checksums for the corresponding
+path/profile.
+
+The `mixed/tag-bytes` magnitude was treated cautiously because its A10a phases
+showed a bimodal baseline despite stable sentinels. Its sign therefore
+required a targeted repeat rather than accepting the apparent 5.735% result
+at face value.
+
+### Targeted mirrored confirmation
+
+Three cells were repeated with eight phases each:
+
+    A1 B1 B2 A2 B3 A3 A4 B4
+
+This tested the previously noisy `mixed/tag-bytes`, the higher-variance
+`rich/tag-bytes`, and the small-effect `mixed/coordinates` cell.
+
+| Path | Profile | A10a mean | A10b mean | A10b vs A10a | first half | second half |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| tag bytes | mixed | 128.124 | 121.040 | -5.529% | -5.107% | -5.950% |
+| tag bytes | rich | 369.321 | 364.788 | -1.227% | -1.907% | -0.541% |
+| coordinates | mixed | 85.451 | 83.602 | -2.165% | -2.147% | -2.182% |
+
+The targeted run used 24 sentinels:
+
+    min       225.009 ns/node
+    median    225.982 ns/node
+    max       231.653 ns/node
+    max/min     2.953 %
+
+All repeated phases again retained identical checksums.
+
+`mixed/tag-bytes` continued to show two A10a timing bands, so its approximate
+5.5% magnitude should not be interpreted as a clean estimate of the isolated
+optimization cost. What is durable is that both independently ordered halves
+favored A10b, while the candidate itself remained in a much tighter timing
+band.
+
+### Static code generation
+
+A10b further reduced executable `.text`:
+
+    A10a baseline    1,204,077 bytes
+    A10b candidate   1,202,989 bytes
+    delta               -1,088 bytes
+
+The initially inspected relevant symbol changes were localized to the expected
+range/sink machinery:
+
+    DenseTagRange.fromValidated    -515 bytes
+    TagIdSink.put                  -312 bytes
+    TagByteSink.put                -312 bytes
+
+The coordinate path benefits through the eager first-pair decode performed by
+`DenseTagRange.fromValidated()`. Tag-consuming paths additionally benefit when
+subsequent `popFront()` operations decode the remaining pairs.
+
+### A10b classification
+
+A10b is **KEEP**.
+
+The decision rests on the combination of:
+
+1. a narrow construction-controlled validated-state premise;
+2. no weakening of hostile-input validation at the public cursor boundary;
+3. retained defensive `StringTableView.get()` bounds checking;
+4. DMD and LDC correctness validation;
+5. reduced generated code size;
+6. a stable-gated full matrix with all nine cells favoring A10b;
+7. checksum identity across baseline and candidate; and
+8. targeted mirrored confirmation of the three noisier or smaller-effect
+   cells.
+
+The precise percentage for `mixed/tag-bytes` remains intentionally
+unclaimed because of its bimodal baseline. The retained engineering conclusion
+is that removing this duplicate SID validation is semantically justified,
+reduces code size, and has no observed performance regression under the
+controlled benchmark set.
+
+## A11-Bench: DenseInfo semantic workload contract
+
+A11 starts with measurement infrastructure before any DenseInfo production
+optimization.
+
+This step changes only the DenseNodes D microbenchmark and its conservative
+C++20 semantic reference. No production source under `source/` is changed.
+
+### Motivation
+
+The pre-A11 DenseNodes benchmark covered tags and coordinates but generated no
+DenseInfo. The C++ reference likewise explicitly refused metadata-bearing
+workloads. Optimizing `DenseInfoNodeCursor` under that contract would therefore
+have produced measurements that did not exercise the code under investigation.
+
+A11-Bench closes that gap before changing production code.
+
+### Workload profiles
+
+The historical A2-A10 profiles remain unchanged:
+
+- `tagless`: no tags and no DenseInfo;
+- `typical`: two tags per node and no DenseInfo;
+- `rich`: eight tags per node and no DenseInfo;
+- `mixed`: deterministic mixed tag counts and no DenseInfo.
+
+Three explicit metadata profiles are added:
+
+- `info-only`: zero tags plus all six DenseInfo columns;
+- `typical-info`: two tags per node plus all six DenseInfo columns;
+- `rich-info`: eight tags per node plus all six DenseInfo columns.
+
+`--profile=all` intentionally remains the historical four-profile set. This
+preserves direct reproducibility of the A2-A10 benchmark series; A11 metadata
+profiles are selected explicitly.
+
+The canonical performance workload stores each DenseInfo column in one packed
+occurrence. Packed/unpacked compatibility remains part of decoder correctness
+rather than multiplying the primary performance matrix.
+
+The generated metadata contains:
+
+- direct `version`;
+- delta-coded `timestamp`;
+- delta-coded `changeset`;
+- delta-coded `uid`;
+- delta-coded `user_sid`;
+- direct `visible`, set to `true` for every generated metadata-bearing node;
+- the default `date_granularity` of 1000; and
+- a borrowed `"benchmark-user"` StringTable entry at SID 17.
+
+### Observable metadata contract
+
+DenseInfo is consumed by all three sink paths whenever present.
+
+The checksum mixes:
+
+1. all six `has*` presence flags;
+2. `version`;
+3. cumulative `timestampValue`;
+4. exact `timestampMillis`;
+5. cumulative `changeset`;
+6. cumulative `uid`;
+7. cumulative `userSid`;
+8. borrowed username length;
+9. first and last username byte when non-empty; and
+10. `visible`.
+
+An independent `infoCount` is carried through `DecodeRun`, warm-up validation,
+timed aggregation, and workload self-validation. A metadata-bearing path
+therefore cannot silently stop observing DenseInfo while still satisfying the
+benchmark consistency checks.
+
+Tag-ID and tag-byte sinks additionally retain their existing tag observations.
+
+### Semantic-reference contract
+
+`benchmark/reference/dense_nodes_cpp.cpp` now implements DenseInfo rather than
+using the previous empty metadata cursor.
+
+Its metadata path mirrors the relevant production semantics:
+
+- complete DenseInfo preflight before the first emitted node;
+- independently optional columns;
+- packed and unpacked repeated scalar decoding;
+- present-column length equal to `nodeCount`;
+- checked timestamp, changeset, uid, and user_sid delta accumulation;
+- cumulative uid constrained to the schema `int32` domain;
+- cumulative user_sid constrained to the indexed StringTable;
+- checked timestamp scaling by `date_granularity`;
+- six streaming column cursors during emission;
+- borrowed username bytes from the StringTable; and
+- no metadata materialization arrays.
+
+The C++ reference remains conservative for coordinate emission: unlike current
+D production it retains per-node checked coordinate arithmetic. It is therefore
+a semantic and comparative reference, not a claim of cycle-for-cycle identical
+generated code.
+
+### Initial semantic gate
+
+Before any A11 performance experiment:
+
+- the D DenseNodes benchmark built successfully with LDC;
+- the C++20 reference built successfully with both GCC and Clang;
+- seven profiles were exercised:
+  `tagless`, `typical`, `rich`, `mixed`, `info-only`, `typical-info`,
+  `rich-info`;
+- each profile was exercised through `coordinates`, `tag-ids`, and
+  `tag-bytes`; and
+- D, GCC C++, and Clang C++ produced identical observable checksums for every
+  profile/path combination.
+
+That is 21/21 semantic checksum cells matching for each independently compiled
+C++ reference.
+
+The historical `--profile=all` expansion was also verified on both D and C++ as
+exactly:
+
+    tagless
+    typical
+    rich
+    mixed
+
+### Benchmark-fixture correction
+
+The first A11-Bench implementation generated the direct `visible` column as
+alternating `true`/`false` values in both the D workload builder and the C++20
+semantic reference. Because the same fixture defect existed independently of
+the decoder under test in both benchmark implementations, D/GCC/Clang checksum
+parity could not detect it.
+
+The intended synthetic A11 metadata contract is now explicit: every generated
+metadata-bearing node has `hasVisible == true` and `visible == true`. The D and
+C++ workload builders therefore encode `1` for every generated `visible`
+value.
+
+After correcting the fixture:
+
+- the four historical `tagless`, `typical`, `rich`, and `mixed` profiles remain
+  unchanged;
+- the observable checksums of the three metadata profiles change as expected;
+- D, GCC C++, and Clang C++ again match in all 21 profile/path checksum cells;
+  and
+- the historical `--profile=all` expansion remains exactly the original four
+  A2-A10 profiles.
+
+Performance measurements made with the pre-correction A11 binaries are retained
+only as exploratory evidence and are not used as the frozen baseline for an A11
+production optimization. Baseline and candidate binaries must both be rebuilt
+from the corrected benchmark contract before a performance decision is made.
+
+### Classification
+
+A11-Bench is retained as benchmark infrastructure.
+
+The short smoke-run timings used while establishing semantic parity are **not**
+an A11 performance baseline and support no performance conclusion. Their sole
+purpose was to prove that the new paths execute and produce the same observable
+semantics.
+
+The first production A11 optimization must start from a frozen build of this
+benchmark contract and be measured separately against that fixed baseline.
+
+## A11a: DenseInfo prevalidated semantic-check elision
+
+A11a applies the same validated-state principle already retained for DenseTags
+to DenseInfo emission.
+
+`validateDenseInfo()` completes semantic preflight before the first DenseNode is
+published. For the exact same `PrimitiveBlockLayout`, `PrimitiveGroupLayout`,
+and `StringTableView` backing, it has already proved:
+
+- cumulative timestamp delta arithmetic;
+- timestamp scaling by `date_granularity`;
+- cumulative changeset arithmetic;
+- cumulative UID arithmetic and the signed 32-bit UID domain;
+- cumulative `user_sid` arithmetic and StringTable-ID range; and
+- DenseInfo column cardinality.
+
+The public `DenseInfoNodeCursor.nextNode()` remains defensive. A package-internal
+`nextPrevalidatedNode()` is used by production DenseNodes emission only after
+successful complete DenseInfo validation for the same unchanged backing.
+
+The prevalidated path omits only the semantic arithmetic/domain checks already
+proved by preflight. It deliberately retains:
+
+- wire decoding and cursor failure handling;
+- per-column presence/cardinality observation;
+- the remaining-node guard;
+- `StringTableView.get()` username materialization/bounds checking; and
+- the existing final `finish()` checks.
+
+This is a Level-1 validated-state provenance optimization: correctness depends
+on successful prior validation plus unchanged backing and preserved provenance.
+
+### Correctness and binary-size gate
+
+The A11a candidate was rebuilt against the corrected A11 benchmark contract
+introduced by commit `080855f`.
+
+Baseline and candidate:
+
+- used the same corrected benchmark sources;
+- were compiled with LDC 1.41.0 / LLVM 19.1.7;
+- used `--x86-branches-within-32B-boundaries`;
+- matched in all 21 DenseNodes profile/path semantic checksum cells; and
+- passed the existing DMD and LDC unit-test suites.
+
+The benchmark executable `.text` size changed from 1,214,901 bytes to
+1,211,149 bytes, a reduction of 3,752 bytes.
+
+### Controlled performance result
+
+The final decision run used CPU 5 pinned at 2.6 GHz with the SMT sibling
+offline, turbo disabled, and the `performance` governor. Each of the nine
+DenseInfo profile/path cells used an A-B-B-A sequence with a baseline sentinel
+before every phase.
+
+Raw candidate deltas were:
+
+| Profile | Path | Candidate vs baseline |
+| --- | --- | ---: |
+| `info-only` | `coordinates` | -7.147% |
+| `info-only` | `tag-ids` | -8.186% |
+| `info-only` | `tag-bytes` | -7.597% |
+| `typical-info` | `coordinates` | -5.108% |
+| `typical-info` | `tag-ids` | -4.899% |
+| `typical-info` | `tag-bytes` | -3.985% |
+| `rich-info` | `coordinates` | -3.678% |
+| `rich-info` | `tag-ids` | -3.560% |
+| `rich-info` | `tag-bytes` | -3.205% |
+
+All nine raw cells favored A11a. Both mirrored A/B halves also favored A11a in
+every cell.
+
+A secondary normalization divided each phase result by its immediately
+preceding baseline sentinel. All nine normalized cells still favored A11a, with
+normalized deltas ranging from -2.499% to -8.351%.
+
+The global sentinel max/min spread was 3.536%, so the mechanical 3% sentinel
+gate is recorded as `REVIEW`, not `PASS`. Only three of 36 sentinels were more
+than 1% from the median and two were more than 2% from it. The sentinel
+excursions did not reverse any raw mirrored comparison, and sentinel
+normalization preserved the candidate advantage in all nine cells.
+
+### Classification
+
+**KEEP.**
+
+A11a removes checks whose exact semantics were already proved by complete
+DenseInfo preflight, preserves the public defensive API and remaining
+materialization/wire checks, reduces generated code size, and shows a
+consistent performance improvement across every corrected DenseInfo workload.
+The measured percentages describe this controlled benchmark setup and are not
+claimed as universal application-level speedups.
+
+## A11b: canonical packed DenseInfo column reuse
+
+A11b investigated whether DenseInfo structural information discovered during
+preflight could be reused during emission.
+
+The experiment started from the retained A11a baseline at commit `a5edcf9`.
+A11a already removes repeated semantic checks after complete DenseInfo
+validation. A11b targeted a different remaining cost: locating the six
+DenseInfo column streams themselves.
+
+### Hypothesis
+
+The generic emission path uses six independent `DenseInfoColumnCursor`
+instances for `version`, `timestamp`, `changeset`, `uid`, `user_sid`, and
+`visible`.
+
+Complete DenseInfo preflight has already traversed the same serialized
+structure before the first node is emitted. A11b therefore tested preserving
+the packed-column locations discovered during validation and using them to seed
+the emission cursors directly.
+
+Legal non-canonical protobuf representations had to continue using the generic
+decoder. Canonical layout was an optimization capability only, never a
+validity requirement.
+
+### Real-corpus shape
+
+Six real PBF extracts were profiled:
+
+- Geofabrik Monaco;
+- Geofabrik Andorra;
+- Geofabrik Liechtenstein;
+- openstreetmap.fr Monaco;
+- openstreetmap.fr Andorra; and
+- openstreetmap.fr San Marino.
+
+Aggregate DenseInfo population:
+
+    groups                210
+    nodes           1,658,095
+    mean nodes/group   7,895.69
+
+All 210 observed DenseInfo groups had the researched canonical form:
+
+- one DenseNodes message per group;
+- one DenseInfo message;
+- fields 1-5 packed once in ascending order;
+- no `visible` field;
+- no unknown DenseInfo field; and
+- no wrong wire type.
+
+Provider diversity does not by itself establish independent writer diversity,
+but the canonical shape was universal in this sampled corpus.
+
+### v1: rejected template-axis design
+
+The first implementation introduced a dedicated canonical DenseInfo cursor and
+a compile-time `CanonicalInfo` dispatch axis.
+
+The cursor representation itself was substantially smaller:
+
+    generic cursor      896 bytes
+    canonical cursor    256 bytes
+
+However, DenseNodes dispatch specializations increased from 12 to 18 and
+actual executable `.text` grew from:
+
+    baseline      746,784 bytes
+    A11b v1       885,536 bytes
+    delta        +138,752 bytes  (+18.58%)
+
+Approximately 136 KiB of that increase was attributable to the expanded
+dispatch family.
+
+A11b v1 was therefore classified **REWORK** before performance timing.
+
+### v2: runtime-selected canonical layout
+
+A11b v2 removed the compile-time canonical axis.
+
+Preflight instead produced a package-internal canonical layout containing
+packed offset/length spans, a presence mask, and canonical-layout provenance.
+On the measured target the layout occupied 52 bytes.
+
+`DenseInfoNodeCursor.fromPrevalidatedLayout()` selected once during cursor
+construction between:
+
+1. the existing generic protobuf traversal; and
+2. direct packed-column cursors seeded from the preflight-proven spans.
+
+The compile-time axes remained only:
+
+    HasTags × HasInfo × Sink
+
+There was no per-node canonical branch and no new public API.
+
+The measured candidate diff SHA-256 was:
+
+    3168cc46c95d342529f3eb7982178fb03919e092f582e2c1b2b642f47eec4903
+
+### Correctness and static-size gate
+
+A11b v2 passed:
+
+- DMD tests;
+- LDC tests;
+- LDC release build; and
+- all 21 synthetic DenseNodes profile/path semantic checksum cells.
+
+The candidate retained exactly 12 DenseNodes dispatch specializations.
+
+Actual executable `.text` changed from:
+
+    A11a baseline    746,784 bytes
+    A11b v2          748,960 bytes
+    delta             +2,176 bytes  (+0.291%)
+
+The v1 code-size failure was therefore removed, but the remaining complexity
+still required measurable runtime justification.
+
+### Fixed-cost amplification
+
+Initial measurements at 4,096-200,000 nodes/group showed only noisy
+sub-percent differences.
+
+A deliberately amplified experiment then used canonical info-only groups of:
+
+    16
+    64
+    256
+    1,024
+
+nodes while keeping total decoded work approximately constant.
+
+All four sizes favored the candidate in both raw and normalized comparisons.
+Regression against `1/N` produced approximately:
+
+    fixed saving/group      1.57 us
+    R^2                     0.997
+
+This confirms the hypothesized fixed per-group saving.
+
+The mechanism is therefore real. The problem is its amortization: at the
+real-corpus mean of approximately 7,896 nodes/group, a few microseconds of
+saved group setup become a very small per-node effect.
+
+### Real-PBF semantic gate
+
+A disposable real-data harness prepared PBF framing, Blob decoding,
+decompression, PrimitiveBlock layout, StringTable indexing, and PrimitiveGroup
+layout outside the timed region.
+
+The prepared corpus contained:
+
+    files                       6
+    OSMData blocks            236
+    DenseNodes groups         210
+    DenseInfo nodes     1,658,095
+
+Both the frozen A11a baseline and A11b v2 decoded every real group through the
+production `decodeDenseNodes` entry point.
+
+Per-file output and aggregate output were identical. The common aggregate
+checksum was:
+
+    10687467426028546419
+
+Thus real-PBF semantic parity passed for all 1,658,095 DenseInfo nodes.
+
+### Real-PBF A-B-B-A timing
+
+The controlled run used CPU 5 fixed at 2.6 GHz, its SMT sibling offline,
+turbo disabled, and the `performance` governor.
+
+Phase medians:
+
+| Phase | ns/node |
+| --- | ---: |
+| A1 | 286.108653 |
+| B1 | 285.518845 |
+| B2 | 285.004847 |
+| A2 | 285.556709 |
+
+Direct comparison:
+
+    A mean               285.832681 ns/node
+    B mean               285.261846 ns/node
+    raw B vs A               -0.1997%
+    mirrored half 1          -0.2061%
+    mirrored half 2          -0.1933%
+    apparent saved/group     +4.507 us
+
+Both raw mirrored halves favored the candidate.
+
+However, sentinel normalization reversed the result to `+0.1786%`. The four
+sentinel medians had only 0.652% max/min spread, but the final sentinel moved
+without a corresponding shift in the immediately following A2 phase.
+
+At an effect size near 0.2%, this normalization was too sensitive to serve as
+the deciding statistic. The run therefore showed a possible small benefit,
+not a robust KEEP result.
+
+### Paired real-PBF replication
+
+A second experiment used eight direct A/B pairs with alternating order.
+
+All semantic observations remained identical.
+
+Two baseline processes, pairs 2 and 8, entered a distinct approximately
+417 ns/node regime while normal processes were approximately 284-288 ns/node.
+Because the whole process phase shifted rather than isolated samples, those
+runs represent a different execution state and make the eight-pair aggregate
+unsuitable for estimating A11b.
+
+The six pairs remaining in the normal timing regime were:
+
+| Pair | B vs A |
+| --- | ---: |
+| 1 | -0.2715% |
+| 3 | -0.4547% |
+| 4 | +0.1741% |
+| 5 | -0.3758% |
+| 6 | +0.1106% |
+| 7 | +0.7067% |
+
+Descriptively:
+
+    candidate faster     3/6
+    baseline faster      3/6
+    mean B vs A         -0.0184%
+    median B vs A       -0.0805%
+    range               -0.4547% .. +0.7067%
+
+These six observations are not promoted to a replacement formal estimator.
+They demonstrate only that, once the clearly different 417 ns/node process
+state does not dominate the arithmetic, the real-data measurements show no
+robust directional advantage.
+
+### Classification
+
+**DROP.**
+
+A11b established that:
+
+1. canonical packed DenseInfo is common in the sampled corpus;
+2. preflight-discovered packed spans can eliminate a real fixed per-group cost;
+3. the small-group `1/N` experiment demonstrates that mechanism strongly; and
+4. the runtime-selected v2 avoids the unacceptable template expansion of v1.
+
+However, the measured real workload contains approximately 7,896 DenseInfo
+nodes per group. At that scale the fixed saving is heavily amortized.
+
+No reproducible real-PBF advantage remained above ordinary sub-percent
+run-to-run variation, while the candidate still added generated code,
+canonical-layout provenance, and a second cursor-construction path.
+
+The tradeoff therefore does not satisfy the project's requirement that
+hot-path complexity be justified by reproducible benchmark evidence on an
+actual consumer workload.
+
+The A11b production changes are not retained. Production remains at the A11a
+implementation from `a5edcf9`.
+
+This negative result is retained deliberately. The idea should be reconsidered
+only if a future measured consumer has materially smaller DenseInfo groups, or
+if preflight structure can be reused with substantially less additional
+production complexity.
