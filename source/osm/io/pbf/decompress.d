@@ -28,13 +28,21 @@ import osm.io.pbf.error : PbfError, PbfStatus;
 /** Ownership/lifetime source of bytes returned by `decodeBlobPayloadInto`. */
 enum BlobPayloadStorage : ubyte
 {
+    /// No successful payload backing has been established.
+    none = 0xff,
     /// Bytes borrow the serialized Blob's raw field.
-    borrowedBlob,
+    borrowedBlob = 0,
     /// Bytes borrow the caller-provided output buffer.
-    callerBuffer,
+    callerBuffer = 1,
 }
 
-/** Borrowed view of validated uncompressed Blob payload bytes. */
+/**
+ * Borrowed view of validated uncompressed Blob payload bytes.
+ *
+ * `BlobPayloadView.init` is a safe inert no-payload state: `bytes` is empty,
+ * `storage` is `BlobPayloadStorage.none`, and `sourceCodec` is `BlobCodec.none`.
+ * `storage` describes a backing store only after successful payload decoding.
+ */
 struct BlobPayloadView
 {
     /// Uncompressed protobuf payload bytes.
@@ -43,6 +51,18 @@ struct BlobPayloadView
     BlobPayloadStorage storage;
     /// Representation from which the payload was obtained.
     BlobCodec sourceCodec;
+}
+
+unittest
+{
+    static assert(BlobPayloadStorage.init == BlobPayloadStorage.none);
+    static assert(cast(ubyte)BlobPayloadStorage.borrowedBlob == 0);
+    static assert(cast(ubyte)BlobPayloadStorage.callerBuffer == 1);
+
+    const payload = BlobPayloadView.init;
+    assert(payload.bytes.length == 0);
+    assert(payload.storage == BlobPayloadStorage.none);
+    assert(payload.sourceCodec == BlobCodec.none);
 }
 
 /**
@@ -283,6 +303,9 @@ unittest
     ubyte[4] tooSmall;
     assert(!decodeBlobPayloadInto(blob, tooSmall[], payload, status));
     assert(status.error == PbfError.outputBufferTooSmall);
+    assert(payload.bytes.length == 0);
+    assert(payload.storage == BlobPayloadStorage.none);
+    assert(payload.sourceCodec == BlobCodec.none);
 
     // Declared raw_size is larger than the actual decoded stream.
     const(ubyte)[] wrongSize = [
