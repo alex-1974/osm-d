@@ -39,6 +39,7 @@ struct TagView
 }
 
 /** Shape validated for one normal element's parallel tag arrays. */
+package(osm)
 struct TagValidationSummary
 {
     /// Logical key count after concatenating packed/unpacked occurrences.
@@ -118,6 +119,7 @@ public:
  * and unused. Every other ID must resolve in the supplied StringTable, and the
  * logical key/value counts must be equal.
  */
+package(osm)
 bool validateTags(
     const(ubyte)[] input,
     size_t baseOffset,
@@ -175,6 +177,7 @@ bool validateTags(
  * `summary` must come from `validateTags` for the same bytes, unchanged since
  * validation, and the same StringTable.
  */
+package(osm)
 bool buildTagRange(
     const(ubyte)[] input,
     size_t baseOffset,

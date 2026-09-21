@@ -17,7 +17,7 @@
  * Copyright: Copyright © 2026 Alexander Bernardi
  * License: MIT
  */
-module benchmark.micro.regular_nodes;
+module osm.benchmark.micro.regular_nodes;
 
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :

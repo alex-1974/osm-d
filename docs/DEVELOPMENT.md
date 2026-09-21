@@ -58,6 +58,28 @@ consumers. Stable direct imports, callable parameter names, template
 instantiability, and representative named-argument forms must then be protected
 by external-consumer compile tests across the supported compiler matrix.
 
+## Public API surface
+
+During pre-1.0 development, the package root `osm` remains intentionally small;
+it does not re-export every technically importable implementation module.
+
+Consumer-facing code should use documented high-level decoders, borrowed views,
+ranges, status types, and format-independent contracts. Low-level validation
+summaries and validate/prevalidated-build entry points are implementation
+details when they exist only to carry proof from one internal decoding pass to
+another. Such declarations use `package(osm)` where cross-module production use
+requires visibility and are not part of the supported public API.
+
+This distinction is correctness-relevant: callers must not be able to supply a
+freely fabricated validation summary through the ordinary supported API and
+thereby suppress data that is present in the encoded input.
+
+D `package` protection is an organizational/API boundary, not a security or
+provenance boundary. A separate source module can deliberately declare itself
+inside the same package namespace. Library correctness therefore does not treat
+`package(osm)` as protection against hostile code; it prevents ordinary external
+imports from depending on unsupported validation internals.
+
 ## Build profiles
 
 During early development keep correctness and performance work separable:

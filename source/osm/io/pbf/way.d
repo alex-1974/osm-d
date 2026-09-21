@@ -45,6 +45,7 @@ import osm.wire.field :
 import osm.wire.varint : readSVarint64, readVarint32, readVarint64;
 
 /** Validation summary for one Way's delta-coded node-reference column. */
+package(osm)
 struct WayRefValidationSummary
 {
     /// Number of logical refs after concatenating packed/unpacked occurrences.
@@ -54,6 +55,7 @@ struct WayRefValidationSummary
 }
 
 /** Validation summary for optional `LocationsOnWays` latitude/longitude columns. */
+package(osm)
 struct WayLocationValidationSummary
 {
     /// Number of logical latitude deltas.
@@ -229,7 +231,7 @@ public:
                 nextLon,
                 lonNano))
         {
-            // Immutable bytes and coordinate arithmetic were fully preflighted.
+            // The backing bytes and coordinate arithmetic were fully preflighted.
             _remaining = 0;
             _front = WayLocationView.init;
             return;
@@ -850,6 +852,7 @@ private bool parseWay(
 }
 
 /** Validate and checked-accumulate the complete logical Way `refs` column. */
+package(osm)
 bool validateWayRefs(
     const(ubyte)[] input,
     size_t baseOffset,
@@ -890,6 +893,7 @@ bool validateWayRefs(
 }
 
 /** Build a borrowed absolute-reference range from already validated Way bytes. */
+package(osm)
 bool buildWayRefRange(
     const(ubyte)[] input,
     size_t baseOffset,
@@ -944,6 +948,7 @@ bool buildWayRefRange(
  * advertisement of the `LocationsOnWays` optional feature is validated by the
  * file/header pipeline rather than this message-local decoder.
  */
+package(osm)
 bool validateWayLocations(
     ref const PrimitiveBlockLayout block,
     const(ubyte)[] input,
@@ -1052,6 +1057,7 @@ bool validateWayLocations(
 }
 
 /** Build the borrowed optional location range after successful preflight. */
+package(osm)
 bool buildWayLocationRange(
     ref const PrimitiveBlockLayout block,
     const(ubyte)[] input,
