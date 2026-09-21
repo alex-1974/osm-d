@@ -117,9 +117,12 @@ Detailed evidence and rejected alternatives are recorded in
 
 The format-independent borrowed `ElementView` identity contract is now in
 place, and the current DenseNode, regular Node, Way, and Relation PBF views
-conform to it without changing their codec-owned representations. Structural
-validation, the production parallel PBF reader and public range adapter,
-XML/osmChange support, and the compact editable store remain future work.
+conform to it without changing their codec-owned representations. The current
+PBF vertical slice performs fail-closed structural validation and complete
+per-group element preflight before observable sink emission. Dataset/reference
+and operation-specific validation remain separate higher layers. The production
+parallel PBF reader and public range adapter, XML/osmChange support, and the
+compact editable store remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
