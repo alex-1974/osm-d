@@ -22,10 +22,65 @@ The canonical local correctness checks are:
 dub test --compiler=dmd --force
 dub test --compiler=ldc2 --force
 dub build --compiler=ldc2 --build=release --force
+tests/run-dip1000-negative.sh
 ```
 
-CI does not currently define this matrix; until CI is introduced, these local
-checks are the authoritative compiler verification for repository changes.
+GitHub Actions runs the supported DMD/LDC matrix for pushes to `main` and pull
+requests. Each compiler job runs its unit tests and DIP1000 lifetime-negative
+checks; the LDC job additionally performs the release build.
+
+## Public module surface during pre-1.0
+
+D module visibility and package support are separate concerns. A source module
+being directly importable does not by itself make every declaration in that
+module part of a compatibility promise.
+
+The current pre-1.0 surface is classified as follows:
+
+- `osm` is the curated package root. It intentionally does not re-export the
+  evolving implementation surface yet.
+- `osm.view.element` is a supported semantic direct-import API. Its
+  `ElementType`, `OsmId`, and structural `isElementView` contract form the
+  format-independent borrowed element identity boundary described by ADR 0016.
+- `osm.io.pbf.*` is an evolving codec-development surface. Its documented
+  decoding APIs may be used directly during pre-1.0 development, but their
+  module organization and callable signatures are not frozen until the public
+  PBF reader/range boundary is established.
+- `osm.wire.*` and `osm.util.*` are implementation-oriented modules. They are
+  technically importable because D source modules are visible to consumers, but
+  no source-compatibility promise is made for direct external use.
+
+`package` visibility is not treated as a security, trust, or validated-state
+provenance boundary. Construction-controlled invariants must rely on actual
+representation/construction control rather than on a caller being outside a D
+package namespace.
+
+Before a stable API freeze, this classification must be reviewed against real
+consumers. Stable direct imports, callable parameter names, template
+instantiability, and representative named-argument forms must then be protected
+by external-consumer compile tests across the supported compiler matrix.
+
+## Public API surface
+
+During pre-1.0 development, the package root `osm` remains intentionally small;
+it does not re-export every technically importable implementation module.
+
+Consumer-facing code should use documented high-level decoders, borrowed views,
+ranges, status types, and format-independent contracts. Low-level validation
+summaries and validate/prevalidated-build entry points are implementation
+details when they exist only to carry proof from one internal decoding pass to
+another. Such declarations use `package(osm)` where cross-module production use
+requires visibility and are not part of the supported public API.
+
+This distinction is correctness-relevant: callers must not be able to supply a
+freely fabricated validation summary through the ordinary supported API and
+thereby suppress data that is present in the encoded input.
+
+D `package` protection is an organizational/API boundary, not a security or
+provenance boundary. A separate source module can deliberately declare itself
+inside the same package namespace. Library correctness therefore does not treat
+`package(osm)` as protection against hostile code; it prevents ordinary external
+imports from depending on unsupported validation internals.
 
 ## Build profiles
 

@@ -73,6 +73,7 @@ struct RelationMemberView
 
 
 /** Validation summary for one Relation's three parallel member columns. */
+package(osm)
 struct RelationMemberValidationSummary
 {
     /// Logical `roles_sid` count.
@@ -150,7 +151,7 @@ public:
             next,
             ignored))
         {
-            // Immutable bytes were completely preflighted before construction.
+            // The backing bytes were completely preflighted and must remain unchanged.
             _remaining = 0;
             _front = RelationMemberView.init;
             return;
@@ -456,6 +457,7 @@ private bool parseRelation(
  * StringTable ID zero is valid and denotes the empty role. Member IDs are
  * checked while reconstructing absolute IDs from signed deltas.
  */
+package(osm)
 bool validateRelationMembers(
     const(ubyte)[] input,
     size_t baseOffset,
@@ -563,9 +565,10 @@ bool validateRelationMembers(
 /**
  * Build a borrowed Relation member range from already validated bytes.
  *
- * `summary` must come from `validateRelationMembers` for the same immutable
+ * `summary` must come from `validateRelationMembers` for the same unchanged
  * bytes and StringTable.
  */
+package(osm)
 bool buildRelationMemberRange(
     const(ubyte)[] input,
     size_t baseOffset,

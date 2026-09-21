@@ -19,7 +19,7 @@
  * Copyright: Copyright © 2026 Alexander Bernardi
  * License: MIT
  */
-module benchmark.micro.regular_ways;
+module osm.benchmark.micro.regular_ways;
 
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :

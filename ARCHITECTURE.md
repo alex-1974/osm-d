@@ -113,15 +113,16 @@ There is no implicit materialization of every parsed element.
 
 | Area | Intended attributes |
 | --- | --- |
-| `wire/cursor.d` | tiny audited `@system` core, `@nogc`, `nothrow` where possible |
+| `wire/cursor.d` | `@safe`, `@nogc`, `nothrow`; slice-backed cursor with no raw-pointer core |
 | `wire/*` | `@safe` where possible, `@nogc`, benchmark-critical |
 | `io/pbf/dense.d` | `@nogc`, benchmark-critical |
 | `view/*` | `@safe`, borrowed, no ownership ambiguity |
 | `model/*` | `@safe`, owned values |
 | `store/compact/*` | allocation-controlled, cache-oriented |
 
-`@system` code must not spread through the library. Unsafe code is isolated,
-audited and fuzzed.
+`@system` or `@trusted` code must not spread through the library. Unsafe or
+trusted transitions are isolated, audited and fuzzed. The current production
+`@trusted` island is the bounded zlib C-API bridge in `io/pbf/decompress.d`.
 
 ## Validation stages
 

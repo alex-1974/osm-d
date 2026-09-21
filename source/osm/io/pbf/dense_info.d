@@ -68,6 +68,7 @@ struct DenseInfoView
 }
 
 /** Validated shape of the optional DenseInfo columns. */
+package(osm)
 struct DenseInfoValidationSummary
 {
     /// Number of values in the optional version column.
@@ -149,6 +150,7 @@ private struct DenseInfoPreflightState
  *   `true` when every present DenseInfo column is safe to decode; `false`
  *   otherwise.
  */
+package(osm)
 bool validateDenseInfo(
     ref const PrimitiveBlockLayout block,
     ref const PrimitiveGroupLayout group,
@@ -541,6 +543,7 @@ private bool validateColumnLength(
  * prevalidated path only while the validated block/group/StringTable backing is
  * unchanged.
  */
+package(osm)
 struct DenseInfoNodeCursor
 {
 private:
