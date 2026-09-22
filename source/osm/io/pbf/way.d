@@ -42,7 +42,11 @@ import osm.wire.field :
     readFieldHeader,
     readLengthDelimited,
     skipFieldValue;
-import osm.wire.varint : readSVarint64, readVarint32, readVarint64;
+import osm.wire.varint :
+    readSVarint64,
+    readSVarint64FailureOnly,
+    readVarint32,
+    readVarint64;
 
 /** Validation summary for one Way's delta-coded node-reference column. */
 package(osm)
@@ -457,7 +461,7 @@ private bool countPrevalidatedPackedSInt64(
     {
         long ignored;
         WireStatus wire;
-        if (!readSVarint64(packed, ignored, wire))
+        if (!readSVarint64FailureOnly(packed, ignored, wire))
         {
             if (wire.fieldNumber == 0)
                 wire.fieldNumber = fieldNumber;
@@ -575,7 +579,7 @@ private bool decodePrevalidatedWay(
             field.wireType == WireType.varint)
         {
             long ignored;
-            if (!readSVarint64(cursor, ignored, wire))
+            if (!readSVarint64FailureOnly(cursor, ignored, wire))
             {
                 if (wire.fieldNumber == 0)
                     wire.fieldNumber = field.number;
