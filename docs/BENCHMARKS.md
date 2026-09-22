@@ -188,6 +188,164 @@ The first reference set should include:
 Do not compare `parse` on one implementation with `parse + text serialization`
 on another and call it parser throughput.
 
+## First whole-PBF decode-count comparison with libosmium
+
+The first Phase-2 libosmium comparison was established on 2026-09-22 from the
+pinned Geofabrik 2026-09-01 corpus. The implementation work started from
+`389fb4b`.
+
+The comparison scenario is the repository's `decode-count` workload:
+
+```text
+already-loaded compressed PBF bytes
+-> complete library decode
+-> integrity checks
+-> count nodes / ways / relations / tags
+```
+
+Filesystem input is deliberately outside the measured parser region. Both
+executables load the complete compressed PBF before their untimed warm-up and
+measured decode. Framing and blob decompression remain inside the decode.
+
+The osm-d side uses the production PBF implementation:
+
+```text
+framing
+-> Blob validation/decompression
+-> HeaderBlock + required-feature validation
+-> PrimitiveBlock/StringTable
+-> PrimitiveGroup structural validation
+-> complete Node/Way/Relation/DenseNodes preflight + emission
+-> counts
+```
+
+The sink does not construct an owned OSM model.
+
+The libosmium reference uses the installed libosmium 2.23.0 PBF decoder
+directly. It parses PBF framing from the same already-loaded compressed bytes,
+validates and decodes the HeaderBlock, passes every OSMData Blob through
+`PBFDataBlobDecoder` with metadata enabled, drains the complete nested
+`osmium::memory::Buffer` chain and counts the resulting entities and tags.
+
+This is a **library-level semantic comparison**, not a claim that both
+implementations execute identical internal work. In particular, libosmium's
+normal PBF primitive decoder materializes its decoded entities into
+`osmium::memory::Buffer`; osm-d exposes borrowed views to the benchmark sink
+without equivalent owned-object materialization. The common contract is the
+same compressed input, complete semantic decode and the same observable
+entity/tag counts.
+
+### Why the reference bypasses `osmium::io::Reader` for whole-buffer input
+
+An earlier experimental reference passed the entire in-memory PBF to
+`osmium::io::Reader`.
+
+Inspection and profiling of libosmium 2.23.0 showed that this is a poor match
+for an already-loaded whole-buffer benchmark: the memory-input path receives
+the complete file in one `std::string`, while the PBF parser repeatedly removes
+consumed prefixes. On Bremen this caused `memmove` to dominate the profile and
+made the reference result depend on an input-plumbing artifact rather than the
+PBF decoder.
+
+The retained reference therefore performs the PBF framing synchronously over
+the already-loaded bytes and invokes libosmium's actual Blob/Header/Primitive
+decoders directly. Blob copies required by `PBFDataBlobDecoder` remain inside
+the measured decode.
+
+This also removes the Reader parser/pool helper threads from this reference
+scenario. CPU affinity can therefore constrain the complete reference decode
+to one logical CPU in the same way as osm-d.
+
+### Semantic parity gate
+
+Before timing, both implementations were required to produce identical counts
+on every initially pinned real dataset:
+
+| Dataset | Nodes | Ways | Relations | Tags | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Monaco | 41,703 | 6,249 | 348 | 44,946 | PASS |
+| Liechtenstein | 361,543 | 42,051 | 973 | 210,505 | PASS |
+| Bremen | 1,662,874 | 328,626 | 5,985 | 2,073,595 | PASS |
+| Austria | 87,627,541 | 9,359,891 | 180,296 | 43,979,849 | PASS |
+
+The file-level block counts also matched where compared. Austria contains
+12,147 OSMData blocks.
+
+### First Bremen diagnostic comparison
+
+Bremen is the primary city/editor-scale input.
+
+A five-block balanced ABBA/BAAB run pinned both processes to logical CPU 5
+produced:
+
+```text
+osm-d median        1462.323 ms
+libosmium median     573.377 ms
+median ratio           2.550
+```
+
+These wall-clock numbers are **diagnostic rather than a published stable
+throughput baseline**. During that run CPU 5 frequency moved between roughly
+0.8 and 3.0 GHz under Intel HWP/turbo control, and both distributions contained
+large outliers.
+
+A subsequent seven-run `perf stat` comparison on the same pinned CPU provided
+much more stable evidence about retired work. The counters cover the complete
+benchmark process rather than only the internal stopwatch region, so they are
+also classified as diagnostic:
+
+| Counter | osm-d | libosmium | osm-d / libosmium |
+| --- | ---: | ---: | ---: |
+| instructions | 19.381 B | 7.178 B | 2.70x |
+| cycles | 8.862 B | 3.578 B | 2.48x |
+| branches | 2.918 B | 1.312 B | 2.22x |
+| branch misses | 49.164 M | 36.184 M | 1.36x |
+
+Derived process-wide values were approximately:
+
+```text
+osm-d IPC                 2.19
+libosmium IPC             2.01
+
+osm-d branch-miss rate    1.68%
+libosmium branch-miss     2.76%
+```
+
+The first useful conclusion is therefore not that branch prediction is the
+primary osm-d problem. osm-d retires substantially more instructions and
+branches while maintaining comparable-or-higher IPC and a lower branch-miss
+rate. Follow-up profiling consequently targets duplicated validation/wire work
+before considering lower-level branch tuning.
+
+This first comparison establishes the Phase-2 reference baseline. It does not
+claim that the production performance target has been reached.
+
+### Reproducing the comparison
+
+`benchmark/run-parser-decode-count.sh` builds the LDC osm-d executable and the
+Clang/libosmium reference, verifies the selected pinned dataset, checks
+semantic parity and runs a balanced series.
+
+For the primary city dataset:
+
+```bash
+D_OSM_BENCH_CPU=5 \
+D_OSM_BENCH_SENSORS=1 \
+D_OSM_BENCH_DATASET=bremen-260901 \
+./benchmark/run-parser-decode-count.sh
+```
+
+The runner defaults to five balanced blocks. `D_OSM_BENCH_BLOCKS` can change
+that count. Raw per-process samples are written as CSV under ignored
+`benchmark/results/` storage, including dataset ID, block number, position,
+balanced order, implementation and elapsed nanoseconds. `D_OSM_BENCH_RUN_ID`
+can provide a stable caller-selected result identifier.
+
+The descriptive summary reports min, p10, p50, p90, max and
+`Delta80 = (p90 - p10) / p50`, plus the median osm-d/libosmium ratio and
+relative throughput. Unstable wall-clock distributions must not be promoted to
+a performance claim merely because a median can be computed.
+
 ## Controlled microbenchmark environment
 
 For nanosecond-scale CPU microbenchmarks:
