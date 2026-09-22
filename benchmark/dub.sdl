@@ -79,3 +79,12 @@ configuration "regular-way-stages" {
     mainSourceFile "micro/regular_ways.d"
     versions "RegularWayStageBenchmark"
 }
+
+configuration "parser-decode-count" {
+    targetType "executable"
+    targetName "osm-d-bench-decode-count"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/decode_count.d"
+}

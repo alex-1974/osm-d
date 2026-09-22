@@ -36,7 +36,7 @@
 - [x] Relation decode.
 - [x] Borrowed `ElementView` identity contract and PBF view conformance.
 - [x] PBF structural and per-element preflight validation.
-- [ ] First single-thread comparison with libosmium.
+- [x] First single-thread comparison with libosmium.
 
 ## Phase 3 — Production PBF reader
 
