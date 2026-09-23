@@ -2970,3 +2970,317 @@ This negative result is retained deliberately. The idea should be reconsidered
 only if a future measured consumer has materially smaller DenseInfo groups, or
 if preflight structure can be reused with substantially less additional
 production complexity.
+
+## Regular Way hot-path research: preflight reuse and canonical packed spans (2026-09-23)
+
+### Motivation
+
+The first whole-PBF comparison showed that regular Way decoding remained a
+material single-thread cost. Profiling then localized the regular-Way hot path
+to repeated protobuf traversal rather than allocation.
+
+The production decoder deliberately preserves fail-closed group semantics:
+every Way in a PrimitiveGroup is semantically preflighted before the first Way
+is emitted. The baseline implementation was correct, but its phase boundary
+discarded almost all structural information discovered during preflight.
+
+For one Way, the generic path could therefore traverse the same message many
+times:
+
+1. the initial Way scan for singular fields and `Info`;
+2. a keys cursor;
+3. a values cursor;
+4. a refs cursor;
+5. a latitude cursor;
+6. a longitude cursor;
+7. a later emission scan; and
+8. fresh repeated-field searches while constructing borrowed ranges.
+
+The research question was whether preflight should produce a reusable emission
+plan rather than only semantic counts and final accumulated values.
+
+### Constraints
+
+The experiment did not weaken the protobuf or PBF compatibility contract.
+
+Production must continue to accept legal repeated scalar representation in:
+
+- packed form;
+- unpacked form;
+- multiple packed segments;
+- mixed legal occurrence order; and
+- input containing unknown or known fields with non-matching wire types where
+  protobuf/PBF semantics require them to be skipped.
+
+The canonical path researched here is therefore an optimization capability.
+Non-canonical legal input requires the existing general decoder or an
+equivalent correctness-preserving fallback.
+
+The fail-closed PrimitiveGroup contract also remains mandatory: no observable
+sink emission may occur until the complete group has passed preflight.
+
+### Real-corpus shape probe
+
+Before constructing the canonical benchmark ceiling, four pinned Geofabrik
+extracts were inspected: Monaco, Liechtenstein, Bremen and Austria.
+
+Across 9,736,817 observed Ways:
+
+- refs were represented by one packed repeated occurrence per Way;
+- keys and values, when present, were each represented by one packed
+  occurrence;
+- `Info` occurred at most once;
+- no Way latitude/longitude columns were present in this corpus;
+- no unknown or mismatched Way fields were observed; and
+- every observed Way satisfied the probe's direct-slice eligibility test.
+
+This is evidence that a canonical fast path is relevant to the measured corpus.
+It is not evidence that non-canonical legal protobuf forms can be removed.
+
+The same corpus also showed that regular-Way groups are commonly packed close
+to 8,000 Ways. This makes per-Way plan size important as well as decode time.
+
+### Baseline structural finding
+
+The production validation summaries retain semantic outcomes but not repeated
+field locations:
+
+- `TagValidationSummary` retains key/value counts;
+- `WayRefValidationSummary` retains ref count and final accumulated ref;
+- `WayLocationValidationSummary` retains latitude/longitude counts and final
+  accumulated values.
+
+The repeated-field validators therefore discover the target fields and then
+discard that discovery state. Emission subsequently performs new message-wide
+searches for the same columns.
+
+This established the architectural hypothesis:
+
+> successful preflight should be able to publish compact, block-relative
+> structural information that emission can reuse.
+
+### Benchmark-local decomposition stages
+
+`benchmark/micro/regular_ways.d` was extended with diagnostic stages only.
+Production decoding was not changed by this research branch.
+
+The important stages are:
+
+- `semantic-preflight`: benchmark-local mirror of the existing generic semantic
+  preflight;
+- `canonical-one-scan-preflight`: validates the deterministic canonical
+  single-packed workload while traversing each Way message once;
+- `cached-summary`: retains the complete parsed semantic result per Way;
+- `cached-compact`: retains an 80-byte compact semantic plan;
+- `compact-emission`: emits from a previously prepared compact plan;
+- `ref-range-emission`: isolates the current generic `WayRefRange` construction
+  and traversal;
+- `packed-refs-emission`: emits refs directly from a previously discovered
+  packed field-8 payload; and
+- `canonical-cached-packed-refs`: integrated fail-closed ceiling combining
+  one-scan preflight, compact-plan writes, packed-ref span retention, complete
+  group validation and direct refs emission.
+
+The historical `--stage=all` rotation is deliberately unchanged. Experimental
+candidate stages are selected explicitly.
+
+### Compact plan
+
+The balanced compact candidate is:
+
+    StageCompactWay       80 bytes
+    StagePackedRefs        8 bytes
+    ------------------------------
+    researched plan       88 bytes/Way
+
+At 8,000 Ways this is 704,000 bytes, approximately 687.5 KiB of reusable
+worker-local scratch.
+
+`StageCompactWay` retains:
+
+- Way ID;
+- finalized compact `Info` state;
+- raw Way offset and length;
+- tag count;
+- ref count; and
+- location count.
+
+`StagePackedRefs` retains only a block-relative packed refs payload offset and
+length.
+
+No `WayView`, `WayRefRange`, tag range, location range or materialized ref array
+is cached.
+
+### One-scan preflight result
+
+A controlled paired-order run compared the existing semantic preflight with the
+canonical one-message-scan ceiling.
+
+Environment:
+
+- LDC 1.41.0;
+- D frontend 2.111.0;
+- LLVM 19.1.7;
+- logical CPU 5 via `taskset`;
+- execution gated to package temperature <= 68 C before each stage;
+- Brave processes paused during the run;
+- 20,000 Ways/profile;
+- 3 iterations/sample;
+- 30 samples;
+- 2 warm-up iterations; and
+- both forward and reverse stage order.
+
+Mean of the two p50 phase medians:
+
+| Profile | generic semantic preflight | canonical one-scan | Reduction |
+| --- | ---: | ---: | ---: |
+| ref-only | 300.66 ns/Way | 97.65 ns/Way | 67.5% |
+| typical | 498.98 ns/Way | 143.58 ns/Way | 71.2% |
+| typical-info | 649.07 ns/Way | 226.07 ns/Way | 65.2% |
+| locations | 1062.80 ns/Way | 457.46 ns/Way | 57.0% |
+| rich | 1914.73 ns/Way | 1258.01 ns/Way | 34.3% |
+
+The diagnostic preflight checksum matched between the two preflight
+implementations for every profile.
+
+The result is large enough that repeated whole-message searches are an
+architectural cost, not a marginal cursor micro-optimization.
+
+### Emission decomposition
+
+A second controlled experiment separated three increasingly direct emission
+paths after compact-plan preparation:
+
+1. the general compact emission path;
+2. refs-only emission through the current generic `WayRefRange`; and
+3. direct emission from the preflight-known packed refs payload.
+
+Mean p50 values from the paired A/B run were:
+
+| Profile | compact emission | current ref range | direct packed refs |
+| --- | ---: | ---: | ---: |
+| ref-only | 142.21 | 107.80 | 28.20 |
+| typical | 266.48 | 137.18 | 28.01 |
+| typical-info | 295.96 | 163.83 | 36.71 |
+| locations | 555.26 | 163.72 | 36.32 |
+| rich | 654.50 | 262.25 | 90.47 |
+
+Units are ns/Way.
+
+This shows two separate costs:
+
+- construction of unused tag/location ranges can dominate a sink that observes
+  only refs; and
+- even after isolating refs, rediscovering field 8 through the generic repeated
+  cursor is substantially more expensive than starting from a validated packed
+  payload descriptor.
+
+The direct-packed stage is a performance ceiling. It is not itself a proposed
+public API and does not replace the generic compatibility path.
+
+### Integrated fail-closed ceiling
+
+The final synthetic experiment tested the complete architectural idea rather
+than adding independently measured stage medians.
+
+`canonical-cached-packed-refs` includes inside its timed region:
+
+1. complete canonical semantic preflight;
+2. writing the 80-byte compact Way plan;
+3. writing the 8-byte packed refs descriptor;
+4. complete-group aggregate validation;
+5. publication of the plan only after successful group validation; and
+6. direct packed refs emission with the same RefSink-observable semantics as
+   production `full-decode`.
+
+Only scratch allocation is excluded.
+
+The controlled setup was:
+
+- LDC 1.41.0 / frontend 2.111.0 / LLVM 19.1.7;
+- logical CPU 5;
+- <= 68 C pre-stage thermal gate;
+- Brave paused;
+- 20,000 Ways/profile;
+- 3 iterations/sample;
+- 30 samples;
+- 2 warm-up iterations; and
+- order A:
+  one-scan -> integrated -> production;
+- order B:
+  production -> integrated -> one-scan.
+
+Mean of the two p50 phase medians:
+
+| Profile | one-scan preflight | integrated plan+emission | production full-decode | Integrated vs production |
+| --- | ---: | ---: | ---: | ---: |
+| ref-only | 98.413 | 132.174 | 506.593 | -73.9% |
+| typical | 142.945 | 178.497 | 888.180 | -79.9% |
+| typical-info | 220.611 | 268.974 | 1143.009 | -76.5% |
+| locations | 453.319 | 503.629 | 1872.137 | -73.1% |
+| rich | 1210.095 | 1320.606 | 2951.322 | -55.3% |
+
+Units are ns/Way.
+
+The integrated overhead relative to the one-scan preflight itself was:
+
+| Profile | Integrated overhead over one-scan |
+| --- | ---: |
+| ref-only | 34.3% |
+| typical | 24.9% |
+| typical-info | 21.9% |
+| locations | 11.1% |
+| rich | 9.1% |
+
+The paired orders were directionally consistent. The integrated stage and
+production `full-decode` produced the same RefSink checksum in every profile.
+
+### Interpretation
+
+The experiments support a stronger conclusion than "optimize the repeated-field
+cursor."
+
+The dominant regular-Way opportunity is the phase boundary itself:
+
+> preflight should produce a compact reusable emission plan instead of
+> validating serialized structure and then forcing emission to rediscover it.
+
+For the canonical form, one Way message scan can both validate the repeated
+payloads and retain their exact block-relative locations. Emission can then
+start directly from preflight-proven payloads instead of searching the message
+again.
+
+The 88-byte researched plan also preserves bounded-memory behavior. It is
+dramatically smaller than retaining the existing approximately 704-byte
+`WayView` per Way and materially smaller than the earlier complete
+`StageParsedWay` cache experiment.
+
+### Classification
+
+**PROCEED TO A PRODUCTION PROTOTYPE; NOT YET KEEP.**
+
+The synthetic evidence is strong and consistent enough to justify implementing
+a package-internal production prototype around this architecture.
+
+It is not yet sufficient to retain a production optimization, because the next
+candidate must additionally prove:
+
+1. exact semantic equivalence on malformed and unusual legal protobuf inputs;
+2. fallback correctness for packed, unpacked, segmented and mixed repeated
+   occurrences;
+3. no weakening of fail-closed group emission;
+4. no public API regression;
+5. acceptable code-size impact;
+6. real-PBF semantic parity on the pinned corpus; and
+7. reproducible real-PBF and whole-parser performance improvement against the
+   current production baseline and, where equivalent, the libosmium reference.
+
+The intended production shape is therefore:
+
+    generic correctness path
+            +
+    runtime-detected canonical packed fast path
+            +
+    compact preflight-produced emission plan
+
+Canonical form must remain an optimization capability, never a validity rule.

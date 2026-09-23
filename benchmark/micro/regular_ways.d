@@ -40,6 +40,7 @@ import osm.wire.field :
     readLengthDelimited,
     skipFieldValue;
 import osm.wire.varint : readSVarint64, readVarint32, readVarint64;
+import osm.util.checked : checkedAdd, checkedMulAdd;
 import osm.io.pbf.primitive_block :
     PrimitiveBlockLayout,
     decodePrimitiveBlockLayout;
@@ -138,7 +139,14 @@ version (RegularWayStageBenchmark)
     {
         groupScan,
         semanticPreflight,
+        canonicalOneScanPreflight,
         prevalidatedEmission,
+        cachedSummary,
+        cachedCompact,
+        compactEmission,
+        refRangeEmission,
+        packedRefsEmission,
+        canonicalCachedPackedRefs,
         fullDecode,
     }
 
@@ -166,6 +174,89 @@ version (RegularWayStageBenchmark)
         TagValidationSummary tags;
         WayRefValidationSummary refs;
         WayLocationValidationSummary locations;
+    }
+
+    /**
+     * Benchmark-local cached result of one completely validated Way.
+     *
+     * The cache deliberately stores only state already produced by semantic
+     * preflight plus the borrowed message reference. It does not cache a
+     * WayView or materialize refs/tags/locations.
+     */
+    private struct StageCachedWay
+    {
+        StageWayMessageRef wayRef;
+        StageParsedWay parsed;
+    }
+
+    /**
+     * Compact lossless semantic Info state retained after successful preflight.
+     *
+     * Timestamp scaling and user StringTable resolution have already been
+     * validated. They can therefore be reconstructed during emission without
+     * re-reading the embedded protobuf Info message.
+     */
+    private struct StageCompactInfo
+    {
+        long timestampValue;
+        long timestampMillis;
+        long changeset;
+        StringRef user;
+        int version_;
+        int uid;
+        uint userSid;
+        ubyte flags;
+    }
+
+    private enum ubyte stageInfoHasVersion   = 1u << 0;
+    private enum ubyte stageInfoHasTimestamp = 1u << 1;
+    private enum ubyte stageInfoHasChangeset = 1u << 2;
+    private enum ubyte stageInfoHasUid       = 1u << 3;
+    private enum ubyte stageInfoHasUser      = 1u << 4;
+    private enum ubyte stageInfoHasVisible   = 1u << 5;
+    private enum ubyte stageInfoVisibleValue = 1u << 6;
+
+    /**
+     * Compact per-Way validated plan.
+     *
+     * `rawOffset` and `rawLength` are relative to PrimitiveGroupLayout.raw.
+     * The production PrimitiveBlock hard limit is below 32 MiB, so uint is
+     * sufficient for these offsets and for all per-Way logical value counts.
+     */
+    private struct StageCompactWay
+    {
+        long id;
+        StageCompactInfo info;
+        uint rawOffset;
+        uint rawLength;
+        uint tagCount;
+        uint refCount;
+        uint locationCount;
+    }
+
+    static assert(StageCompactInfo.sizeof == 48);
+    static assert(StageCompactWay.sizeof == 80);
+
+    /**
+     * Canonical packed refs payload discovered outside the timed emission
+     * ceiling. Offset is relative to PrimitiveGroupLayout.raw.
+     */
+    private struct StagePackedRefs
+    {
+        uint offset;
+        uint length;
+    }
+
+    static assert(StagePackedRefs.sizeof == 8);
+
+    /** Reusable storage provisioned outside the timed candidate region. */
+    private struct StageScratch
+    {
+        StageCachedWay[] cachedWays;
+        StageCompactWay[] compactWays;
+        StagePackedRefs[] packedRefs;
+        size_t compactCount;
+        size_t packedRefCount;
     }
 
     /** Benchmark-local mirror of the private production WayMessageCursor. */
@@ -1425,6 +1516,734 @@ version (RegularWayStageBenchmark)
             info.hasUid || info.hasUser || info.hasVisible;
     }
 
+    pragma(inline, true)
+    private StageCompactInfo stageCompactInfoFromView(
+        ref const InfoView info,
+        StringTableView table)
+        @safe pure nothrow @nogc
+    {
+        StageCompactInfo compact;
+        compact.timestampValue = info.timestampValue;
+        compact.timestampMillis = info.timestampMillis;
+        compact.changeset = info.changeset;
+        compact.version_ = info.version_;
+        compact.uid = info.uid;
+        compact.userSid = info.userSid;
+
+        if (info.hasUser)
+        {
+            const index = cast(size_t)info.userSid;
+            if (index < table.entries.length)
+                compact.user = table.entries[index];
+        }
+
+        if (info.hasVersion)
+            compact.flags |= stageInfoHasVersion;
+        if (info.hasTimestamp)
+            compact.flags |= stageInfoHasTimestamp;
+        if (info.hasChangeset)
+            compact.flags |= stageInfoHasChangeset;
+        if (info.hasUid)
+            compact.flags |= stageInfoHasUid;
+        if (info.hasUser)
+            compact.flags |= stageInfoHasUser;
+        if (info.hasVisible)
+            compact.flags |= stageInfoHasVisible;
+        if (info.visible)
+            compact.flags |= stageInfoVisibleValue;
+
+        return compact;
+    }
+
+    pragma(inline, true)
+    private bool stageExpandCompactInfo(
+        StageCompactInfo compact,
+        ref const PrimitiveBlockLayout block,
+        StringTableView table,
+        out InfoView info)
+        @safe nothrow @nogc
+    {
+        info = InfoView.init;
+
+        if (compact.flags & stageInfoHasVersion)
+        {
+            info.hasVersion = true;
+            info.version_ = compact.version_;
+        }
+
+        if (compact.flags & stageInfoHasTimestamp)
+        {
+            info.hasTimestamp = true;
+            info.timestampValue = compact.timestampValue;
+            info.timestampMillis = compact.timestampMillis;
+        }
+
+        if (compact.flags & stageInfoHasChangeset)
+        {
+            info.hasChangeset = true;
+            info.changeset = compact.changeset;
+        }
+
+        if (compact.flags & stageInfoHasUid)
+        {
+            info.hasUid = true;
+            info.uid = compact.uid;
+        }
+
+        if (compact.flags & stageInfoHasUser)
+        {
+            const start = cast(size_t)compact.user.offset;
+            const length = cast(size_t)compact.user.length;
+
+            if (start > block.raw.length ||
+                length > block.raw.length - start)
+                return false;
+
+            info.hasUser = true;
+            info.userSid = compact.userSid;
+            info.user = block.raw[start .. start + length];
+        }
+
+        if (compact.flags & stageInfoHasVisible)
+        {
+            info.hasVisible = true;
+            info.visible =
+                (compact.flags & stageInfoVisibleValue) != 0;
+        }
+
+        return true;
+    }
+
+    pragma(inline, true)
+    private bool stageValidateCanonicalPackedTagIds(
+        const(ubyte)[] payload,
+        size_t payloadBase,
+        uint fieldNumber,
+        StringTableView table,
+        ref size_t count,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        auto packed = WireCursor(payload);
+
+        while (!packed.empty)
+        {
+            const valueOffset = payloadBase + packed.offset;
+
+            uint sid;
+            WireStatus wire;
+            if (!readVarint32(packed, sid, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = fieldNumber;
+                status = PbfStatus.fromTagWire(wire, payloadBase);
+                return false;
+            }
+
+            if (sid == 0)
+            {
+                status = PbfStatus.failure(
+                    PbfError.invalidTagStringId,
+                    valueOffset,
+                    fieldNumber);
+                return false;
+            }
+
+            if (cast(size_t)sid >= table.length)
+            {
+                status = PbfStatus.failure(
+                    PbfError.tagStringIdOutOfRange,
+                    valueOffset,
+                    fieldNumber);
+                return false;
+            }
+
+            ++count;
+        }
+
+        status = PbfStatus.init;
+        return true;
+    }
+
+    pragma(inline, true)
+    private bool stageValidateCanonicalPackedRefs(
+        const(ubyte)[] payload,
+        size_t payloadBase,
+        ref WayRefValidationSummary summary,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        auto packed = WireCursor(payload);
+        long current;
+
+        while (!packed.empty)
+        {
+            const valueOffset = payloadBase + packed.offset;
+
+            long delta;
+            WireStatus wire;
+            if (!readSVarint64(packed, delta, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = 8;
+                status = PbfStatus.fromWayWire(wire, payloadBase);
+                return false;
+            }
+
+            long next;
+            if (!checkedAdd(current, delta, next))
+            {
+                status = PbfStatus.failure(
+                    PbfError.wayRefOverflow,
+                    valueOffset,
+                    8);
+                return false;
+            }
+
+            current = next;
+            ++summary.refCount;
+        }
+
+        summary.finalRef = current;
+        status = PbfStatus.init;
+        return true;
+    }
+
+    pragma(inline, true)
+    private bool stageValidateCanonicalPackedCoordinate(
+        const(ubyte)[] payload,
+        size_t payloadBase,
+        uint fieldNumber,
+        long coordinateOffset,
+        uint granularity,
+        ref size_t count,
+        out long finalValue,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        auto packed = WireCursor(payload);
+        long current;
+
+        while (!packed.empty)
+        {
+            const valueOffset = payloadBase + packed.offset;
+
+            long delta;
+            WireStatus wire;
+            if (!readSVarint64(packed, delta, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = fieldNumber;
+                status = PbfStatus.fromWayWire(wire, payloadBase);
+                return false;
+            }
+
+            long next;
+            if (!checkedAdd(current, delta, next))
+            {
+                status = PbfStatus.failure(
+                    PbfError.wayCoordinateOverflow,
+                    valueOffset,
+                    fieldNumber);
+                return false;
+            }
+
+            long ignoredNano;
+            if (!checkedMulAdd(
+                coordinateOffset,
+                cast(long)granularity,
+                next,
+                ignoredNano))
+            {
+                status = PbfStatus.failure(
+                    PbfError.wayCoordinateOverflow,
+                    valueOffset,
+                    fieldNumber);
+                return false;
+            }
+
+            current = next;
+            ++count;
+        }
+
+        finalValue = current;
+        status = PbfStatus.init;
+        return true;
+    }
+
+    /**
+     * Canonical one-message-scan semantic preflight ceiling.
+     *
+     * This benchmark-only path accepts the deterministic workload shape:
+     * each repeated Way column is absent or represented by exactly one packed
+     * length-delimited occurrence. Values are validated directly while that
+     * occurrence is encountered.
+     *
+     * Production must retain a fallback for legal segmented and unpacked forms.
+     */
+    private bool stageParseWayCanonicalOneScan(
+        ref const PrimitiveBlockLayout block,
+        StageWayMessageRef wayRef,
+        StringTableView table,
+        out StageParsedWay parsed,
+        out StagePackedRefs packedRefs,
+        out PbfStatus status)
+        @safe nothrow @nogc
+    {
+        parsed = StageParsedWay.init;
+        packedRefs = StagePackedRefs.init;
+        auto cursor = WireCursor(wayRef.bytes);
+
+        bool hasId;
+        bool seenKeys;
+        bool seenVals;
+        bool seenRefs;
+        bool seenLats;
+        bool seenLons;
+
+        while (!cursor.empty)
+        {
+            FieldHeader field;
+            WireStatus wire;
+            if (!readFieldHeader(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+
+            if (field.number == 1 && field.wireType == WireType.varint)
+            {
+                ulong raw;
+                if (!readVarint64(cursor, raw, wire))
+                {
+                    if (wire.fieldNumber == 0)
+                        wire.fieldNumber = field.number;
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+
+                parsed.id = cast(long)raw;
+                hasId = true;
+                continue;
+            }
+
+            if (field.number == 4 &&
+                field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] infoBytes;
+                if (!readLengthDelimited(
+                    cursor,
+                    field.number,
+                    infoBytes,
+                    wire))
+                {
+                    status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                    return false;
+                }
+
+                const infoOffset =
+                    wayRef.rawOffset + cursor.offset - infoBytes.length;
+
+                if (!mergeInfoMessage(
+                    infoBytes,
+                    infoOffset,
+                    parsed.info,
+                    status))
+                    return false;
+
+                continue;
+            }
+
+            if ((field.number == 2 ||
+                 field.number == 3 ||
+                 field.number == 8 ||
+                 field.number == 9 ||
+                 field.number == 10) &&
+                field.wireType == WireType.varint)
+            {
+                return false;
+            }
+
+            if ((field.number == 2 ||
+                 field.number == 3 ||
+                 field.number == 8 ||
+                 field.number == 9 ||
+                 field.number == 10) &&
+                field.wireType == WireType.lengthDelimited)
+            {
+                const(ubyte)[] payload;
+                if (!readLengthDelimited(
+                    cursor,
+                    field.number,
+                    payload,
+                    wire))
+                {
+                    if (field.number == 2 || field.number == 3)
+                        status = PbfStatus.fromTagWire(
+                            wire,
+                            wayRef.rawOffset);
+                    else
+                        status = PbfStatus.fromWayWire(
+                            wire,
+                            wayRef.rawOffset);
+                    return false;
+                }
+
+                const payloadBase =
+                    wayRef.rawOffset + cursor.offset - payload.length;
+
+                switch (field.number)
+                {
+                case 2:
+                    if (seenKeys)
+                        return false;
+                    seenKeys = true;
+
+                    if (!stageValidateCanonicalPackedTagIds(
+                        payload,
+                        payloadBase,
+                        2,
+                        table,
+                        parsed.tags.keyCount,
+                        status))
+                        return false;
+                    break;
+
+                case 3:
+                    if (seenVals)
+                        return false;
+                    seenVals = true;
+
+                    if (!stageValidateCanonicalPackedTagIds(
+                        payload,
+                        payloadBase,
+                        3,
+                        table,
+                        parsed.tags.valueCount,
+                        status))
+                        return false;
+                    break;
+
+                case 8:
+                    if (seenRefs)
+                        return false;
+                    seenRefs = true;
+
+                    if (!stageValidateCanonicalPackedRefs(
+                        payload,
+                        payloadBase,
+                        parsed.refs,
+                        status))
+                        return false;
+
+                    if (payloadBase > uint.max ||
+                        payload.length > uint.max)
+                        return false;
+
+                    packedRefs = StagePackedRefs(
+                        cast(uint)payloadBase,
+                        cast(uint)payload.length);
+                    break;
+
+                case 9:
+                    if (seenLats)
+                        return false;
+                    seenLats = true;
+
+                    if (!stageValidateCanonicalPackedCoordinate(
+                        payload,
+                        payloadBase,
+                        9,
+                        block.latOffset,
+                        block.granularity,
+                        parsed.locations.latCount,
+                        parsed.locations.finalLat,
+                        status))
+                        return false;
+                    break;
+
+                case 10:
+                    if (seenLons)
+                        return false;
+                    seenLons = true;
+
+                    if (!stageValidateCanonicalPackedCoordinate(
+                        payload,
+                        payloadBase,
+                        10,
+                        block.lonOffset,
+                        block.granularity,
+                        parsed.locations.lonCount,
+                        parsed.locations.finalLon,
+                        status))
+                        return false;
+                    break;
+
+                default:
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!skipFieldValue(cursor, field, wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return false;
+            }
+        }
+
+        if (!hasId)
+        {
+            status = PbfStatus.failure(
+                PbfError.missingWayId,
+                wayRef.rawOffset,
+                1);
+            return false;
+        }
+
+        if (!finalizeInfo(block, table, parsed.info, status))
+            return false;
+
+        if (parsed.tags.keyCount != parsed.tags.valueCount)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagColumnLengthMismatch,
+                wayRef.rawOffset,
+                parsed.tags.keyCount != 0 ? 2 : 3);
+            return false;
+        }
+
+        if (parsed.locations.hasLocations &&
+            (parsed.locations.latCount != parsed.refs.refCount ||
+             parsed.locations.lonCount != parsed.refs.refCount))
+        {
+            status = PbfStatus.failure(
+                PbfError.wayLocationColumnLengthMismatch,
+                wayRef.rawOffset,
+                parsed.locations.latCount != parsed.refs.refCount ? 9 : 10);
+            return false;
+        }
+
+        status = PbfStatus.init;
+        return true;
+    }
+
+    private StageRun runCanonicalOneScanPreflight(
+        ref const Workload workload)
+        @safe nothrow @nogc
+    {
+        size_t wayCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return StageRun.init;
+            if (!hasWay)
+                break;
+
+            StageParsedWay parsed;
+            StagePackedRefs packedRefs;
+            if (!stageParseWayCanonicalOneScan(
+                workload.block,
+                wayRef,
+                workload.table,
+                parsed,
+                packedRefs,
+                status))
+                return StageRun.init;
+
+            ++wayCount;
+            tagCount += parsed.tags.tagCount;
+            refCount += parsed.refs.refCount;
+
+            if (parsed.locations.hasLocations)
+                locationCount += parsed.locations.latCount;
+
+            if (stageInfoPresent(parsed.info))
+                ++infoCount;
+        }
+
+        const checksum =
+            mix(
+                mix(
+                    mix(
+                        mix(
+                            mix(0, cast(ulong)wayCount),
+                            cast(ulong)tagCount),
+                        cast(ulong)refCount),
+                    cast(ulong)locationCount),
+                cast(ulong)infoCount);
+
+        const ok =
+            wayCount == workload.wayCount &&
+            tagCount == workload.tagCount &&
+            refCount == workload.refCount &&
+            locationCount == workload.locationCount &&
+            infoCount == workload.infoCount;
+
+        return StageRun(
+            checksum,
+            wayCount,
+            tagCount,
+            refCount,
+            locationCount,
+            infoCount,
+            ok);
+    }
+
+    /**
+     * Build compact semantic Way state and the canonical packed refs location
+     * during the same Way scan that performs semantic validation.
+     *
+     * Scratch entries remain unpublished on failure. The counts are published
+     * only after every Way and all aggregate counts have validated, preserving
+     * the fail-closed PrimitiveGroup contract.
+     */
+    private bool prepareCanonicalPackedRefsCache(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        scratch.compactCount = 0;
+        scratch.packedRefCount = 0;
+
+        if (scratch.compactWays.length < workload.wayCount ||
+            scratch.packedRefs.length < workload.wayCount)
+            return false;
+
+        size_t cachedCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return false;
+            if (!hasWay)
+                break;
+
+            if (cachedCount >= scratch.compactWays.length ||
+                cachedCount >= scratch.packedRefs.length)
+                return false;
+
+            StageParsedWay parsed;
+            StagePackedRefs packedRefs;
+            if (!stageParseWayCanonicalOneScan(
+                workload.block,
+                wayRef,
+                workload.table,
+                parsed,
+                packedRefs,
+                status))
+                return false;
+
+            const wayLocationCount =
+                parsed.locations.hasLocations
+                    ? parsed.locations.latCount
+                    : 0;
+
+            if (wayRef.rawOffset > uint.max ||
+                wayRef.bytes.length > uint.max ||
+                parsed.tags.tagCount > uint.max ||
+                parsed.refs.refCount > uint.max ||
+                wayLocationCount > uint.max)
+                return false;
+
+            const rawStart = wayRef.rawOffset;
+            const rawLength = wayRef.bytes.length;
+
+            if (rawStart > workload.group.raw.length ||
+                rawLength > workload.group.raw.length - rawStart)
+                return false;
+
+            if (parsed.refs.refCount != 0)
+            {
+                const refsStart = cast(size_t)packedRefs.offset;
+                const refsLength = cast(size_t)packedRefs.length;
+
+                if (refsLength == 0 ||
+                    refsStart > workload.group.raw.length ||
+                    refsLength >
+                        workload.group.raw.length - refsStart)
+                    return false;
+            }
+
+            ref StageCompactWay cached =
+                scratch.compactWays[cachedCount];
+
+            cached.id = parsed.id;
+            cached.info = stageCompactInfoFromView(
+                parsed.info,
+                workload.table);
+            cached.rawOffset = cast(uint)wayRef.rawOffset;
+            cached.rawLength = cast(uint)wayRef.bytes.length;
+            cached.tagCount = cast(uint)parsed.tags.tagCount;
+            cached.refCount = cast(uint)parsed.refs.refCount;
+            cached.locationCount = cast(uint)wayLocationCount;
+
+            scratch.packedRefs[cachedCount] = packedRefs;
+
+            tagCount += parsed.tags.tagCount;
+            refCount += parsed.refs.refCount;
+            locationCount += wayLocationCount;
+
+            if (stageInfoPresent(parsed.info))
+                ++infoCount;
+
+            ++cachedCount;
+        }
+
+        if (cachedCount != workload.wayCount ||
+            cachedCount != workload.group.wayOccurrences ||
+            tagCount != workload.tagCount ||
+            refCount != workload.refCount ||
+            locationCount != workload.locationCount ||
+            infoCount != workload.infoCount)
+            return false;
+
+        scratch.compactCount = cachedCount;
+        scratch.packedRefCount = cachedCount;
+        return true;
+    }
+
+    /**
+     * Integrated canonical fail-closed performance ceiling.
+     *
+     * Timed work includes the one-scan semantic preflight, writing the
+     * 80-byte Way plan and 8-byte refs span, complete-group validation, and
+     * direct packed-refs RefSink-equivalent emission. Scratch allocation is
+     * excluded.
+     */
+    private StageRun runCanonicalCachedPackedRefs(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (!prepareCanonicalPackedRefsCache(
+            workload,
+            scratch))
+            return StageRun.init;
+
+        return runPackedRefsEmission(workload, scratch);
+    }
+
     private bool stageParseWay(
         ref const PrimitiveBlockLayout block,
         StageWayMessageRef wayRef,
@@ -1984,6 +2803,637 @@ version (RegularWayStageBenchmark)
             ok);
     }
 
+    /**
+     * Model complete group preflight followed by emission from cached summaries.
+     *
+     * Scratch capacity is supplied by the benchmark harness before timing.
+     * Filling and reading the cache are timed. No observable sink call occurs
+     * until every Way has successfully completed semantic preflight.
+     *
+     * The current public borrowed-range builders are intentionally retained.
+     * This isolates the value of avoiding the second Way field/info/count scan
+     * without yet changing TagRange/WayRefRange/WayLocationRange internals.
+     */
+    private StageRun runCachedSummary(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (scratch.cachedWays.length < workload.wayCount)
+            return StageRun.init;
+
+        size_t cachedCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return StageRun.init;
+            if (!hasWay)
+                break;
+
+            if (cachedCount >= scratch.cachedWays.length)
+                return StageRun.init;
+
+            ref StageCachedWay cached = scratch.cachedWays[cachedCount];
+            cached.wayRef = wayRef;
+
+            if (!stageParseWay(
+                workload.block,
+                wayRef,
+                workload.table,
+                cached.parsed,
+                status))
+                return StageRun.init;
+
+            tagCount += cached.parsed.tags.tagCount;
+            refCount += cached.parsed.refs.refCount;
+            if (cached.parsed.locations.hasLocations)
+                locationCount += cached.parsed.locations.latCount;
+            if (stageInfoPresent(cached.parsed.info))
+                ++infoCount;
+
+            ++cachedCount;
+        }
+
+        if (cachedCount != workload.wayCount ||
+            cachedCount != workload.group.wayOccurrences ||
+            tagCount != workload.tagCount ||
+            refCount != workload.refCount ||
+            locationCount != workload.locationCount ||
+            infoCount != workload.infoCount)
+            return StageRun.init;
+
+        RefSink sink;
+
+        foreach (i; 0 .. cachedCount)
+        {
+            ref StageCachedWay cached = scratch.cachedWays[i];
+
+            TagRange tags;
+            if (!buildTagRange(
+                cached.wayRef.bytes,
+                cached.wayRef.rawOffset,
+                workload.table,
+                cached.parsed.tags,
+                tags,
+                status))
+                return StageRun.init;
+
+            WayRefRange refs;
+            if (!buildWayRefRange(
+                cached.wayRef.bytes,
+                cached.wayRef.rawOffset,
+                cached.parsed.refs,
+                refs,
+                status))
+                return StageRun.init;
+
+            WayLocationRange locations;
+            if (!buildWayLocationRange(
+                workload.block,
+                cached.wayRef.bytes,
+                cached.wayRef.rawOffset,
+                cached.parsed.locations,
+                locations,
+                status))
+                return StageRun.init;
+
+            WayView way = WayView(
+                cached.parsed.id,
+                tags,
+                refs,
+                locations,
+                cached.parsed.info,
+                cached.wayRef.bytes,
+                cached.wayRef.rawOffset);
+
+            sink.put(way);
+        }
+
+        const ok =
+            sink.wayCount == workload.wayCount &&
+            sink.refCount == workload.refCount &&
+            sink.infoCount == workload.infoCount;
+
+        return StageRun(
+            sink.checksum,
+            sink.wayCount,
+            tagCount,
+            refCount,
+            locationCount,
+            sink.infoCount,
+            ok);
+    }
+
+    /**
+     * Build the compact per-Way cache from a complete semantic preflight.
+     *
+     * No observable sink call occurs here. `compactCount` is published only
+     * after the whole group has validated and all aggregate counts match.
+     */
+    private bool prepareCompactCache(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        scratch.compactCount = 0;
+
+        if (scratch.compactWays.length < workload.wayCount)
+            return false;
+
+        size_t cachedCount;
+        size_t tagCount;
+        size_t refCount;
+        size_t locationCount;
+        size_t infoCount;
+        auto ways = StageWayMessageCursor(workload.group.raw);
+        PbfStatus status;
+
+        while (true)
+        {
+            StageWayMessageRef wayRef;
+            bool hasWay;
+            if (!ways.next(wayRef, hasWay, status))
+                return false;
+            if (!hasWay)
+                break;
+
+            if (cachedCount >= scratch.compactWays.length)
+                return false;
+
+            StageParsedWay parsed;
+            if (!stageParseWay(
+                workload.block,
+                wayRef,
+                workload.table,
+                parsed,
+                status))
+                return false;
+
+            const wayLocationCount =
+                parsed.locations.hasLocations
+                    ? parsed.locations.latCount
+                    : 0;
+
+            if (wayRef.rawOffset > uint.max ||
+                wayRef.bytes.length > uint.max ||
+                parsed.tags.tagCount > uint.max ||
+                parsed.refs.refCount > uint.max ||
+                wayLocationCount > uint.max)
+                return false;
+
+            const rawStart = wayRef.rawOffset;
+            const rawLength = wayRef.bytes.length;
+            if (rawStart > workload.group.raw.length ||
+                rawLength > workload.group.raw.length - rawStart)
+                return false;
+
+            ref StageCompactWay cached =
+                scratch.compactWays[cachedCount];
+
+            cached.id = parsed.id;
+            cached.info = stageCompactInfoFromView(
+                parsed.info,
+                workload.table);
+            cached.rawOffset = cast(uint)wayRef.rawOffset;
+            cached.rawLength = cast(uint)wayRef.bytes.length;
+            cached.tagCount = cast(uint)parsed.tags.tagCount;
+            cached.refCount = cast(uint)parsed.refs.refCount;
+            cached.locationCount = cast(uint)wayLocationCount;
+
+            tagCount += parsed.tags.tagCount;
+            refCount += parsed.refs.refCount;
+            locationCount += wayLocationCount;
+            if (stageInfoPresent(parsed.info))
+                ++infoCount;
+
+            ++cachedCount;
+        }
+
+        if (cachedCount != workload.wayCount ||
+            cachedCount != workload.group.wayOccurrences ||
+            tagCount != workload.tagCount ||
+            refCount != workload.refCount ||
+            locationCount != workload.locationCount ||
+            infoCount != workload.infoCount)
+            return false;
+
+        scratch.compactCount = cachedCount;
+        return true;
+    }
+
+    /**
+     * Emit only the RefSink-observable Way state while retaining the current
+     * generic WayRefRange builder and cursor.
+     *
+     * The compact semantic plan is prepared before timing. Tags and optional
+     * locations are intentionally not constructed because RefSink does not
+     * observe them. This stage isolates the cost of locating field 8 through
+     * the generic repeated-field cursor, constructing WayRefRange, and
+     * consuming that range.
+     */
+    private StageRun runRefRangeEmission(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (scratch.compactCount != workload.wayCount ||
+            scratch.compactCount != workload.group.wayOccurrences)
+            return StageRun.init;
+
+        RefSink sink;
+        PbfStatus status;
+
+        foreach (i; 0 .. scratch.compactCount)
+        {
+            ref StageCompactWay cached = scratch.compactWays[i];
+
+            const rawStart = cast(size_t)cached.rawOffset;
+            const rawLength = cast(size_t)cached.rawLength;
+            if (rawStart > workload.group.raw.length ||
+                rawLength > workload.group.raw.length - rawStart)
+                return StageRun.init;
+
+            const raw =
+                workload.group.raw[rawStart .. rawStart + rawLength];
+
+            WayRefValidationSummary refSummary;
+            refSummary.refCount = cached.refCount;
+
+            WayRefRange refs;
+            if (!buildWayRefRange(
+                raw,
+                rawStart,
+                refSummary,
+                refs,
+                status))
+                return StageRun.init;
+
+            InfoView info;
+            if (!stageExpandCompactInfo(
+                cached.info,
+                workload.block,
+                workload.table,
+                info))
+                return StageRun.init;
+
+            WayView way = WayView(
+                cached.id,
+                TagRange.init,
+                refs,
+                WayLocationRange.init,
+                info,
+                raw,
+                rawStart);
+
+            sink.put(way);
+        }
+
+        const ok =
+            sink.wayCount == workload.wayCount &&
+            sink.refCount == workload.refCount &&
+            sink.infoCount == workload.infoCount;
+
+        return StageRun(
+            sink.checksum,
+            sink.wayCount,
+            workload.tagCount,
+            sink.refCount,
+            workload.locationCount,
+            sink.infoCount,
+            ok);
+    }
+
+    /**
+     * Prepare the canonical packed-refs emission ceiling.
+     *
+     * Semantic preflight and compact Info preparation are inherited from the
+     * 80-byte cache. A second preparation-only scan then records the payload of
+     * exactly one packed field-8 occurrence. This scan is deliberately outside
+     * the timed region: the stage isolates the potential emission benefit if
+     * production preflight retained that already-discovered location.
+     *
+     * The benchmark ceiling intentionally rejects segmented, unpacked, or
+     * duplicate refs encodings rather than changing their semantics.
+     */
+    private bool preparePackedRefsEmission(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        scratch.packedRefCount = 0;
+
+        if (scratch.packedRefs.length < workload.wayCount)
+            return false;
+
+        if (!prepareCompactCache(workload, scratch))
+            return false;
+
+        foreach (i; 0 .. scratch.compactCount)
+        {
+            ref StageCompactWay cached = scratch.compactWays[i];
+
+            const rawStart = cast(size_t)cached.rawOffset;
+            const rawLength = cast(size_t)cached.rawLength;
+            if (rawStart > workload.group.raw.length ||
+                rawLength > workload.group.raw.length - rawStart)
+                return false;
+
+            const raw =
+                workload.group.raw[rawStart .. rawStart + rawLength];
+            auto cursor = WireCursor(raw);
+
+            bool foundPackedRefs;
+            size_t payloadOffset;
+            size_t payloadLength;
+
+            while (!cursor.empty)
+            {
+                FieldHeader field;
+                WireStatus wire;
+                if (!readFieldHeader(cursor, field, wire))
+                    return false;
+
+                if (field.number == 8 &&
+                    field.wireType == WireType.varint)
+                {
+                    // This ceiling models only the canonical single-packed form.
+                    return false;
+                }
+
+                if (field.number == 8 &&
+                    field.wireType == WireType.lengthDelimited)
+                {
+                    if (foundPackedRefs)
+                        return false;
+
+                    const(ubyte)[] packed;
+                    if (!readLengthDelimited(
+                        cursor,
+                        field.number,
+                        packed,
+                        wire))
+                        return false;
+
+                    payloadOffset =
+                        rawStart + cursor.offset - packed.length;
+                    payloadLength = packed.length;
+                    foundPackedRefs = true;
+                    continue;
+                }
+
+                if (!skipFieldValue(cursor, field, wire))
+                    return false;
+            }
+
+            if (cached.refCount != 0)
+            {
+                if (!foundPackedRefs ||
+                    payloadLength == 0 ||
+                    payloadOffset > uint.max ||
+                    payloadLength > uint.max)
+                    return false;
+
+                scratch.packedRefs[i] = StagePackedRefs(
+                    cast(uint)payloadOffset,
+                    cast(uint)payloadLength);
+            }
+            else
+            {
+                if (foundPackedRefs && payloadLength != 0)
+                    return false;
+                scratch.packedRefs[i] = StagePackedRefs.init;
+            }
+        }
+
+        scratch.packedRefCount = scratch.compactCount;
+        return true;
+    }
+
+    /**
+     * Performance ceiling for canonical packed Way refs.
+     *
+     * The timed path performs no protobuf field search and constructs no
+     * WayRefRange. It decodes the prevalidated packed sint64 payload directly,
+     * reconstructs absolute node IDs, and executes the same observable checksum
+     * operations as RefSink. Overflow validity was already established by the
+     * immutable semantic preflight.
+     */
+    private StageRun runPackedRefsEmission(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (scratch.compactCount != workload.wayCount ||
+            scratch.packedRefCount != scratch.compactCount)
+            return StageRun.init;
+
+        ulong checksum;
+        size_t wayCount;
+        size_t refCount;
+        size_t infoCount;
+
+        foreach (i; 0 .. scratch.compactCount)
+        {
+            ref StageCompactWay cached = scratch.compactWays[i];
+            ref StagePackedRefs packedRef = scratch.packedRefs[i];
+
+            checksum = mix(checksum, cast(ulong)cached.id);
+
+            InfoView info;
+            if (!stageExpandCompactInfo(
+                cached.info,
+                workload.block,
+                workload.table,
+                info))
+                return StageRun.init;
+            consumeInfo(checksum, infoCount, info);
+
+            size_t wayRefCount;
+
+            if (cached.refCount != 0)
+            {
+                const payloadStart = cast(size_t)packedRef.offset;
+                const payloadLength = cast(size_t)packedRef.length;
+
+                if (payloadStart > workload.group.raw.length ||
+                    payloadLength >
+                        workload.group.raw.length - payloadStart)
+                    return StageRun.init;
+
+                auto packed = WireCursor(
+                    workload.group.raw[
+                        payloadStart .. payloadStart + payloadLength]);
+
+                long current;
+                while (!packed.empty)
+                {
+                    long delta;
+                    WireStatus wire;
+                    if (!readSVarint64(packed, delta, wire))
+                        return StageRun.init;
+
+                    // Semantic preflight already proved this accumulation safe.
+                    current += delta;
+
+                    checksum = mix(checksum, cast(ulong)current);
+                    ++wayRefCount;
+                    ++refCount;
+                }
+            }
+
+            if (wayRefCount != cached.refCount)
+                return StageRun.init;
+
+            ++wayCount;
+        }
+
+        const ok =
+            wayCount == workload.wayCount &&
+            refCount == workload.refCount &&
+            infoCount == workload.infoCount;
+
+        return StageRun(
+            checksum,
+            wayCount,
+            workload.tagCount,
+            refCount,
+            workload.locationCount,
+            infoCount,
+            ok);
+    }
+
+    /**
+     * Emit borrowed Way views exclusively from a previously validated compact
+     * cache. Cache preparation is deliberately outside this function so the
+     * benchmark can time emission independently.
+     */
+    private StageRun runCompactEmission(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (scratch.compactCount != workload.wayCount ||
+            scratch.compactCount != workload.group.wayOccurrences)
+            return StageRun.init;
+
+        RefSink sink;
+        PbfStatus status;
+
+        foreach (i; 0 .. scratch.compactCount)
+        {
+            ref StageCompactWay cached = scratch.compactWays[i];
+
+            const rawStart = cast(size_t)cached.rawOffset;
+            const rawLength = cast(size_t)cached.rawLength;
+            if (rawStart > workload.group.raw.length ||
+                rawLength > workload.group.raw.length - rawStart)
+                return StageRun.init;
+
+            const raw =
+                workload.group.raw[rawStart .. rawStart + rawLength];
+
+            TagValidationSummary tagSummary;
+            tagSummary.keyCount = cached.tagCount;
+            tagSummary.valueCount = cached.tagCount;
+
+            WayRefValidationSummary refSummary;
+            refSummary.refCount = cached.refCount;
+
+            WayLocationValidationSummary locationSummary;
+            locationSummary.latCount = cached.locationCount;
+            locationSummary.lonCount = cached.locationCount;
+
+            TagRange tags;
+            if (!buildTagRange(
+                raw,
+                rawStart,
+                workload.table,
+                tagSummary,
+                tags,
+                status))
+                return StageRun.init;
+
+            WayRefRange refs;
+            if (!buildWayRefRange(
+                raw,
+                rawStart,
+                refSummary,
+                refs,
+                status))
+                return StageRun.init;
+
+            WayLocationRange locations;
+            if (!buildWayLocationRange(
+                workload.block,
+                raw,
+                rawStart,
+                locationSummary,
+                locations,
+                status))
+                return StageRun.init;
+
+            InfoView info;
+            if (!stageExpandCompactInfo(
+                cached.info,
+                workload.block,
+                workload.table,
+                info))
+                return StageRun.init;
+
+            WayView way = WayView(
+                cached.id,
+                tags,
+                refs,
+                locations,
+                info,
+                raw,
+                rawStart);
+
+            sink.put(way);
+        }
+
+        const ok =
+            sink.wayCount == workload.wayCount &&
+            sink.refCount == workload.refCount &&
+            sink.infoCount == workload.infoCount;
+
+        return StageRun(
+            sink.checksum,
+            sink.wayCount,
+            workload.tagCount,
+            workload.refCount,
+            workload.locationCount,
+            sink.infoCount,
+            ok);
+    }
+
+    /**
+     * Complete semantic preflight followed by emission from a compact 80-byte
+     * per-Way cache.
+     *
+     * This preserves the fail-closed group contract. Cache construction and
+     * cache emission are both included in this stage's timed region.
+     */
+    private StageRun runCachedCompact(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        if (!prepareCompactCache(workload, scratch))
+            return StageRun.init;
+
+        return runCompactEmission(workload, scratch);
+    }
+
     private StageRun runFullDecode(ref const Workload workload)
         @safe nothrow @nogc
     {
@@ -1998,7 +3448,10 @@ version (RegularWayStageBenchmark)
             decoded.ok);
     }
 
-    private StageRun runStage(ref const Workload workload, StageKind stage)
+    private StageRun runStage(
+        ref const Workload workload,
+        StageKind stage,
+        ref StageScratch scratch)
         @safe nothrow @nogc
     {
         final switch (stage)
@@ -2007,8 +3460,22 @@ version (RegularWayStageBenchmark)
             return runGroupScan(workload);
         case StageKind.semanticPreflight:
             return runSemanticPreflight(workload);
+        case StageKind.canonicalOneScanPreflight:
+            return runCanonicalOneScanPreflight(workload);
         case StageKind.prevalidatedEmission:
             return runPrevalidatedEmission(workload);
+        case StageKind.cachedSummary:
+            return runCachedSummary(workload, scratch);
+        case StageKind.cachedCompact:
+            return runCachedCompact(workload, scratch);
+        case StageKind.compactEmission:
+            return runCompactEmission(workload, scratch);
+        case StageKind.refRangeEmission:
+            return runRefRangeEmission(workload, scratch);
+        case StageKind.packedRefsEmission:
+            return runPackedRefsEmission(workload, scratch);
+        case StageKind.canonicalCachedPackedRefs:
+            return runCanonicalCachedPackedRefs(workload, scratch);
         case StageKind.fullDecode:
             return runFullDecode(workload);
         }
@@ -2024,6 +3491,7 @@ version (RegularWayStageBenchmark)
         case StageKind.groupScan:
             return mix(0, cast(ulong)workload.wayCount);
         case StageKind.semanticPreflight:
+        case StageKind.canonicalOneScanPreflight:
             return mix(
                 mix(
                     mix(
@@ -2034,6 +3502,12 @@ version (RegularWayStageBenchmark)
                     cast(ulong)workload.locationCount),
                 cast(ulong)workload.infoCount);
         case StageKind.prevalidatedEmission:
+        case StageKind.cachedSummary:
+        case StageKind.cachedCompact:
+        case StageKind.compactEmission:
+        case StageKind.refRangeEmission:
+        case StageKind.packedRefsEmission:
+        case StageKind.canonicalCachedPackedRefs:
         case StageKind.fullDecode:
             return workload.refsChecksum;
         }
@@ -2090,11 +3564,38 @@ version (RegularWayStageBenchmark)
         ref const Workload workload,
         StageKind stage,
         uint iterations)
-        @safe nothrow @nogc
+        @system
     {
+        StageScratch scratch;
+        if (stage == StageKind.cachedSummary)
+            scratch.cachedWays = new StageCachedWay[workload.wayCount];
+        else if (stage == StageKind.cachedCompact ||
+            stage == StageKind.compactEmission ||
+            stage == StageKind.refRangeEmission ||
+            stage == StageKind.packedRefsEmission ||
+            stage == StageKind.canonicalCachedPackedRefs)
+        {
+            scratch.compactWays = new StageCompactWay[workload.wayCount];
+
+            if (stage == StageKind.packedRefsEmission ||
+                stage == StageKind.canonicalCachedPackedRefs)
+            {
+                scratch.packedRefs =
+                    new StagePackedRefs[workload.wayCount];
+
+                if (stage == StageKind.packedRefsEmission &&
+                    !preparePackedRefsEmission(workload, scratch))
+                    return false;
+            }
+            else if ((stage == StageKind.compactEmission ||
+                stage == StageKind.refRangeEmission) &&
+                !prepareCompactCache(workload, scratch))
+                return false;
+        }
+
         foreach (_; 0 .. iterations)
         {
-            const run = runStage(workload, stage);
+            const run = runStage(workload, stage, scratch);
             if (!validateStageRun(workload, stage, run))
                 return false;
         }
@@ -2108,6 +3609,33 @@ version (RegularWayStageBenchmark)
         out ulong observableChecksum)
         @system
     {
+        StageScratch scratch;
+        if (stage == StageKind.cachedSummary)
+            scratch.cachedWays = new StageCachedWay[workload.wayCount];
+        else if (stage == StageKind.cachedCompact ||
+            stage == StageKind.compactEmission ||
+            stage == StageKind.refRangeEmission ||
+            stage == StageKind.packedRefsEmission ||
+            stage == StageKind.canonicalCachedPackedRefs)
+        {
+            scratch.compactWays = new StageCompactWay[workload.wayCount];
+
+            if (stage == StageKind.packedRefsEmission ||
+                stage == StageKind.canonicalCachedPackedRefs)
+            {
+                scratch.packedRefs =
+                    new StagePackedRefs[workload.wayCount];
+
+                if (stage == StageKind.packedRefsEmission &&
+                    !preparePackedRefsEmission(workload, scratch))
+                    return -1;
+            }
+            else if ((stage == StageKind.compactEmission ||
+                stage == StageKind.refRangeEmission) &&
+                !prepareCompactCache(workload, scratch))
+                return -1;
+        }
+
         auto stopwatch = StopWatch(AutoStart.yes);
         ulong aggregateChecksum;
         size_t aggregateWays;
@@ -2119,7 +3647,7 @@ version (RegularWayStageBenchmark)
 
         foreach (_; 0 .. iterations)
         {
-            const run = runStage(workload, stage);
+            const run = runStage(workload, stage, scratch);
             aggregateChecksum += run.checksum;
             aggregateWays += run.wayCount;
             aggregateTags += run.tagCount;
@@ -2168,8 +3696,22 @@ version (RegularWayStageBenchmark)
             return "group-scan";
         case StageKind.semanticPreflight:
             return "semantic-preflight";
+        case StageKind.canonicalOneScanPreflight:
+            return "canonical-one-scan-preflight";
         case StageKind.prevalidatedEmission:
             return "prevalidated-emission";
+        case StageKind.cachedSummary:
+            return "cached-summary";
+        case StageKind.cachedCompact:
+            return "cached-compact";
+        case StageKind.compactEmission:
+            return "compact-emission";
+        case StageKind.refRangeEmission:
+            return "ref-range-emission";
+        case StageKind.packedRefsEmission:
+            return "packed-refs-emission";
+        case StageKind.canonicalCachedPackedRefs:
+            return "canonical-cached-packed-refs";
         case StageKind.fullDecode:
             return "full-decode";
         }
@@ -2188,9 +3730,37 @@ version (RegularWayStageBenchmark)
         case "preflight":
             stage = StageKind.semanticPreflight;
             return true;
+        case "canonical-one-scan-preflight":
+        case "one-scan-preflight":
+            stage = StageKind.canonicalOneScanPreflight;
+            return true;
         case "prevalidated-emission":
         case "emission":
             stage = StageKind.prevalidatedEmission;
+            return true;
+        case "cached-summary":
+        case "cached":
+            stage = StageKind.cachedSummary;
+            return true;
+        case "cached-compact":
+        case "compact":
+            stage = StageKind.cachedCompact;
+            return true;
+        case "compact-emission":
+        case "compact-emit":
+            stage = StageKind.compactEmission;
+            return true;
+        case "ref-range-emission":
+        case "ref-range":
+            stage = StageKind.refRangeEmission;
+            return true;
+        case "packed-refs-emission":
+        case "packed-refs":
+            stage = StageKind.packedRefsEmission;
+            return true;
+        case "canonical-cached-packed-refs":
+        case "canonical-integrated":
+            stage = StageKind.canonicalCachedPackedRefs;
             return true;
         case "full-decode":
         case "full":
@@ -2236,6 +3806,17 @@ version (RegularWayStageBenchmark)
             emissionTimings[sample] = elapsed;
             emissionChecksum += observed ^ cast(ulong)sample;
             break;
+        case StageKind.canonicalOneScanPreflight:
+        case StageKind.cachedSummary:
+        case StageKind.cachedCompact:
+        case StageKind.compactEmission:
+        case StageKind.refRangeEmission:
+        case StageKind.packedRefsEmission:
+        case StageKind.canonicalCachedPackedRefs:
+            // The benchmark's historical --stage=all mode deliberately
+            // retains its original four-stage rotation. Candidate cache
+            // stages are measured explicitly as single stages.
+            return false;
         case StageKind.fullDecode:
             fullTimings[sample] = elapsed;
             fullChecksum += observed ^ cast(ulong)sample;
@@ -2511,7 +4092,7 @@ version (RegularWayStageBenchmark)
             "samples", "Timed samples; robust quantiles are reported", &samples,
             "warmup", "Untimed stage runs before measurement", &warmupIterations,
             "profile", "all|ref-only|typical|typical-info|locations|rich", &selectedProfile,
-            "stage", "all|group-scan|semantic-preflight|prevalidated-emission|full-decode", &selectedStageName);
+            "stage", "all|group-scan|semantic-preflight|canonical-one-scan-preflight|prevalidated-emission|cached-summary|cached-compact|compact-emission|ref-range-emission|packed-refs-emission|canonical-cached-packed-refs|full-decode", &selectedStageName);
 
         if (options.helpWanted)
         {
@@ -2555,7 +4136,14 @@ version (RegularWayStageBenchmark)
         writeln("statistics: min, p10, p50, p90, max; Δ80=(p90-p10)/p50");
         writeln("group-scan: benchmark-local mirror of private WayMessageCursor traversal");
         writeln("semantic-preflight: benchmark-local mirror of the current private first parse/validation pass");
+        writeln("canonical-one-scan-preflight: benchmark ceiling validating canonical single-packed repeated fields during one Way message scan");
         writeln("prevalidated-emission: benchmark-local second pass that rebuilds borrowed ranges while skipping duplicate tag/ref/location semantic validation");
+        writeln("cached-summary: complete preflight plus emission from a per-Way validated summary cache; scratch allocation excluded");
+        writeln("cached-compact: same fail-closed preflight/emission model using an 80-byte offset/count/compact-Info plan; scratch allocation excluded");
+        writeln("compact-emission: emission only from a prevalidated 80-byte compact plan; plan preparation and scratch allocation excluded");
+        writeln("ref-range-emission: RefSink-only emission using current generic WayRefRange; compact-plan preparation excluded");
+        writeln("packed-refs-emission: canonical packed field-8 emission ceiling; semantic/cache/payload discovery and scratch allocation excluded");
+        writeln("canonical-cached-packed-refs: integrated fail-closed ceiling: one-scan preflight + 80+8-byte plan + direct refs emission; scratch allocation excluded");
         writeln("full-decode: production decodeWays with the refs sink");
         writeln("derived values subtract medians and are diagnostic, not independently timed stages");
         writeln("excluded: workload generation, block/group layout, StringTable indexing, sorting and reporting");
