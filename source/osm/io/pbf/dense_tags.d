@@ -886,3 +886,8 @@ unittest
     assert(summary.nodeSegments == 2);
     assert(summary.tagCount == 1);
 }
+
+version (unittest)
+{
+    pragma(msg, "LAYOUT source/osm/io/pbf/dense_tags.d: DenseTagRange.sizeof=", DenseTagRange.sizeof, " TagView.sizeof=", TagView.sizeof);
+}
