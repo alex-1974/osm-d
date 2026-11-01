@@ -16,6 +16,7 @@ module osm.io.pbf.dense_nodes;
 
 import osm.view.element : ElementType, isElementView;
 import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
 import osm.io.pbf.dense_info :
     DenseInfoNodeCursor,
     DenseInfoValidationSummary,
@@ -63,6 +64,20 @@ struct DenseNodeView
     DenseTagRange tags;
     /// Optional decoded metadata from the DenseInfo columns.
     DenseInfoView info;
+
+    /** Format-independent OSM metadata without DenseInfo vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
 
     /// Semantic OSM element kind, independent of DenseNodes encoding.
     @property ElementType type() const scope
