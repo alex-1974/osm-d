@@ -585,18 +585,17 @@ private bool decodePrevalidatedPairScalars(
 private struct KeysValsCursor
 {
 private:
-    const(ubyte)[] _group;
-    size_t _groupOffset;
-    size_t _denseOffset;
-    size_t _denseEnd;
-    size_t _packedOffset;
-    size_t _packedEnd;
+    WireCursor _group;
+    WireCursor _dense;
+    WireCursor _packed;
+    size_t _denseBase;
+    size_t _packedBase;
     size_t _lastValueOffset;
 
 public:
     this(const(ubyte)[] group) @safe nothrow @nogc
     {
-        _group = group;
+        _group = WireCursor(group);
     }
 
     @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
@@ -613,102 +612,82 @@ public:
 
         while (true)
         {
-            if (_packedOffset < _packedEnd)
+            if (!_packed.empty)
             {
-                const start = _packedOffset;
-                auto packed = WireCursor(_group[start .. _packedEnd]);
-                _lastValueOffset = start;
-
+                _lastValueOffset = _packedBase + _packed.offset;
                 WireStatus wire;
-                if (!readVarint64(packed, value, wire))
+                if (!readVarint64(_packed, value, wire))
                 {
                     if (wire.fieldNumber == 0)
                         wire.fieldNumber = 10;
-                    status = PbfStatus.fromDenseNodesWire(wire, start);
+                    status = PbfStatus.fromDenseNodesWire(wire, _packedBase);
                     return false;
                 }
-
-                _packedOffset = start + packed.offset;
                 hasValue = true;
                 status = PbfStatus.init;
                 return true;
             }
 
-            while (_denseOffset < _denseEnd)
+            while (!_dense.empty)
             {
-                const start = _denseOffset;
-                auto dense = WireCursor(_group[start .. _denseEnd]);
-
                 FieldHeader field;
                 WireStatus wire;
-                if (!readFieldHeader(dense, field, wire))
+                if (!readFieldHeader(_dense, field, wire))
                 {
-                    status = PbfStatus.fromDenseNodesWire(wire, start);
+                    status = PbfStatus.fromDenseNodesWire(wire, _denseBase);
                     return false;
                 }
 
                 if (field.number == 10 && field.wireType == WireType.varint)
                 {
-                    _lastValueOffset = start + dense.offset;
-                    if (!readVarint64(dense, value, wire))
+                    _lastValueOffset = _denseBase + _dense.offset;
+                    if (!readVarint64(_dense, value, wire))
                     {
                         if (wire.fieldNumber == 0)
                             wire.fieldNumber = field.number;
-                        status = PbfStatus.fromDenseNodesWire(wire, start);
+                        status = PbfStatus.fromDenseNodesWire(wire, _denseBase);
                         return false;
                     }
-
-                    _denseOffset = start + dense.offset;
                     hasValue = true;
                     status = PbfStatus.init;
                     return true;
                 }
 
-                if (field.number == 10 &&
-                    field.wireType == WireType.lengthDelimited)
+                if (field.number == 10 && field.wireType == WireType.lengthDelimited)
                 {
                     bool ok;
                     auto packed = readLengthDelimitedCursor(
-                        dense,
+                        _dense,
                         field.number,
                         ok,
                         wire);
                     if (!ok)
                     {
-                        status = PbfStatus.fromDenseNodesWire(wire, start);
+                        status = PbfStatus.fromDenseNodesWire(wire, _denseBase);
                         return false;
                     }
-
-                    const payloadStart =
-                        start + dense.offset - packed.remaining;
-                    _denseOffset = start + dense.offset;
-                    _packedOffset = payloadStart;
-                    _packedEnd = payloadStart + packed.remaining;
+                    _packedBase = _denseBase + _dense.offset - packed.remaining;
+                    _packed = packed;
                     break;
                 }
 
-                if (!skipFieldValue(dense, field, wire))
+                if (!skipFieldValue(_dense, field, wire))
                 {
-                    status = PbfStatus.fromDenseNodesWire(wire, start);
+                    status = PbfStatus.fromDenseNodesWire(wire, _denseBase);
                     return false;
                 }
-
-                _denseOffset = start + dense.offset;
             }
 
-            if (_packedOffset < _packedEnd || _denseOffset < _denseEnd)
+            if (!_packed.empty || !_dense.empty)
                 continue;
 
-            while (_groupOffset < _group.length)
+            while (!_group.empty)
             {
-                const start = _groupOffset;
-                auto group = WireCursor(_group[start .. $]);
-
                 FieldHeader field;
                 WireStatus wire;
-                if (!readFieldHeader(group, field, wire))
+                if (!readFieldHeader(_group, field, wire))
                 {
-                    status = PbfStatus.fromPrimitiveGroupWire(wire, start);
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
                     return false;
                 }
 
@@ -716,37 +695,31 @@ public:
                 {
                     bool ok;
                     auto dense = readLengthDelimitedCursor(
-                        group,
+                        _group,
                         field.number,
                         ok,
                         wire);
                     if (!ok)
                     {
-                        status = PbfStatus.fromPrimitiveGroupWire(wire, start);
+                        status = PbfStatus.fromPrimitiveGroupWire(wire);
                         return false;
                     }
-
-                    const denseStart =
-                        start + group.offset - dense.remaining;
-                    _groupOffset = start + group.offset;
-                    _denseOffset = denseStart;
-                    _denseEnd = denseStart + dense.remaining;
+                    _denseBase = _group.offset - dense.remaining;
+                    _dense = dense;
                     break;
                 }
 
-                if (!skipFieldValue(group, field, wire))
+                if (!skipFieldValue(_group, field, wire))
                 {
-                    status = PbfStatus.fromPrimitiveGroupWire(wire, start);
+                    status = PbfStatus.fromPrimitiveGroupWire(wire);
                     return false;
                 }
-
-                _groupOffset = start + group.offset;
             }
 
-            if (_denseOffset < _denseEnd)
+            if (!_dense.empty)
                 continue;
 
-            if (_groupOffset >= _group.length)
+            if (_group.empty)
             {
                 status = PbfStatus.init;
                 return true;
@@ -913,4 +886,3 @@ unittest
     assert(summary.nodeSegments == 2);
     assert(summary.tagCount == 1);
 }
-
