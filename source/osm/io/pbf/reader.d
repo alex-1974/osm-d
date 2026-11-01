@@ -511,7 +511,7 @@ public:
     {
         static if (__traits(hasMember, Handler, "node"))
         {
-            DenseNodeView node;
+            NodeView node;
             node.id = id;
             node.latNano = latNano;
             node.lonNano = lonNano;
