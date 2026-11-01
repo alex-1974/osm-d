@@ -67,7 +67,7 @@ struct DenseNodeView
 
     /** Format-independent OSM metadata without DenseInfo vocabulary. */
     pragma(inline, true)
-    @property MetadataView metadata() const scope
+    @property MetadataView metadata() const return scope
         @safe pure nothrow @nogc
     {
         return MetadataView(
