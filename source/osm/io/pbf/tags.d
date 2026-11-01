@@ -22,6 +22,7 @@ import osm.wire.field :
     WireType,
     readFieldHeader,
     readLengthDelimited,
+    readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint : readVarint32;
 
@@ -54,6 +55,15 @@ struct TagValidationSummary
     }
 }
 
+
+private struct DecodedTagPair
+{
+    uint keySid;
+    uint valueSid;
+    size_t keyOffset;
+    size_t valueOffset;
+}
+
 /** Borrowed input range over one normal element's validated ordered tags. */
 struct TagRange
 {
@@ -67,21 +77,21 @@ private:
 public:
     /** Returns `true` when no tag remains. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of tags not yet consumed. */
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current validated tag. The range must be non-empty. */
     pragma(inline, true)
-    @property TagView front() const @safe nothrow @nogc
+    @property TagView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
@@ -89,7 +99,7 @@ public:
 
     /** Advance to the next validated tag. */
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
@@ -100,15 +110,75 @@ public:
         }
 
         PbfStatus ignored;
-        TagView next;
-        if (!decodeValidatedPair(_keys, _vals, _table, next, ignored))
+        if (!advance(ignored))
         {
             // The backing bytes were completely prevalidated and must remain unchanged.
             _remaining = 0;
             _front = TagView.init;
-            return;
         }
-        _front = next;
+    }
+
+private:
+    pragma(inline, true)
+    bool advance(out PbfStatus status) scope @safe nothrow @nogc
+    {
+        DecodedTagPair decoded;
+        if (!decodeValidatedPairScalars(
+                _keys,
+                _vals,
+                decoded,
+                status))
+            return false;
+
+        if (cast(size_t)decoded.keySid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.keyOffset,
+                2);
+            return false;
+        }
+        if (cast(size_t)decoded.valueSid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.valueOffset,
+                3);
+            return false;
+        }
+
+        const keyRef = _table.entries[cast(size_t)decoded.keySid];
+        const valueRef = _table.entries[cast(size_t)decoded.valueSid];
+
+        const keyStart = cast(size_t)keyRef.offset;
+        const keyFinish = keyStart + cast(size_t)keyRef.length;
+        const valueStart = cast(size_t)valueRef.offset;
+        const valueFinish = valueStart + cast(size_t)valueRef.length;
+
+        if (keyFinish < keyStart || keyFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.keyOffset,
+                2);
+            return false;
+        }
+        if (valueFinish < valueStart || valueFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.valueOffset,
+                3);
+            return false;
+        }
+
+        _front = TagView(
+            decoded.keySid,
+            decoded.valueSid,
+            _table.rawBlock[keyStart .. keyFinish],
+            _table.rawBlock[valueStart .. valueFinish]);
+        status = PbfStatus.init;
+        return true;
     }
 }
 
@@ -195,12 +265,7 @@ bool buildTagRange(
 
     if (range._remaining != 0)
     {
-        if (!decodeValidatedPair(
-            range._keys,
-            range._vals,
-            table,
-            range._front,
-            status))
+        if (!range.advance(status))
         {
             range = TagRange.init;
             return false;
@@ -245,12 +310,7 @@ bool buildPrevalidatedPackedTagRange(
 
     if (range._remaining != 0)
     {
-        if (!decodeValidatedPair(
-            range._keys,
-            range._vals,
-            table,
-            range._front,
-            status))
+        if (!range.advance(status))
         {
             range = TagRange.init;
             return false;
@@ -293,23 +353,20 @@ private bool validateStringId(
 }
 
 pragma(inline, true)
-private bool decodeValidatedPair(
-    ref UInt32FieldCursor keys,
-    ref UInt32FieldCursor vals,
-    StringTableView table,
-    out TagView tag,
+private bool decodeValidatedPairScalars(
+    scope ref UInt32FieldCursor keys,
+    scope ref UInt32FieldCursor vals,
+    out DecodedTagPair decoded,
     out PbfStatus status)
     @safe nothrow @nogc
 {
-    tag = TagView.init;
+    decoded = DecodedTagPair.init;
 
-    uint keySid;
-    uint valueSid;
     bool hasKey;
     bool hasValue;
 
-    if (!keys.next(keySid, hasKey, status) ||
-        !vals.next(valueSid, hasValue, status))
+    if (!keys.next(decoded.keySid, hasKey, status) ||
+        !vals.next(decoded.valueSid, hasValue, status))
         return false;
 
     if (!hasKey || !hasValue)
@@ -318,29 +375,12 @@ private bool decodeValidatedPair(
         return false;
     }
 
-    const(ubyte)[] key;
-    const(ubyte)[] value;
-    if (!table.get(keySid, key))
-    {
-        status = PbfStatus.failure(
-            PbfError.tagStringIdOutOfRange,
-            keys.lastValueOffset,
-            2);
-        return false;
-    }
-    if (!table.get(valueSid, value))
-    {
-        status = PbfStatus.failure(
-            PbfError.tagStringIdOutOfRange,
-            vals.lastValueOffset,
-            3);
-        return false;
-    }
-
-    tag = TagView(keySid, valueSid, key, value);
+    decoded.keyOffset = keys.lastValueOffset;
+    decoded.valueOffset = vals.lastValueOffset;
     status = PbfStatus.init;
     return true;
 }
+
 
 /** Logical cursor over one repeated uint32 field in a protobuf message. */
 private struct UInt32FieldCursor
@@ -385,14 +425,14 @@ public:
         return result;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     pragma(inline, true)
     bool next(out uint value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -446,16 +486,21 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(_message, field.number, packed, wire))
+                    bool ok;
+                    auto packed = readLengthDelimitedCursor(
+                        _message,
+                        field.number,
+                        ok,
+                        wire);
+                    if (!ok)
                     {
                         status = PbfStatus.fromTagWire(wire, _baseOffset);
                         return false;
                     }
 
                     _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                        _baseOffset + _message.offset - packed.remaining;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
