@@ -69,7 +69,7 @@ struct Consumer
     size_t ways;
     size_t relations;
 
-    void node(T)(scope ref T value) @safe nothrow @nogc
+    void node(scope ref NodeView value) @safe nothrow @nogc
     {
         static assert(!__traits(compiles, value.latNano));
         static assert(!__traits(compiles, value.lonNano));
