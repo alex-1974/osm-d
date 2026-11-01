@@ -44,6 +44,7 @@ import osm.wire.field :
     WireType,
     readFieldHeader,
     readLengthDelimited,
+    readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint :
     readSVarint64,
@@ -93,21 +94,21 @@ private:
 public:
     /** Returns `true` when no node reference remains. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of node references not yet consumed. */
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current absolute OSM node ID. */
     pragma(inline, true)
-    @property long front() const @safe pure nothrow @nogc
+    @property long front() const scope @safe pure nothrow @nogc
     in (!empty)
     {
         return _front;
@@ -115,7 +116,7 @@ public:
 
     /** Advance to the next already validated absolute node ID. */
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
@@ -179,26 +180,26 @@ private:
 
 public:
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     pragma(inline, true)
-    @property WayLocationView front() const @safe pure nothrow @nogc
+    @property WayLocationView front() const scope @safe pure nothrow @nogc
     in (!empty)
     {
         return _front;
     }
 
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
@@ -2550,14 +2551,14 @@ public:
         return result;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     pragma(inline, true)
     bool next(out long value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -2611,16 +2612,21 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(_message, field.number, packed, wire))
+                    bool ok;
+                    auto packed = readLengthDelimitedCursor(
+                        _message,
+                        field.number,
+                        ok,
+                        wire);
+                    if (!ok)
                     {
                         status = PbfStatus.fromWayWire(wire, _baseOffset);
                         return false;
                     }
 
                     _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                        _baseOffset + _message.offset - packed.remaining;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;

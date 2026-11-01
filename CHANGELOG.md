@@ -7,6 +7,8 @@ stable release.
 
 ## Unreleased
 
+- Fixed DIP1000 usability of borrowed reader ranges from `scope ref` callbacks. Normal tags, DenseNodes tags, Way references, Way locations, and relation members can now be iterated from external `@safe nothrow @nogc` consumers without `@trusted`; length-delimited wire traversal uses a scope-returning child cursor so backing slices remain lifetime-bound.
+
 - Added format-independent `RelationMemberView` using `ElementType`, `OsmId`, and borrowed role bytes. PBF `role_sid` remains internal to StringTable decoding, and the duplicate public `RelationMemberType` enum no longer crosses the consumer boundary.
 
 - Added format-independent `MetadataView` for OSM element version, timestamp, changeset, independently optional user ID/username, and visibility. Regular Node, DenseNodes-backed Node, Way, and Relation views expose the same `metadata` property without changing decoder storage; raw PBF timestamp units and StringTable IDs remain below the consumer boundary.
