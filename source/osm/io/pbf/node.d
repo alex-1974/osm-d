@@ -221,6 +221,121 @@ bool decodeNodes(Sink)(
     return true;
 }
 
+/**
+ * Decode regular Nodes until the supplied sink requests foreach termination.
+ *
+ * This package-internal variant exists only for the high-level foreach adapter.
+ * It preserves the same complete regular-node preflight as `decodeNodes`, then
+ * returns the sink's exact non-zero control value immediately after the node
+ * that produced it. A zero control value means the complete regular-node
+ * sequence was emitted.
+ *
+ * The ordinary `decodeNodes` path remains unchanged and retains its
+ * `nothrow @nogc` sink contract.
+ */
+package(osm)
+bool decodeNodesUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref Sink sink,
+    out int control,
+    out NodeDecodeSummary summary,
+    out PbfStatus status)
+    @safe
+{
+    control = 0;
+    summary = NodeDecodeSummary.init;
+
+    if (group.nodeOccurrences == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    size_t preflightCount;
+    size_t preflightTagCount;
+    auto preflight = NodeMessageCursor(group.raw);
+
+    while (true)
+    {
+        NodeMessageRef nodeRef;
+        bool hasNode;
+        if (!preflight.next(nodeRef, hasNode, status))
+            return false;
+        if (!hasNode)
+            break;
+
+        ParsedNode parsed;
+        if (!parseNode(block, nodeRef, table, parsed, status))
+            return false;
+
+        ++preflightCount;
+        preflightTagCount += parsed.tags.tagCount;
+    }
+
+    if (preflightCount != group.nodeOccurrences)
+    {
+        status = PbfStatus.failure(PbfError.nodeCountMismatch, 0, 1);
+        return false;
+    }
+
+    auto nodes = NodeMessageCursor(group.raw);
+
+    while (true)
+    {
+        NodeMessageRef nodeRef;
+        bool hasNode;
+        if (!nodes.next(nodeRef, hasNode, status))
+            return false;
+        if (!hasNode)
+            break;
+
+        ParsedNode parsed;
+        if (!parsePrevalidatedNode(block, nodeRef, table, parsed, status))
+            return false;
+
+        TagRange tags;
+        if (!buildTagRange(
+                nodeRef.bytes,
+                nodeRef.rawOffset,
+                table,
+                parsed.tags,
+                tags,
+                status))
+            return false;
+
+        NodeView node = NodeView(
+            parsed.id,
+            parsed.latNano,
+            parsed.lonNano,
+            tags,
+            parsed.info,
+            nodeRef.bytes,
+            nodeRef.rawOffset);
+
+        control = sink.put(node);
+        ++summary.nodeCount;
+        summary.tagCount += parsed.tags.tagCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
+    }
+
+    if (summary.nodeCount != preflightCount ||
+        summary.tagCount != preflightTagCount)
+    {
+        status = PbfStatus.failure(PbfError.nodeCountMismatch, 0, 1);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
 private bool parseNode(
     ref const PrimitiveBlockLayout block,
     NodeMessageRef nodeRef,
