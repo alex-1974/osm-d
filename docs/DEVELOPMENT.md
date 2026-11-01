@@ -85,7 +85,11 @@ During pre-1.0 development, the package root `osm` remains intentionally small;
 it does not re-export every technically importable implementation module.
 
 Consumer-facing code should use documented high-level decoders, borrowed views,
-ranges, status types, and format-independent contracts. Low-level validation
+ranges, status types, and format-independent contracts. Borrowed ranges reached
+from `PbfReader` callbacks must remain iterable from external `scope ref`
+`@safe` consumers; Fast CI compiles normal tags, DenseNodes tags, Way
+references, Way locations, and Relation members through that boundary.
+Low-level validation
 summaries and validate/prevalidated-build entry points are implementation
 details when they exist only to carry proof from one internal decoding pass to
 another. Such declarations use `package(osm)` where cross-module production use
