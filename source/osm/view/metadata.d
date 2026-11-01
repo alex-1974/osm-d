@@ -59,7 +59,7 @@ package(osm):
         bool hasUserId,
         int userId,
         bool hasUsername,
-        const(ubyte)[] username,
+        return scope const(ubyte)[] username,
         bool hasVisibility,
         bool visible)
         @safe pure nothrow @nogc
