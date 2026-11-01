@@ -13,6 +13,7 @@
  */
 module osm.io.pbf.tags;
 
+import osm.view.tag : TagView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.string_table : StringTableView;
 import osm.wire.cursor : WireCursor;
@@ -25,19 +26,6 @@ import osm.wire.field :
     readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint : readVarint32;
-
-/** One ordered borrowed tag from normal element `keys`/`vals` arrays. */
-struct TagView
-{
-    /// Validated non-zero StringTable ID of the tag key.
-    uint keySid;
-    /// Validated non-zero StringTable ID of the tag value.
-    uint valueSid;
-    /// Borrowed raw key bytes.
-    const(ubyte)[] key;
-    /// Borrowed raw value bytes.
-    const(ubyte)[] value;
-}
 
 /** Shape validated for one normal element's parallel tag arrays. */
 package(osm)
@@ -72,6 +60,8 @@ private:
     UInt32FieldCursor _vals;
     StringTableView _table;
     TagView _front;
+    uint _frontKeySid;
+    uint _frontValueSid;
     size_t _remaining;
 
 public:
@@ -97,6 +87,24 @@ public:
         return _front;
     }
 
+package(osm):
+    /** Current PBF StringTable ID of the key, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontKeyStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontKeySid;
+    }
+
+    /** Current PBF StringTable ID of the value, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontValueStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontValueSid;
+    }
+
+public:
     /** Advance to the next validated tag. */
     pragma(inline, true)
     void popFront() scope @safe nothrow @nogc
@@ -106,6 +114,8 @@ public:
         if (_remaining == 0)
         {
             _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
             return;
         }
 
@@ -115,6 +125,8 @@ public:
             // The backing bytes were completely prevalidated and must remain unchanged.
             _remaining = 0;
             _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
         }
     }
 
@@ -172,9 +184,9 @@ private:
             return false;
         }
 
+        _frontKeySid = decoded.keySid;
+        _frontValueSid = decoded.valueSid;
         _front = TagView(
-            decoded.keySid,
-            decoded.valueSid,
             _table.rawBlock[keyStart .. keyFinish],
             _table.rawBlock[valueStart .. valueFinish]);
         status = PbfStatus.init;
@@ -563,10 +575,10 @@ unittest
 
     const(ubyte)[] a = ['a'];
     const(ubyte)[] b = ['b'];
-    assert(tags.front.keySid == 1 && tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     assert(tags.front.key == a);
     tags.popFront();
-    assert(tags.front.keySid == 3 && tags.front.valueSid == 4);
+    assert(tags.frontKeyStringId == 3 && tags.frontValueStringId == 4);
     assert(tags.front.key == b);
     tags.popFront();
     assert(tags.empty);
@@ -631,8 +643,8 @@ unittest
     TagRange tags;
     assert(buildTagRange(element, 0, table, summary, tags, status));
     assert(tags.length == 1);
-    assert(tags.front.keySid == 1);
-    assert(tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1);
+    assert(tags.frontValueStringId == 2);
 }
 
 
@@ -672,12 +684,12 @@ unittest
     assert(status.ok);
     assert(range.length == 2);
 
-    assert(range.front.keySid == 1);
-    assert(range.front.valueSid == 2);
+    assert(range.frontKeyStringId == 1);
+    assert(range.frontValueStringId == 2);
     range.popFront();
 
-    assert(range.front.keySid == 3);
-    assert(range.front.valueSid == 4);
+    assert(range.frontKeyStringId == 3);
+    assert(range.frontValueStringId == 4);
     range.popFront();
 
     assert(range.empty);
