@@ -511,6 +511,13 @@ smaller semantic error surface.
 | validation/preflight summaries | internal | hide implementation phase |
 | `WireCursor` / varint helpers | internal | hide protobuf mechanism |
 
+Implementation note (2026-11-01): the ordinary reader boundary now hides
+direct Node nanodegree fields, codec `Info`/`DenseInfo` state, regular
+Node/Way/Relation raw payload provenance, and the transitional Way
+`refs`/`locations` columns from external consumers. The same representation
+remains package-visible to codec tests and benchmarks, so this step changes
+visibility rather than data layout or decoding.
+
 ## Compatibility direction
 
 There is no released API freeze that requires preserving accidental exposure of

@@ -45,13 +45,17 @@ import osm.wire.varint : readSVarint64FailureOnly;
 /** One validated dense node with exact coordinates in nanodegrees. */
 struct DenseNodeView
 {
+public:
     /// Signed OSM object ID after delta accumulation.
     long id;
+
+package(osm):
     /// Exact latitude in nanodegrees after granularity/offset conversion.
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
 
+public:
     /** Semantic location with exact backing and lazy degree conversion. */
     pragma(inline, true)
     @property LocationView location() const scope
@@ -62,9 +66,12 @@ struct DenseNodeView
 
     /// Borrowed ordered tags for this node.
     DenseTagRange tags;
+
+package(osm):
     /// Optional decoded metadata from the DenseInfo columns.
     DenseInfoView info;
 
+public:
     /** Format-independent OSM metadata without DenseInfo vocabulary. */
     pragma(inline, true)
     @property MetadataView metadata() const return scope

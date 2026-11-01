@@ -317,10 +317,13 @@ public:
 /** One validated regular Way with borrowed tags, refs, metadata, and provenance. */
 struct WayView
 {
+public:
     /// Signed OSM object ID as encoded by the Way `int64` field.
     long id;
     /// Borrowed ordered normal-element tags.
     TagRange tags;
+
+package(osm):
     /// Borrowed ordered absolute OSM node IDs reconstructed from `refs` deltas.
     WayRefRange refs;
     /// Optional exact coordinates aligned one-to-one with `refs`. Empty when absent.
@@ -328,6 +331,7 @@ struct WayView
     /// Optional merged Info metadata.
     InfoView info;
 
+public:
     /**
      * Ordered semantic Way node references with optional aligned locations.
      *
@@ -355,11 +359,13 @@ struct WayView
             info.hasVisible, info.visible);
     }
 
+package(osm):
     /// Complete original serialized Way payload, excluding group key/length.
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
 
+public:
     /// Semantic OSM element kind.
     @property ElementType type() const scope
         @safe pure nothrow @nogc
