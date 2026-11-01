@@ -48,7 +48,7 @@ The current pre-1.0 surface is classified as follows:
 
 - `osm` is the curated package root. It now re-exports the consumer-facing
   whole-buffer PBF reader boundary: `PbfReader`, `PbfReaderWorkspace`,
-  `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`, and `PbfReadStage`.
+  `PbfReadSummary`, `PbfReadStatus`, and `PbfReadError`.
   It does not re-export the evolving low-level PBF or wire implementation
   surface.
 - `osm.view.element` is a supported semantic direct-import API. Its
