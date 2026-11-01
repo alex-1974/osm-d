@@ -38,7 +38,7 @@ import osm.io.pbf.tags :
     validateTags;
 import osm.util.checked : checkedAdd;
 import osm.wire.cursor : WireCursor;
-import osm.wire.error : WireStatus;
+import osm.wire.error : WireError, WireStatus;
 import osm.wire.field :
     FieldHeader,
     WireType,
@@ -69,6 +69,15 @@ struct RelationMemberValidationSummary
     {
         return idCount;
     }
+}
+
+
+private struct DecodedRelationMember
+{
+    ElementType type;
+    long id;
+    uint roleSid;
+    size_t roleOffset;
 }
 
 
@@ -120,23 +129,54 @@ public:
         }
 
         PbfStatus ignored;
-        RelationMemberView next;
-        if (!decodeValidatedMember(
-            _roles,
-            _ids,
-            _types,
-            _table,
-            _currentId,
-            next,
-            ignored))
+        if (!advance(ignored))
         {
             // The backing bytes were completely preflighted and must remain unchanged.
             _remaining = 0;
             _front = RelationMemberView.init;
-            return;
+        }
+    }
+
+private:
+    pragma(inline, true)
+    bool advance(out PbfStatus status) scope @safe nothrow @nogc
+    {
+        DecodedRelationMember decoded;
+        if (!decodeValidatedMemberScalars(
+                _roles,
+                _ids,
+                _types,
+                _table.entries.length,
+                _currentId,
+                decoded,
+                status))
+            return false;
+
+        if (cast(size_t)decoded.roleSid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.relationRoleStringIdOutOfRange,
+                decoded.roleOffset,
+                8);
+            return false;
         }
 
-        _front = next;
+        const item = _table.entries[cast(size_t)decoded.roleSid];
+        const start = cast(size_t)item.offset;
+        const finish = start + cast(size_t)item.length;
+        if (finish < start || finish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.relationRoleStringIdOutOfRange,
+                decoded.roleOffset,
+                8);
+            return false;
+        }
+
+        const role = _table.rawBlock[start .. finish];
+        _front = RelationMemberView(decoded.type, decoded.id, role);
+        status = PbfStatus.init;
+        return true;
     }
 }
 
@@ -584,14 +624,7 @@ bool buildRelationMemberRange(
         return true;
     }
 
-    if (!decodeValidatedMember(
-        range._roles,
-        range._ids,
-        range._types,
-        table,
-        range._currentId,
-        range._front,
-        status))
+    if (!range.advance(status))
     {
         range = RelationMemberRange.init;
         return false;
@@ -603,17 +636,17 @@ bool buildRelationMemberRange(
 
 
 pragma(inline, true)
-private bool decodeValidatedMember(
-    ref Int32FieldCursor roles,
-    ref SInt64FieldCursor ids,
-    ref Int32FieldCursor types,
-    StringTableView table,
+private bool decodeValidatedMemberScalars(
+    scope ref Int32FieldCursor roles,
+    scope ref SInt64FieldCursor ids,
+    scope ref Int32FieldCursor types,
+    size_t stringCount,
     ref long currentId,
-    out RelationMemberView member,
+    out DecodedRelationMember member,
     out PbfStatus status)
     @safe nothrow @nogc
 {
-    member = RelationMemberView.init;
+    member = DecodedRelationMember.init;
 
     int roleSidValue;
     long idDelta;
@@ -646,8 +679,7 @@ private bool decodeValidatedMember(
     }
 
     const roleSid = cast(uint)roleSidValue;
-    const(ubyte)[] role;
-    if (!table.get(cast(size_t)roleSid, role))
+    if (cast(size_t)roleSid >= stringCount)
     {
         status = PbfStatus.failure(
             PbfError.relationRoleStringIdOutOfRange,
@@ -676,10 +708,10 @@ private bool decodeValidatedMember(
     }
 
     currentId = nextId;
-    member = RelationMemberView(
-        cast(ElementType)typeValue,
-        nextId,
-        role);
+    member.type = cast(ElementType)typeValue;
+    member.id = nextId;
+    member.roleSid = roleSid;
+    member.roleOffset = roles.lastValueOffset;
 
     status = PbfStatus.init;
     return true;
@@ -758,6 +790,88 @@ public:
 }
 
 
+pragma(inline, true)
+private bool skipRelationFieldValue(
+    scope ref WireCursor cursor,
+    FieldHeader header,
+    out WireStatus status)
+    @safe nothrow @nogc
+{
+    final switch (header.wireType)
+    {
+        case WireType.varint:
+            ulong ignored;
+            if (!readVarint64(cursor, ignored, status))
+            {
+                if (status.fieldNumber == 0)
+                    status.fieldNumber = header.number;
+                return false;
+            }
+            return true;
+
+        case WireType.fixed64:
+            if (!cursor.skip(8))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    cursor.offset,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.lengthDelimited:
+            const start = cursor.offset;
+            ulong encodedLength;
+            if (!readVarint64(cursor, encodedLength, status))
+            {
+                if (status.fieldNumber == 0)
+                    status.fieldNumber = header.number;
+                return false;
+            }
+            if (encodedLength > cast(ulong)size_t.max)
+            {
+                status = WireStatus.failure(
+                    WireError.lengthOverflow,
+                    start,
+                    header.number);
+                return false;
+            }
+            if (!cursor.skip(cast(size_t)encodedLength))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    start,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.fixed32:
+            if (!cursor.skip(4))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    cursor.offset,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.startGroup:
+        case WireType.endGroup:
+            status = WireStatus.failure(
+                WireError.unsupportedGroup,
+                header.offset,
+                header.number);
+            return false;
+    }
+}
+
+
 /** Logical cursor over one repeated protobuf int32/enum field. */
 private struct Int32FieldCursor
 {
@@ -781,13 +895,13 @@ public:
         _fieldNumber = fieldNumber;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     bool next(out int value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -852,22 +966,49 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(
-                        _message,
-                        field.number,
-                        packed,
-                        wire))
+                    const lengthOffset = _message.offset;
+                    ulong encodedLength;
+                    if (!readVarint64(_message, encodedLength, wire))
                     {
+                        if (wire.fieldNumber == 0)
+                            wire.fieldNumber = field.number;
                         status = PbfStatus.fromRelationWire(
                             wire,
                             _baseOffset);
                         return false;
                     }
 
-                    _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                    if (encodedLength > cast(ulong)size_t.max)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.lengthOverflow,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    const payloadOffset = _message.offset;
+                    bool tookPayload;
+                    auto packed = _message.takeCursor(
+                        cast(size_t)encodedLength,
+                        tookPayload);
+                    if (!tookPayload)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.truncatedInput,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    _packedBase = _baseOffset + payloadOffset;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
@@ -876,7 +1017,7 @@ public:
                     continue;
                 }
 
-                if (!skipFieldValue(_message, field, wire))
+                if (!skipRelationFieldValue(_message, field, wire))
                 {
                     status = PbfStatus.fromRelationWire(
                         wire,
@@ -921,13 +1062,13 @@ public:
         _fieldNumber = fieldNumber;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     bool next(out long value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -988,22 +1129,49 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(
-                        _message,
-                        field.number,
-                        packed,
-                        wire))
+                    const lengthOffset = _message.offset;
+                    ulong encodedLength;
+                    if (!readVarint64(_message, encodedLength, wire))
                     {
+                        if (wire.fieldNumber == 0)
+                            wire.fieldNumber = field.number;
                         status = PbfStatus.fromRelationWire(
                             wire,
                             _baseOffset);
                         return false;
                     }
 
-                    _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                    if (encodedLength > cast(ulong)size_t.max)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.lengthOverflow,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    const payloadOffset = _message.offset;
+                    bool tookPayload;
+                    auto packed = _message.takeCursor(
+                        cast(size_t)encodedLength,
+                        tookPayload);
+                    if (!tookPayload)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.truncatedInput,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    _packedBase = _baseOffset + payloadOffset;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
@@ -1012,7 +1180,7 @@ public:
                     continue;
                 }
 
-                if (!skipFieldValue(_message, field, wire))
+                if (!skipRelationFieldValue(_message, field, wire))
                 {
                     status = PbfStatus.fromRelationWire(
                         wire,
