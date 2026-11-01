@@ -17,7 +17,7 @@
  * Copyright: Copyright © 2026 Alexander Bernardi
  * License: MIT
  */
-module benchmark.micro.dense_nodes;
+module osm.benchmark.micro.dense_nodes;
 
 import osm.io.pbf.dense_info : DenseInfoView;
 import osm.io.pbf.dense_nodes :
@@ -149,9 +149,8 @@ private struct TagIdSink
         auto tags = node.tags;
         while (!tags.empty)
         {
-            const tag = tags.front;
-            checksum = mix(checksum, tag.keySid);
-            checksum = mix(checksum, tag.valueSid);
+            checksum = mix(checksum, tags.frontKeyStringId);
+            checksum = mix(checksum, tags.frontValueStringId);
             ++tagCount;
             tags.popFront();
         }
@@ -186,8 +185,8 @@ private struct TagByteSink
         while (!tags.empty)
         {
             const tag = tags.front;
-            checksum = mix(checksum, tag.keySid);
-            checksum = mix(checksum, tag.valueSid);
+            checksum = mix(checksum, tags.frontKeyStringId);
+            checksum = mix(checksum, tags.frontValueStringId);
             checksum = mix(checksum, tag.key.length);
             checksum = mix(checksum, tag.value.length);
 

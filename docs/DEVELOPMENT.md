@@ -49,15 +49,17 @@ The current pre-1.0 surface is classified as follows:
 - `osm` is the curated package root. It re-exports the consumer-facing
   whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
   `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
-  format-independent semantic identity/location/metadata/member/way-node
+  format-independent semantic identity/location/metadata/tag/member/way-node
   vocabulary (`OsmId`, `ElementType`, `LocationView`, `MetadataView`,
-  `RelationMemberView`, `WayNodeView`). It does not re-export the evolving low-level
+  `TagView`, `RelationMemberView`, `WayNodeView`). It does not re-export
+  the evolving low-level
   PBF or wire implementation surface.
 - `osm.view.element`, `osm.view.location`, `osm.view.metadata`,
-  `osm.view.relation_member`, and `osm.view.way_node` are supported semantic
-  direct-import APIs. The `ElementType`, `OsmId`, structural `isElementView`
-  contract, `LocationView`, `MetadataView`, `RelationMemberView`, and
-  `WayNodeView` form the current format-independent borrowed semantic
+  `osm.view.tag`, `osm.view.relation_member`, and `osm.view.way_node` are
+  supported semantic direct-import APIs. The `ElementType`, `OsmId`,
+  structural `isElementView` contract, `LocationView`, `MetadataView`,
+  `TagView`, `RelationMemberView`, and `WayNodeView` form the current
+  format-independent borrowed semantic
   boundary described by ADR 0016 and the consumer API design.
 - `osm.io.pbf.reader` is the supported direct-import module for the same
   consumer-facing PBF reader boundary exported by `osm`.
@@ -88,9 +90,11 @@ Consumer-facing code should use documented high-level decoders, borrowed views,
 ranges, status types, and format-independent contracts. Borrowed ranges reached
 from `PbfReader` callbacks must remain iterable from external `scope ref`
 `@safe` consumers; Fast CI compiles normal tags, DenseNodes tags, semantic
-Way nodes, and Relation members through that boundary. The direct PBF
-`refs`/`locations` ranges remain available during the pre-1.0 transition,
-but ordinary consumers should prefer `way.nodes`.
+Way nodes, and Relation members through that boundary. Normal and DenseNodes
+tag ranges both return the same semantic `TagView`; PBF StringTable IDs are
+retained only inside codec ranges for validation and internal diagnostics.
+The direct PBF `refs`/`locations` ranges remain available during the pre-1.0
+transition, but ordinary consumers should prefer `way.nodes`.
 Low-level validation
 summaries and validate/prevalidated-build entry points are implementation
 details when they exist only to carry proof from one internal decoding pass to

@@ -1276,8 +1276,8 @@ unittest
 
     auto tags = sink.relation.tags;
     assert(tags.length == 1);
-    assert(tags.front.keySid == 1);
-    assert(tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1);
+    assert(tags.frontValueStringId == 2);
 
     auto members = sink.relation.members;
     assert(members.length == 3);

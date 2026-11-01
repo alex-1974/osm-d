@@ -124,6 +124,15 @@ struct Handler
             int userId = metadata.userId;
         if (metadata.hasUsername)
             auto username = metadata.username;
+
+        auto tags = node.tags;
+        while (!tags.empty)
+        {
+            TagView tag = tags.front;
+            const key = tag.key;
+            const value = tag.value;
+            tags.popFront();
+        }
     }
 }
 
@@ -148,8 +157,10 @@ templated so it accepts both regular and DenseNodes-backed borrowed views
 without exposing the encoding distinction at the call-site. Relation members
 are already format-independent at the consumer boundary: each member exposes
 `ElementType type`, `OsmId id`, and borrowed role bytes without PBF
-StringTable IDs. Way callbacks expose ordered node references through
-`way.nodes`: each `WayNodeView` carries the referenced `OsmId` and, when
+StringTable IDs. Tags from regular elements and DenseNodes expose the same
+format-independent `TagView` containing only borrowed key/value bytes; PBF
+StringTable IDs remain below the consumer boundary. Way callbacks expose ordered
+node references through `way.nodes`: each `WayNodeView` carries the referenced `OsmId` and, when
 the input provides `LocationsOnWays`, an optional `LocationView`. Consumers
 therefore do not need to zip PBF reference and coordinate columns themselves.
 The remaining semantic-view unification is tracked separately from the reader

@@ -2801,9 +2801,9 @@ unittest
 
     auto tags = sink.way.tags;
     assert(tags.length == 2);
-    assert(tags.front.keySid == 1 && tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     tags.popFront();
-    assert(tags.front.keySid == 3 && tags.front.valueSid == 4);
+    assert(tags.frontKeyStringId == 3 && tags.frontValueStringId == 4);
     tags.popFront();
     assert(tags.empty);
 
@@ -3597,8 +3597,8 @@ unittest
     while (!legacyTags.empty)
     {
         assert(!planTags.empty);
-        assert(legacyTags.front.keySid == planTags.front.keySid);
-        assert(legacyTags.front.valueSid == planTags.front.valueSid);
+        assert(legacyTags.frontKeyStringId == planTags.frontKeyStringId);
+        assert(legacyTags.frontValueStringId == planTags.frontValueStringId);
         assert(legacyTags.front.key == planTags.front.key);
         assert(legacyTags.front.value == planTags.front.value);
         legacyTags.popFront();

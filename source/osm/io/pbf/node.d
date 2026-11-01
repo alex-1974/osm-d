@@ -711,9 +711,9 @@ unittest
 
     auto tags = sink.node.tags;
     assert(tags.length == 2);
-    assert(tags.front.keySid == 1 && tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     tags.popFront();
-    assert(tags.front.keySid == 3 && tags.front.valueSid == 4);
+    assert(tags.frontKeyStringId == 3 && tags.frontValueStringId == 4);
 
     assert(sink.node.info.hasVersion && sink.node.info.version_ == 7);
     assert(sink.node.info.hasTimestamp);
