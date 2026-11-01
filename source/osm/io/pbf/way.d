@@ -27,10 +27,11 @@ import osm.io.pbf.info :
     mergeInfoMessage;
 import osm.io.pbf.primitive_block : PrimitiveBlockLayout;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
-import osm.io.pbf.string_table : StringTableView;
+import osm.io.pbf.string_table : StringRef, StringTableView;
 import osm.io.pbf.tags :
     TagRange,
     TagValidationSummary,
+    buildPrevalidatedPackedTagRange,
     buildTagRange,
     validateTags;
 import osm.util.checked : checkedAdd, checkedMulAdd;
@@ -296,6 +297,1153 @@ private struct ParsedWay
     TagValidationSummary tags;
     WayRefValidationSummary refs;
     WayLocationValidationSummary locations;
+}
+
+/**
+ * Compact copy of finalized regular-Way Info state kept in caller-owned
+ * preflight workspace.
+ *
+ * The borrowed username slice is represented by its existing StringRef so a
+ * per-Way plan does not retain a full D slice. Presence remains explicit.
+ */
+package(osm)
+struct WayCompactInfo
+{
+    long timestampValue;
+    long timestampMillis;
+    long changeset;
+    StringRef user;
+    int version_;
+    int uid;
+    uint userSid;
+    ubyte flags;
+}
+
+private enum ubyte wayInfoHasVersion   = 1u << 0;
+private enum ubyte wayInfoHasTimestamp = 1u << 1;
+private enum ubyte wayInfoHasChangeset = 1u << 2;
+private enum ubyte wayInfoHasUid       = 1u << 3;
+private enum ubyte wayInfoHasUser      = 1u << 4;
+private enum ubyte wayInfoHasVisible   = 1u << 5;
+private enum ubyte wayInfoVisibleValue = 1u << 6;
+
+/**
+ * Compact location of one canonical packed repeated-field payload.
+ *
+ * Offsets are relative to PrimitiveGroupLayout.raw.
+ */
+package(osm)
+struct WayPackedSpan
+{
+    uint offset;
+    uint length;
+}
+
+/**
+ * Caller-owned per-Way semantic/emission plan.
+ *
+ * Every entry describes one fully preflighted Way. `canonicalPacked` means
+ * keys, vals, refs, lats and lons are each absent or represented by exactly
+ * one packed occurrence, allowing emission ranges to start directly from the
+ * saved payload spans. Otherwise the existing generic range builders remain
+ * authoritative for the same validated raw Way bytes.
+ */
+package(osm)
+struct WayDecodePlan
+{
+    long id;
+    WayCompactInfo info;
+    uint rawOffset;
+    uint rawLength;
+    uint tagCount;
+    uint refCount;
+    uint locationCount;
+    WayPackedSpan keys;
+    WayPackedSpan vals;
+    WayPackedSpan refs;
+    WayPackedSpan lats;
+    WayPackedSpan lons;
+    bool canonicalPacked;
+}
+
+static if (size_t.sizeof == 8)
+{
+    static assert(WayCompactInfo.sizeof == 48);
+    static assert(WayPackedSpan.sizeof == 8);
+    static assert(WayDecodePlan.sizeof == 120);
+}
+
+pragma(inline, true)
+private WayCompactInfo compactInfoFromView(
+    ref const InfoView info,
+    StringTableView table)
+    @safe pure nothrow @nogc
+{
+    WayCompactInfo compact;
+    compact.timestampValue = info.timestampValue;
+    compact.timestampMillis = info.timestampMillis;
+    compact.changeset = info.changeset;
+    compact.version_ = info.version_;
+    compact.uid = info.uid;
+    compact.userSid = info.userSid;
+
+    if (info.hasUser)
+    {
+        const index = cast(size_t)info.userSid;
+        if (index < table.entries.length)
+            compact.user = table.entries[index];
+    }
+
+    if (info.hasVersion)
+        compact.flags |= wayInfoHasVersion;
+    if (info.hasTimestamp)
+        compact.flags |= wayInfoHasTimestamp;
+    if (info.hasChangeset)
+        compact.flags |= wayInfoHasChangeset;
+    if (info.hasUid)
+        compact.flags |= wayInfoHasUid;
+    if (info.hasUser)
+        compact.flags |= wayInfoHasUser;
+    if (info.hasVisible)
+        compact.flags |= wayInfoHasVisible;
+    if (info.visible)
+        compact.flags |= wayInfoVisibleValue;
+
+    return compact;
+}
+
+pragma(inline, true)
+private bool expandCompactInfo(
+    WayCompactInfo compact,
+    StringTableView table,
+    out InfoView info)
+    @safe nothrow @nogc
+{
+    info = InfoView.init;
+
+    if (compact.flags & wayInfoHasVersion)
+    {
+        info.hasVersion = true;
+        info.version_ = compact.version_;
+    }
+
+    if (compact.flags & wayInfoHasTimestamp)
+    {
+        info.hasTimestamp = true;
+        info.timestampValue = compact.timestampValue;
+        info.timestampMillis = compact.timestampMillis;
+    }
+
+    if (compact.flags & wayInfoHasChangeset)
+    {
+        info.hasChangeset = true;
+        info.changeset = compact.changeset;
+    }
+
+    if (compact.flags & wayInfoHasUid)
+    {
+        info.hasUid = true;
+        info.uid = compact.uid;
+    }
+
+    if (compact.flags & wayInfoHasUser)
+    {
+        const start = cast(size_t)compact.user.offset;
+        const length = cast(size_t)compact.user.length;
+
+        if (start > table.rawBlock.length ||
+            length > table.rawBlock.length - start)
+            return false;
+
+        info.hasUser = true;
+        info.userSid = compact.userSid;
+        info.user = table.rawBlock[start .. start + length];
+    }
+
+    if (compact.flags & wayInfoHasVisible)
+    {
+        info.hasVisible = true;
+        info.visible = (compact.flags & wayInfoVisibleValue) != 0;
+    }
+
+    return true;
+}
+
+/**
+ * Result of attempting the narrow canonical packed-Way preflight.
+ *
+ * `fallback` is not an input error. It means the Way uses a legal protobuf
+ * representation that must be handled by the existing generic parser.
+ */
+private enum CanonicalWayPlanResult : ubyte
+{
+    success,
+    fallback,
+    error,
+}
+
+pragma(inline, true)
+private bool validateCanonicalPackedTags(
+    const(ubyte)[] keyPayload,
+    size_t keyPayloadBase,
+    const(ubyte)[] valuePayload,
+    size_t valuePayloadBase,
+    StringTableView table,
+    out TagValidationSummary summary,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    summary = TagValidationSummary.init;
+    auto keys = WireCursor(keyPayload);
+    auto vals = WireCursor(valuePayload);
+
+    while (true)
+    {
+        const hasKey = !keys.empty;
+        const hasValue = !vals.empty;
+
+        uint keySid;
+        uint valueSid;
+        const keyOffset = keyPayloadBase + keys.offset;
+        const valueOffset = valuePayloadBase + vals.offset;
+
+        if (hasKey)
+        {
+            WireStatus wire;
+            if (!readVarint32(keys, keySid, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = 2;
+                status = PbfStatus.fromTagWire(wire, keyPayloadBase);
+                return false;
+            }
+            ++summary.keyCount;
+        }
+
+        if (hasValue)
+        {
+            WireStatus wire;
+            if (!readVarint32(vals, valueSid, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = 3;
+                status = PbfStatus.fromTagWire(wire, valuePayloadBase);
+                return false;
+            }
+            ++summary.valueCount;
+        }
+
+        if (hasKey != hasValue)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagColumnLengthMismatch,
+                hasKey ? keyOffset : valueOffset,
+                hasKey ? 2 : 3);
+            return false;
+        }
+
+        if (!hasKey)
+            break;
+
+        if (keySid == 0)
+        {
+            status = PbfStatus.failure(
+                PbfError.invalidTagStringId,
+                keyOffset,
+                2);
+            return false;
+        }
+
+        if (cast(size_t)keySid >= table.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                keyOffset,
+                2);
+            return false;
+        }
+
+        if (valueSid == 0)
+        {
+            status = PbfStatus.failure(
+                PbfError.invalidTagStringId,
+                valueOffset,
+                3);
+            return false;
+        }
+
+        if (cast(size_t)valueSid >= table.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                valueOffset,
+                3);
+            return false;
+        }
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+pragma(inline, true)
+private bool validateCanonicalPackedRefs(
+    const(ubyte)[] payload,
+    size_t payloadBase,
+    ref WayRefValidationSummary summary,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    auto packed = WireCursor(payload);
+    long current;
+
+    while (!packed.empty)
+    {
+        const valueOffset = payloadBase + packed.offset;
+
+        long delta;
+        WireStatus wire;
+        if (!readSVarint64(packed, delta, wire))
+        {
+            if (wire.fieldNumber == 0)
+                wire.fieldNumber = 8;
+            status = PbfStatus.fromWayWire(wire, payloadBase);
+            return false;
+        }
+
+        long next;
+        if (!checkedAdd(current, delta, next))
+        {
+            status = PbfStatus.failure(
+                PbfError.wayRefOverflow,
+                valueOffset,
+                8);
+            return false;
+        }
+
+        current = next;
+        ++summary.refCount;
+    }
+
+    summary.finalRef = current;
+    status = PbfStatus.init;
+    return true;
+}
+
+pragma(inline, true)
+private bool validateCanonicalPackedCoordinate(
+    const(ubyte)[] payload,
+    size_t payloadBase,
+    uint fieldNumber,
+    long coordinateOffset,
+    uint granularity,
+    ref size_t count,
+    out long finalValue,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    auto packed = WireCursor(payload);
+    long current;
+
+    while (!packed.empty)
+    {
+        const valueOffset = payloadBase + packed.offset;
+
+        long delta;
+        WireStatus wire;
+        if (!readSVarint64(packed, delta, wire))
+        {
+            if (wire.fieldNumber == 0)
+                wire.fieldNumber = fieldNumber;
+            status = PbfStatus.fromWayWire(wire, payloadBase);
+            return false;
+        }
+
+        long next;
+        if (!checkedAdd(current, delta, next))
+        {
+            status = PbfStatus.failure(
+                PbfError.wayCoordinateOverflow,
+                valueOffset,
+                fieldNumber);
+            return false;
+        }
+
+        long ignoredNano;
+        if (!checkedMulAdd(
+            coordinateOffset,
+            cast(long)granularity,
+            next,
+            ignoredNano))
+        {
+            status = PbfStatus.failure(
+                PbfError.wayCoordinateOverflow,
+                valueOffset,
+                fieldNumber);
+            return false;
+        }
+
+        current = next;
+        ++count;
+    }
+
+    finalValue = current;
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Attempt one semantic field scan for the common canonical Way representation.
+ *
+ * Repeated Way columns must each be absent or represented by exactly one
+ * length-delimited packed occurrence. Any other otherwise-legal representation
+ * returns `fallback`; malformed wire data and semantic failures return `error`.
+ */
+private CanonicalWayPlanResult tryBuildCanonicalWayDecodePlan(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    WayMessageRef wayRef,
+    StringTableView table,
+    out WayDecodePlan plan,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    plan = WayDecodePlan.init;
+
+    ParsedWay parsed;
+    WayPackedSpan keys;
+    WayPackedSpan vals;
+    WayPackedSpan refs;
+    WayPackedSpan lats;
+    WayPackedSpan lons;
+
+    const(ubyte)[] keyPayload;
+    const(ubyte)[] valuePayload;
+    const(ubyte)[] refPayload;
+    const(ubyte)[] latPayload;
+    const(ubyte)[] lonPayload;
+
+    size_t keyPayloadBase;
+    size_t valuePayloadBase;
+    size_t refPayloadBase;
+    size_t latPayloadBase;
+    size_t lonPayloadBase;
+
+    bool hasId;
+    bool seenKeys;
+    bool seenVals;
+    bool seenRefs;
+    bool seenLats;
+    bool seenLons;
+
+    auto cursor = WireCursor(wayRef.bytes);
+
+    while (!cursor.empty)
+    {
+        FieldHeader field;
+        WireStatus wire;
+        if (!readFieldHeader(cursor, field, wire))
+        {
+            status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+            return CanonicalWayPlanResult.error;
+        }
+
+        if (field.number == 1 && field.wireType == WireType.varint)
+        {
+            ulong raw;
+            if (!readVarint64(cursor, raw, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return CanonicalWayPlanResult.error;
+            }
+
+            // Singular protobuf scalar: later occurrences win.
+            parsed.id = cast(long)raw;
+            hasId = true;
+            continue;
+        }
+
+        if (field.number == 4 &&
+            field.wireType == WireType.lengthDelimited)
+        {
+            const(ubyte)[] infoBytes;
+            if (!readLengthDelimited(
+                cursor,
+                field.number,
+                infoBytes,
+                wire))
+            {
+                status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+                return CanonicalWayPlanResult.error;
+            }
+
+            const infoOffset =
+                wayRef.rawOffset + cursor.offset - infoBytes.length;
+
+            if (!mergeInfoMessage(
+                infoBytes,
+                infoOffset,
+                parsed.info,
+                status))
+            {
+                return CanonicalWayPlanResult.error;
+            }
+
+            continue;
+        }
+
+        if (field.number == 2 ||
+            field.number == 3 ||
+            field.number == 8 ||
+            field.number == 9 ||
+            field.number == 10)
+        {
+            if (field.wireType != WireType.lengthDelimited)
+            {
+                status = PbfStatus.init;
+                return CanonicalWayPlanResult.fallback;
+            }
+
+            const(ubyte)[] payload;
+            if (!readLengthDelimited(
+                cursor,
+                field.number,
+                payload,
+                wire))
+            {
+                if (field.number == 2 || field.number == 3)
+                    status = PbfStatus.fromTagWire(
+                        wire,
+                        wayRef.rawOffset);
+                else
+                    status = PbfStatus.fromWayWire(
+                        wire,
+                        wayRef.rawOffset);
+                return CanonicalWayPlanResult.error;
+            }
+
+            const payloadBase =
+                wayRef.rawOffset + cursor.offset - payload.length;
+
+            if (payloadBase > uint.max ||
+                payload.length > uint.max)
+            {
+                status = PbfStatus.init;
+                return CanonicalWayPlanResult.fallback;
+            }
+
+            const span = WayPackedSpan(
+                cast(uint)payloadBase,
+                cast(uint)payload.length);
+
+            final switch (field.number)
+            {
+                case 2:
+                    if (seenKeys)
+                    {
+                        status = PbfStatus.init;
+                        return CanonicalWayPlanResult.fallback;
+                    }
+                    seenKeys = true;
+                    keyPayload = payload;
+                    keyPayloadBase = payloadBase;
+                    keys = span;
+                    break;
+
+                case 3:
+                    if (seenVals)
+                    {
+                        status = PbfStatus.init;
+                        return CanonicalWayPlanResult.fallback;
+                    }
+                    seenVals = true;
+                    valuePayload = payload;
+                    valuePayloadBase = payloadBase;
+                    vals = span;
+                    break;
+
+                case 8:
+                    if (seenRefs)
+                    {
+                        status = PbfStatus.init;
+                        return CanonicalWayPlanResult.fallback;
+                    }
+                    seenRefs = true;
+                    refPayload = payload;
+                    refPayloadBase = payloadBase;
+                    refs = span;
+                    break;
+
+                case 9:
+                    if (seenLats)
+                    {
+                        status = PbfStatus.init;
+                        return CanonicalWayPlanResult.fallback;
+                    }
+                    seenLats = true;
+                    latPayload = payload;
+                    latPayloadBase = payloadBase;
+                    lats = span;
+                    break;
+
+                case 10:
+                    if (seenLons)
+                    {
+                        status = PbfStatus.init;
+                        return CanonicalWayPlanResult.fallback;
+                    }
+                    seenLons = true;
+                    lonPayload = payload;
+                    lonPayloadBase = payloadBase;
+                    lons = span;
+                    break;
+            }
+
+            continue;
+        }
+
+        if (!skipFieldValue(cursor, field, wire))
+        {
+            status = PbfStatus.fromWayWire(wire, wayRef.rawOffset);
+            return CanonicalWayPlanResult.error;
+        }
+    }
+
+    if (!hasId)
+    {
+        status = PbfStatus.failure(
+            PbfError.missingWayId,
+            wayRef.rawOffset,
+            1);
+        return CanonicalWayPlanResult.error;
+    }
+
+    if (!finalizeInfo(block, table, parsed.info, status))
+        return CanonicalWayPlanResult.error;
+
+    // Preserve the legacy semantic failure order after the single structural
+    // field scan: Info, tags, refs, then optional locations.
+    if (!validateCanonicalPackedTags(
+            keyPayload,
+            keyPayloadBase,
+            valuePayload,
+            valuePayloadBase,
+            table,
+            parsed.tags,
+            status))
+    {
+        return CanonicalWayPlanResult.error;
+    }
+
+    if (!validateCanonicalPackedRefs(
+            refPayload,
+            refPayloadBase,
+            parsed.refs,
+            status))
+    {
+        return CanonicalWayPlanResult.error;
+    }
+
+    if (!validateCanonicalPackedCoordinate(
+            latPayload,
+            latPayloadBase,
+            9,
+            block.latOffset,
+            block.granularity,
+            parsed.locations.latCount,
+            parsed.locations.finalLat,
+            status))
+    {
+        return CanonicalWayPlanResult.error;
+    }
+
+    if (!validateCanonicalPackedCoordinate(
+            lonPayload,
+            lonPayloadBase,
+            10,
+            block.lonOffset,
+            block.granularity,
+            parsed.locations.lonCount,
+            parsed.locations.finalLon,
+            status))
+    {
+        return CanonicalWayPlanResult.error;
+    }
+
+    if (parsed.locations.hasLocations &&
+        (parsed.locations.latCount != parsed.refs.refCount ||
+         parsed.locations.lonCount != parsed.refs.refCount))
+    {
+        status = PbfStatus.failure(
+            PbfError.wayLocationColumnLengthMismatch,
+            wayRef.rawOffset,
+            parsed.locations.latCount != parsed.refs.refCount ? 9 : 10);
+        return CanonicalWayPlanResult.error;
+    }
+
+    const locationCount =
+        parsed.locations.hasLocations
+            ? parsed.locations.latCount
+            : 0;
+
+    if (wayRef.rawOffset > uint.max ||
+        wayRef.bytes.length > uint.max ||
+        parsed.tags.tagCount > uint.max ||
+        parsed.refs.refCount > uint.max ||
+        locationCount > uint.max)
+    {
+        status = PbfStatus.init;
+        return CanonicalWayPlanResult.fallback;
+    }
+
+    const rawStart = wayRef.rawOffset;
+    const rawLength = wayRef.bytes.length;
+    if (rawStart > group.raw.length ||
+        rawLength > group.raw.length - rawStart)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            wayRef.rawOffset,
+            3);
+        return CanonicalWayPlanResult.error;
+    }
+
+    plan.id = parsed.id;
+    plan.info = compactInfoFromView(parsed.info, table);
+    plan.rawOffset = cast(uint)wayRef.rawOffset;
+    plan.rawLength = cast(uint)wayRef.bytes.length;
+    plan.tagCount = cast(uint)parsed.tags.tagCount;
+    plan.refCount = cast(uint)parsed.refs.refCount;
+    plan.locationCount = cast(uint)locationCount;
+    plan.keys = keys;
+    plan.vals = vals;
+    plan.refs = refs;
+    plan.lats = lats;
+    plan.lons = lons;
+    plan.canonicalPacked = true;
+
+    status = PbfStatus.init;
+    return CanonicalWayPlanResult.success;
+}
+
+/**
+ * Fully preflight every regular Way into caller-owned reusable plan storage.
+ *
+ * No observable sink calls occur here. `planCount` remains zero on every
+ * failure and is published only after the complete PrimitiveGroup has been
+ * semantically validated and its Way occurrence count reproduced.
+ *
+ * Canonical Ways are validated in one message scan while capturing direct
+ * packed payload spans for emission. Legal non-canonical protobuf forms fall
+ * back to the established generic `parseWay` correctness path without changing
+ * this workspace contract.
+ */
+package(osm)
+bool buildWayDecodePlans(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    WayDecodePlan[] workspace,
+    out size_t planCount,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    planCount = 0;
+
+    if (group.wayOccurrences == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    if (workspace.length < group.wayOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayWorkspaceTooSmall,
+            0,
+            3);
+        return false;
+    }
+
+    size_t preparedCount;
+    auto ways = WayMessageCursor(group.raw);
+
+    while (true)
+    {
+        WayMessageRef wayRef;
+        bool hasWay;
+        if (!ways.next(wayRef, hasWay, status))
+            return false;
+        if (!hasWay)
+            break;
+
+        if (preparedCount >= workspace.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.wayWorkspaceTooSmall,
+                wayRef.rawOffset,
+                3);
+            return false;
+        }
+
+        WayDecodePlan candidate;
+        const canonicalResult = tryBuildCanonicalWayDecodePlan(
+            block,
+            group,
+            wayRef,
+            table,
+            candidate,
+            status);
+
+        if (canonicalResult == CanonicalWayPlanResult.error)
+            return false;
+
+        if (canonicalResult == CanonicalWayPlanResult.fallback)
+        {
+            ParsedWay parsed;
+            if (!parseWay(block, wayRef, table, parsed, status))
+                return false;
+
+            const locationCount =
+                parsed.locations.hasLocations
+                    ? parsed.locations.latCount
+                    : 0;
+
+            if (wayRef.rawOffset > uint.max ||
+                wayRef.bytes.length > uint.max ||
+                parsed.tags.tagCount > uint.max ||
+                parsed.refs.refCount > uint.max ||
+                locationCount > uint.max)
+            {
+                status = PbfStatus.failure(
+                    PbfError.wayCountMismatch,
+                    wayRef.rawOffset,
+                    3);
+                return false;
+            }
+
+            const rawStart = wayRef.rawOffset;
+            const rawLength = wayRef.bytes.length;
+            if (rawStart > group.raw.length ||
+                rawLength > group.raw.length - rawStart)
+            {
+                status = PbfStatus.failure(
+                    PbfError.wayCountMismatch,
+                    wayRef.rawOffset,
+                    3);
+                return false;
+            }
+
+            candidate = WayDecodePlan.init;
+            candidate.id = parsed.id;
+            candidate.info = compactInfoFromView(parsed.info, table);
+            candidate.rawOffset = cast(uint)wayRef.rawOffset;
+            candidate.rawLength = cast(uint)wayRef.bytes.length;
+            candidate.tagCount = cast(uint)parsed.tags.tagCount;
+            candidate.refCount = cast(uint)parsed.refs.refCount;
+            candidate.locationCount = cast(uint)locationCount;
+            candidate.canonicalPacked = false;
+        }
+
+        workspace[preparedCount] = candidate;
+        ++preparedCount;
+    }
+
+    if (preparedCount != group.wayOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            0,
+            3);
+        return false;
+    }
+
+    planCount = preparedCount;
+    status = PbfStatus.init;
+    return true;
+}
+
+pragma(inline, true)
+private bool sliceWayPlanSpan(
+    ref const PrimitiveGroupLayout group,
+    WayPackedSpan span,
+    uint fieldNumber,
+    out const(ubyte)[] payload,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    const start = cast(size_t)span.offset;
+    const length = cast(size_t)span.length;
+
+    if (start > group.raw.length ||
+        length > group.raw.length - start)
+    {
+        payload = null;
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            start,
+            fieldNumber);
+        return false;
+    }
+
+    payload = group.raw[start .. start + length];
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Reconstruct one borrowed WayView from a fully validated reusable plan.
+ *
+ * Canonical packed plans initialize repeated-field ranges directly from saved
+ * payload spans and therefore perform no message-wide repeated-field search.
+ * Generic plans preserve all legal segmented/unpacked protobuf forms through
+ * the established generic range builders.
+ */
+package(osm)
+bool buildWayFromDecodePlan(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref const WayDecodePlan plan,
+    out WayView way,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    way = WayView.init;
+
+    const rawStart = cast(size_t)plan.rawOffset;
+    const rawLength = cast(size_t)plan.rawLength;
+    if (rawStart > group.raw.length ||
+        rawLength > group.raw.length - rawStart)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            rawStart,
+            3);
+        return false;
+    }
+
+    const raw = group.raw[rawStart .. rawStart + rawLength];
+
+    InfoView info;
+    if (!expandCompactInfo(plan.info, table, info))
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            rawStart,
+            4);
+        return false;
+    }
+
+    TagValidationSummary tagSummary;
+    tagSummary.keyCount = plan.tagCount;
+    tagSummary.valueCount = plan.tagCount;
+
+    WayRefValidationSummary refSummary;
+    refSummary.refCount = plan.refCount;
+
+    WayLocationValidationSummary locationSummary;
+    locationSummary.latCount = plan.locationCount;
+    locationSummary.lonCount = plan.locationCount;
+
+    TagRange tags;
+    WayRefRange refs;
+    WayLocationRange locations;
+
+    if (plan.canonicalPacked)
+    {
+        const(ubyte)[] keyPayload;
+        const(ubyte)[] valuePayload;
+        const(ubyte)[] refPayload;
+        const(ubyte)[] latPayload;
+        const(ubyte)[] lonPayload;
+
+        if (!sliceWayPlanSpan(
+                group,
+                plan.keys,
+                2,
+                keyPayload,
+                status) ||
+            !sliceWayPlanSpan(
+                group,
+                plan.vals,
+                3,
+                valuePayload,
+                status) ||
+            !sliceWayPlanSpan(
+                group,
+                plan.refs,
+                8,
+                refPayload,
+                status) ||
+            !sliceWayPlanSpan(
+                group,
+                plan.lats,
+                9,
+                latPayload,
+                status) ||
+            !sliceWayPlanSpan(
+                group,
+                plan.lons,
+                10,
+                lonPayload,
+                status))
+        {
+            return false;
+        }
+
+        if (!buildPrevalidatedPackedTagRange(
+                keyPayload,
+                plan.keys.offset,
+                valuePayload,
+                plan.vals.offset,
+                table,
+                tagSummary,
+                tags,
+                status))
+        {
+            return false;
+        }
+
+        if (!buildPrevalidatedPackedWayRefRange(
+                refPayload,
+                plan.refs.offset,
+                refSummary,
+                refs,
+                status))
+        {
+            return false;
+        }
+
+        if (!buildPrevalidatedPackedWayLocationRange(
+                block,
+                latPayload,
+                plan.lats.offset,
+                lonPayload,
+                plan.lons.offset,
+                locationSummary,
+                locations,
+                status))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (!buildTagRange(
+                raw,
+                rawStart,
+                table,
+                tagSummary,
+                tags,
+                status))
+        {
+            return false;
+        }
+
+        if (!buildWayRefRange(
+                raw,
+                rawStart,
+                refSummary,
+                refs,
+                status))
+        {
+            return false;
+        }
+
+        if (!buildWayLocationRange(
+                block,
+                raw,
+                rawStart,
+                locationSummary,
+                locations,
+                status))
+        {
+            return false;
+        }
+    }
+
+    way = WayView(
+        plan.id,
+        tags,
+        refs,
+        locations,
+        info,
+        raw,
+        rawStart);
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Decode one PrimitiveGroup through caller-owned reusable WayDecodePlan storage.
+ *
+ * The complete group is preflighted before the first sink call. This prototype
+ * leaves the existing `decodeWays` entry point unchanged while exercising the
+ * production plan path end-to-end.
+ */
+package(osm)
+bool decodeWaysWithWorkspace(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    WayDecodePlan[] workspace,
+    ref Sink sink,
+    out WayDecodeSummary summary,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    summary = WayDecodeSummary.init;
+
+    size_t planCount;
+    if (!buildWayDecodePlans(
+            block,
+            group,
+            table,
+            workspace,
+            planCount,
+            status))
+    {
+        return false;
+    }
+
+    foreach (ref const plan; workspace[0 .. planCount])
+    {
+        WayView way;
+        if (!buildWayFromDecodePlan(
+                block,
+                group,
+                table,
+                plan,
+                way,
+                status))
+        {
+            return false;
+        }
+
+        sink.put(way);
+
+        ++summary.wayCount;
+        summary.tagCount += plan.tagCount;
+        summary.refCount += plan.refCount;
+        summary.locationCount += plan.locationCount;
+    }
+
+    if (summary.wayCount != planCount ||
+        summary.wayCount != group.wayOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            0,
+            3);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
 }
 
 /**
@@ -944,6 +2092,64 @@ bool buildWayRefRange(
 }
 
 /**
+ * Build a borrowed absolute-reference range directly from one prevalidated
+ * canonical packed refs payload.
+ *
+ * Unlike `buildWayRefRange`, this path performs no Way message field search.
+ */
+package(osm)
+bool buildPrevalidatedPackedWayRefRange(
+    const(ubyte)[] payload,
+    size_t payloadBase,
+    WayRefValidationSummary summary,
+    out WayRefRange range,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    range = WayRefRange.init;
+    range._deltas = SInt64FieldCursor.fromPrevalidatedPacked(
+        payload,
+        payloadBase,
+        8);
+    range._remaining = summary.refCount;
+
+    if (range._remaining == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    long delta;
+    bool hasValue;
+    if (!range._deltas.next(delta, hasValue, status) || !hasValue)
+    {
+        if (status.ok)
+            status = PbfStatus.failure(
+                PbfError.wayCountMismatch,
+                payloadBase,
+                8);
+        range = WayRefRange.init;
+        return false;
+    }
+
+    long first;
+    if (!checkedAdd(0L, delta, first))
+    {
+        status = PbfStatus.failure(
+            PbfError.wayRefOverflow,
+            range._deltas.lastValueOffset,
+            8);
+        range = WayRefRange.init;
+        return false;
+    }
+
+    range._current = first;
+    range._front = first;
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
  * Validate optional `LocationsOnWays` coordinate columns.
  *
  * If either latitude or longitude values are present, both logical columns must
@@ -1133,6 +2339,93 @@ bool buildWayLocationRange(
     return true;
 }
 
+/**
+ * Build the borrowed optional location range directly from prevalidated
+ * canonical packed latitude and longitude payloads.
+ *
+ * Unlike `buildWayLocationRange`, this path performs no Way message field
+ * search.
+ */
+package(osm)
+bool buildPrevalidatedPackedWayLocationRange(
+    ref const PrimitiveBlockLayout block,
+    const(ubyte)[] latPayload,
+    size_t latPayloadBase,
+    const(ubyte)[] lonPayload,
+    size_t lonPayloadBase,
+    WayLocationValidationSummary summary,
+    out WayLocationRange range,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    range = WayLocationRange.init;
+    if (!summary.hasLocations)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    range._lats = SInt64FieldCursor.fromPrevalidatedPacked(
+        latPayload,
+        latPayloadBase,
+        9);
+    range._lons = SInt64FieldCursor.fromPrevalidatedPacked(
+        lonPayload,
+        lonPayloadBase,
+        10);
+    range._remaining = summary.latCount;
+    range._latOffset = block.latOffset;
+    range._lonOffset = block.lonOffset;
+    range._granularity = block.granularity;
+
+    long latDelta;
+    long lonDelta;
+    bool hasLat;
+    bool hasLon;
+    if (!range._lats.next(latDelta, hasLat, status) || !hasLat ||
+        !range._lons.next(lonDelta, hasLon, status) || !hasLon)
+    {
+        if (status.ok)
+            status = PbfStatus.failure(
+                PbfError.wayLocationColumnLengthMismatch,
+                !hasLat ? latPayloadBase : lonPayloadBase,
+                !hasLat ? 9 : 10);
+        range = WayLocationRange.init;
+        return false;
+    }
+
+    long lat;
+    long lon;
+    long latNano;
+    long lonNano;
+    if (!checkedAdd(0L, latDelta, lat) ||
+        !checkedAdd(0L, lonDelta, lon) ||
+        !checkedMulAdd(
+            block.latOffset,
+            cast(long)block.granularity,
+            lat,
+            latNano) ||
+        !checkedMulAdd(
+            block.lonOffset,
+            cast(long)block.granularity,
+            lon,
+            lonNano))
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCoordinateOverflow,
+            latPayloadBase,
+            9);
+        range = WayLocationRange.init;
+        return false;
+    }
+
+    range._lat = lat;
+    range._lon = lon;
+    range._front = WayLocationView(latNano, lonNano);
+    status = PbfStatus.init;
+    return true;
+}
+
 private struct WayMessageRef
 {
     const(ubyte)[] bytes;
@@ -1219,6 +2512,26 @@ public:
         _message = WireCursor(input);
         _baseOffset = baseOffset;
         _fieldNumber = fieldNumber;
+    }
+
+    /**
+     * Construct a cursor that starts directly in one already validated packed
+     * repeated-field payload.
+     *
+     * No message-wide field search is performed. The caller must have proved
+     * that this payload represents the complete logical repeated column.
+     */
+    static SInt64FieldCursor fromPrevalidatedPacked(
+        const(ubyte)[] packed,
+        size_t packedBase,
+        uint fieldNumber)
+        @safe nothrow @nogc
+    {
+        SInt64FieldCursor result;
+        result._packed = WireCursor(packed);
+        result._packedBase = packedBase;
+        result._fieldNumber = fieldNumber;
+        return result;
     }
 
     @property size_t lastValueOffset() const @safe pure nothrow @nogc
@@ -1627,4 +2940,1663 @@ unittest
     assert(status.error == PbfError.missingWayId);
     assert(status.fieldNumber == 1);
     assert(sink.used == 0);
+}
+
+
+unittest
+{
+    // Canonical packed refs deltas [10, +2, -1] => [10, 12, 11].
+    const(ubyte)[] packed = [0x14, 0x04, 0x01];
+
+    WayRefValidationSummary summary;
+    summary.refCount = 3;
+    summary.finalRef = 11;
+
+    WayRefRange range;
+    PbfStatus status;
+    assert(buildPrevalidatedPackedWayRefRange(
+        packed,
+        100,
+        summary,
+        range,
+        status));
+    assert(status.ok);
+    assert(range.length == 3);
+
+    assert(range.front == 10);
+    range.popFront();
+    assert(range.front == 12);
+    range.popFront();
+    assert(range.front == 11);
+    range.popFront();
+    assert(range.empty);
+}
+
+unittest
+{
+    // Canonical packed LocationsOnWays:
+    // lat-grid deltas [100,+1], lon-grid deltas [-50,+2].
+    const(ubyte)[] lats = [0xc8, 0x01, 0x02];
+    const(ubyte)[] lons = [0x63, 0x04];
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+    block.latOffset = 1000;
+    block.lonOffset = -1000;
+
+    WayLocationValidationSummary summary;
+    summary.latCount = 2;
+    summary.lonCount = 2;
+    summary.finalLat = 101;
+    summary.finalLon = -48;
+
+    WayLocationRange range;
+    PbfStatus status;
+    assert(buildPrevalidatedPackedWayLocationRange(
+        block,
+        lats,
+        200,
+        lons,
+        300,
+        summary,
+        range,
+        status));
+    assert(status.ok);
+    assert(range.length == 2);
+
+    assert(range.front.latNano == 11_000);
+    assert(range.front.lonNano == -6_000);
+    range.popFront();
+
+    assert(range.front.latNano == 11_100);
+    assert(range.front.lonNano == -5_800);
+    range.popFront();
+
+    assert(range.empty);
+}
+
+
+unittest
+{
+    import osm.io.pbf.string_table : StringRef;
+
+    const(ubyte)[] raw = [0, 'u', 's', 'e', 'r'];
+    StringRef[2] refs = [
+        StringRef(0, 0),
+        StringRef(1, 4),
+    ];
+    StringTableView table = StringTableView(raw, refs[]);
+
+    InfoView original;
+    original.hasVersion = true;
+    original.version_ = 7;
+    original.hasTimestamp = true;
+    original.timestampValue = 123;
+    original.timestampMillis = 12_300;
+    original.hasChangeset = true;
+    original.changeset = 456;
+    original.hasUid = true;
+    original.uid = 789;
+    original.hasUser = true;
+    original.userSid = 1;
+    original.user = raw[1 .. 5];
+    original.hasVisible = true;
+    original.visible = false;
+
+    const compact = compactInfoFromView(original, table);
+
+    InfoView expanded;
+    assert(expandCompactInfo(compact, table, expanded));
+
+    assert(expanded.hasVersion);
+    assert(expanded.version_ == 7);
+    assert(expanded.hasTimestamp);
+    assert(expanded.timestampValue == 123);
+    assert(expanded.timestampMillis == 12_300);
+    assert(expanded.hasChangeset);
+    assert(expanded.changeset == 456);
+    assert(expanded.hasUid);
+    assert(expanded.uid == 789);
+    assert(expanded.hasUser);
+    assert(expanded.userSid == 1);
+    assert(expanded.user == raw[1 .. 5]);
+    assert(expanded.hasVisible);
+    assert(!expanded.visible);
+}
+
+
+unittest
+{
+    // One minimal Way: PrimitiveGroup field 3 -> Way { id = 7 }.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x02,
+        0x08, 0x07,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[1] plans;
+    size_t planCount;
+    PbfStatus status;
+
+    assert(buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+    assert(status.ok);
+    assert(planCount == 1);
+
+    assert(plans[0].id == 7);
+    assert(plans[0].rawOffset == 2);
+    assert(plans[0].rawLength == 2);
+    assert(plans[0].tagCount == 0);
+    assert(plans[0].refCount == 0);
+    assert(plans[0].locationCount == 0);
+
+    // All repeated columns are absent, which is canonical by definition.
+    assert(plans[0].canonicalPacked);
+}
+
+unittest
+{
+    // Capacity failure must happen before semantic traversal and publish no plan.
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = [0xff];
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[] noWorkspace;
+    size_t planCount = size_t.max;
+    PbfStatus status;
+
+    assert(!buildWayDecodePlans(
+        block,
+        group,
+        table,
+        noWorkspace,
+        planCount,
+        status));
+    assert(status.error == PbfError.wayWorkspaceTooSmall);
+    assert(status.fieldNumber == 3);
+    assert(planCount == 0);
+}
+
+
+unittest
+{
+    // Later malformed Way must leave planCount unpublished.
+    //
+    // Way #1 is valid: { id = 7 }.
+    // Way #2 contains field 1 with a truncated varint.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x02,
+        0x08, 0x07,
+
+        0x1a, 0x01,
+        0x08,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 2;
+
+    StringTableView table;
+    WayDecodePlan[2] plans;
+    size_t planCount = size_t.max;
+    PbfStatus status;
+
+    assert(!buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+
+    assert(status.error == PbfError.invalidWayWire);
+    assert(status.fieldNumber == 1);
+
+    // The first scratch slot may have been written, but no entry is published
+    // until the complete PrimitiveGroup has passed semantic preflight.
+    assert(plans[0].id == 7);
+    assert(planCount == 0);
+}
+
+
+unittest
+{
+    // Canonical packed refs are discovered and semantically validated during
+    // the same Way field scan that creates the emission plan.
+    //
+    // refs deltas [10,+2,-1] => absolute refs [10,12,11].
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x07,
+        0x08, 0x07,
+        0x42, 0x03, 0x14, 0x04, 0x01,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[1] plans;
+    size_t planCount;
+    PbfStatus status;
+
+    assert(buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+    assert(status.ok);
+    assert(planCount == 1);
+
+    assert(plans[0].canonicalPacked);
+    assert(plans[0].id == 7);
+    assert(plans[0].rawOffset == 2);
+    assert(plans[0].rawLength == 7);
+    assert(plans[0].refCount == 3);
+    assert(plans[0].refs.offset == 6);
+    assert(plans[0].refs.length == 3);
+}
+
+unittest
+{
+    // Legal unpacked repeated refs are deliberately routed through the
+    // established generic parser rather than rejected by the fast path.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x06,
+        0x08, 0x07,
+        0x40, 0x14,
+        0x40, 0x04,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[1] plans;
+    size_t planCount;
+    PbfStatus status;
+
+    assert(buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+    assert(status.ok);
+    assert(planCount == 1);
+
+    assert(!plans[0].canonicalPacked);
+    assert(plans[0].id == 7);
+    assert(plans[0].refCount == 2);
+}
+
+
+unittest
+{
+    // Canonical packed refs must emit through the saved packed payload span
+    // without changing public WayRefRange semantics.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x07,
+        0x08, 0x07,
+        0x42, 0x03, 0x14, 0x04, 0x01,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[1] plans;
+    size_t planCount;
+    PbfStatus status;
+
+    assert(buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+    assert(planCount == 1);
+    assert(plans[0].canonicalPacked);
+
+    WayView way;
+    assert(buildWayFromDecodePlan(
+        block,
+        group,
+        table,
+        plans[0],
+        way,
+        status));
+    assert(status.ok);
+    assert(way.id == 7);
+    assert(way.raw == groupBytes[2 .. 9]);
+
+    auto refs = way.refs;
+    assert(refs.length == 3);
+    assert(refs.front == 10);
+    refs.popFront();
+    assert(refs.front == 12);
+    refs.popFront();
+    assert(refs.front == 11);
+    refs.popFront();
+    assert(refs.empty);
+}
+
+unittest
+{
+    // Unpacked refs must retain the same borrowed range behavior through the
+    // generic fallback plan.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x06,
+        0x08, 0x07,
+        0x40, 0x14,
+        0x40, 0x04,
+    ];
+
+    PrimitiveBlockLayout block;
+
+    PrimitiveGroupLayout group;
+    group.raw = groupBytes;
+    group.wayOccurrences = 1;
+
+    StringTableView table;
+    WayDecodePlan[1] plans;
+    size_t planCount;
+    PbfStatus status;
+
+    assert(buildWayDecodePlans(
+        block,
+        group,
+        table,
+        plans[],
+        planCount,
+        status));
+    assert(planCount == 1);
+    assert(!plans[0].canonicalPacked);
+
+    WayView way;
+    assert(buildWayFromDecodePlan(
+        block,
+        group,
+        table,
+        plans[0],
+        way,
+        status));
+    assert(status.ok);
+
+    auto refs = way.refs;
+    assert(refs.length == 2);
+    assert(refs.front == 10);
+    refs.popFront();
+    assert(refs.front == 12);
+    refs.popFront();
+    assert(refs.empty);
+}
+
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential contract: legacy decodeWays and plan-backed decoding must
+    // expose identical semantics for a normal canonical Way.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x19,
+        0x08, 0x64,
+        0x12, 0x02, 0x01, 0x03,
+        0x1a, 0x02, 0x02, 0x04,
+        0x22, 0x08,
+        0x08, 0x07,
+        0x10, 0x0a,
+        0x28, 0x05,
+        0x30, 0x01,
+        0x42, 0x03, 0x14, 0x04, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    block.dateGranularity = 1000;
+
+    const(ubyte)[] strings = [0, 'k', 'v', 'n', 'x', 'u'];
+    StringRef[6] stringRefs = [
+        StringRef(0, 0),
+        StringRef(1, 1),
+        StringRef(2, 1),
+        StringRef(3, 1),
+        StringRef(4, 1),
+        StringRef(5, 1),
+    ];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        WayView way;
+        size_t used;
+
+        void put(WayView value) @safe nothrow @nogc
+        {
+            way = value;
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySummary.wayCount == planSummary.wayCount);
+    assert(legacySummary.tagCount == planSummary.tagCount);
+    assert(legacySummary.refCount == planSummary.refCount);
+    assert(legacySummary.locationCount == planSummary.locationCount);
+
+    assert(legacySink.used == 1);
+    assert(planSink.used == 1);
+
+    assert(legacySink.way.id == planSink.way.id);
+    assert(legacySink.way.raw == planSink.way.raw);
+
+    assert(legacySink.way.info.hasVersion == planSink.way.info.hasVersion);
+    assert(legacySink.way.info.version_ == planSink.way.info.version_);
+    assert(legacySink.way.info.hasTimestamp == planSink.way.info.hasTimestamp);
+    assert(legacySink.way.info.timestampValue ==
+        planSink.way.info.timestampValue);
+    assert(legacySink.way.info.timestampMillis ==
+        planSink.way.info.timestampMillis);
+    assert(legacySink.way.info.hasChangeset ==
+        planSink.way.info.hasChangeset);
+    assert(legacySink.way.info.changeset == planSink.way.info.changeset);
+    assert(legacySink.way.info.hasUid == planSink.way.info.hasUid);
+    assert(legacySink.way.info.uid == planSink.way.info.uid);
+    assert(legacySink.way.info.hasUser == planSink.way.info.hasUser);
+    assert(legacySink.way.info.userSid == planSink.way.info.userSid);
+    assert(legacySink.way.info.user == planSink.way.info.user);
+    assert(legacySink.way.info.hasVisible == planSink.way.info.hasVisible);
+    assert(legacySink.way.info.visible == planSink.way.info.visible);
+
+    auto legacyTags = legacySink.way.tags;
+    auto planTags = planSink.way.tags;
+    assert(legacyTags.length == planTags.length);
+    while (!legacyTags.empty)
+    {
+        assert(!planTags.empty);
+        assert(legacyTags.front.keySid == planTags.front.keySid);
+        assert(legacyTags.front.valueSid == planTags.front.valueSid);
+        assert(legacyTags.front.key == planTags.front.key);
+        assert(legacyTags.front.value == planTags.front.value);
+        legacyTags.popFront();
+        planTags.popFront();
+    }
+    assert(planTags.empty);
+
+    auto legacyRefs = legacySink.way.refs;
+    auto planRefs = planSink.way.refs;
+    assert(legacyRefs.length == planRefs.length);
+    while (!legacyRefs.empty)
+    {
+        assert(!planRefs.empty);
+        assert(legacyRefs.front == planRefs.front);
+        legacyRefs.popFront();
+        planRefs.popFront();
+    }
+    assert(planRefs.empty);
+
+    assert(legacySink.way.locations.empty);
+    assert(planSink.way.locations.empty);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential success: canonical packed LocationsOnWays must expose the
+    // same aligned exact nanodegree range through the plan-backed decoder.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x0f,
+        0x08, 0x01,
+        0x42, 0x02, 0x14, 0x04,
+        0x4a, 0x03, 0xc8, 0x01, 0x02,
+        0x52, 0x02, 0x63, 0x04,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+    block.latOffset = 1000;
+    block.lonOffset = -1000;
+
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        WayView way;
+        size_t used;
+
+        void put(WayView value) @safe nothrow @nogc
+        {
+            way = value;
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(workspace[0].canonicalPacked);
+    assert(workspace[0].locationCount == 2);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySummary.wayCount == planSummary.wayCount);
+    assert(legacySummary.tagCount == planSummary.tagCount);
+    assert(legacySummary.refCount == planSummary.refCount);
+    assert(legacySummary.locationCount == planSummary.locationCount);
+    assert(planSummary.locationCount == 2);
+
+    assert(legacySink.used == 1);
+    assert(planSink.used == 1);
+    assert(legacySink.way.id == planSink.way.id);
+    assert(legacySink.way.raw == planSink.way.raw);
+
+    auto legacyRefs = legacySink.way.refs;
+    auto planRefs = planSink.way.refs;
+    assert(legacyRefs.length == planRefs.length);
+    while (!legacyRefs.empty)
+    {
+        assert(!planRefs.empty);
+        assert(legacyRefs.front == planRefs.front);
+        legacyRefs.popFront();
+        planRefs.popFront();
+    }
+    assert(planRefs.empty);
+
+    auto legacyLocations = legacySink.way.locations;
+    auto planLocations = planSink.way.locations;
+    assert(legacyLocations.length == planLocations.length);
+    assert(planLocations.length == 2);
+
+    while (!legacyLocations.empty)
+    {
+        assert(!planLocations.empty);
+        assert(legacyLocations.front.latNano ==
+            planLocations.front.latNano);
+        assert(legacyLocations.front.lonNano ==
+            planLocations.front.lonNano);
+
+        legacyLocations.popFront();
+        planLocations.popFront();
+    }
+
+    assert(planLocations.empty);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential fallback: duplicate singular ID plus interleaved unpacked
+    // and packed refs must retain generic protobuf semantics exactly.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x0a,
+        0x08, 0x01,
+        0x40, 0x0a,
+        0x08, 0x07,
+        0x42, 0x02, 0x04, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        WayView way;
+        size_t used;
+
+        void put(WayView value) @safe nothrow @nogc
+        {
+            way = value;
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(!workspace[0].canonicalPacked);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySummary.wayCount == planSummary.wayCount);
+    assert(legacySummary.tagCount == planSummary.tagCount);
+    assert(legacySummary.refCount == planSummary.refCount);
+    assert(legacySummary.locationCount == planSummary.locationCount);
+
+    assert(legacySink.used == planSink.used);
+    assert(legacySink.way.id == planSink.way.id);
+    assert(legacySink.way.raw == planSink.way.raw);
+
+    auto legacyRefs = legacySink.way.refs;
+    auto planRefs = planSink.way.refs;
+    assert(legacyRefs.length == planRefs.length);
+    while (!legacyRefs.empty)
+    {
+        assert(!planRefs.empty);
+        assert(legacyRefs.front == planRefs.front);
+        legacyRefs.popFront();
+        planRefs.popFront();
+    }
+    assert(planRefs.empty);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: Way.id with the wrong wire type is ignored as an
+    // unknown representation, leaving the required semantic ID absent.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x03,
+        0x0a, 0x01, 0x07,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential success: Info with the wrong wire type is skipped exactly
+    // like an unknown field representation while a valid Way.id remains usable.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x04,
+        0x08, 0x01,
+        0x20, 0x07,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        WayView way;
+        size_t used;
+
+        void put(WayView value) @safe nothrow @nogc
+        {
+            way = value;
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(workspace[0].canonicalPacked);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySummary.wayCount == planSummary.wayCount);
+    assert(legacySummary.tagCount == planSummary.tagCount);
+    assert(legacySummary.refCount == planSummary.refCount);
+    assert(legacySummary.locationCount == planSummary.locationCount);
+
+    assert(legacySink.used == 1);
+    assert(planSink.used == 1);
+    assert(legacySink.way.id == 1);
+    assert(planSink.way.id == 1);
+    assert(legacySink.way.raw == planSink.way.raw);
+
+    assert(!legacySink.way.info.hasVersion);
+    assert(!legacySink.way.info.hasTimestamp);
+    assert(!legacySink.way.info.hasChangeset);
+    assert(!legacySink.way.info.hasUid);
+    assert(!legacySink.way.info.hasUser);
+    assert(!legacySink.way.info.hasVisible);
+
+    assert(legacySink.way.info.hasVersion == planSink.way.info.hasVersion);
+    assert(legacySink.way.info.hasTimestamp == planSink.way.info.hasTimestamp);
+    assert(legacySink.way.info.hasChangeset == planSink.way.info.hasChangeset);
+    assert(legacySink.way.info.hasUid == planSink.way.info.hasUid);
+    assert(legacySink.way.info.hasUser == planSink.way.info.hasUser);
+    assert(legacySink.way.info.hasVisible == planSink.way.info.hasVisible);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: malformed canonical packed refs must preserve the
+    // exact legacy PbfStatus and remain fail-closed.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x05,
+        0x08, 0x01,
+        0x42, 0x01, 0x80,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: a canonical packed tag SID outside the StringTable
+    // must preserve the exact legacy PbfStatus and remain fail-closed.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x08,
+        0x08, 0x01,
+        0x12, 0x01, 0x01,
+        0x1a, 0x01, 0x00,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: canonical LocationsOnWays coordinate arithmetic
+    // overflow must preserve the exact legacy PbfStatus and remain fail-closed.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x0b,
+        0x08, 0x01,
+        0x42, 0x01, 0x02,
+        0x4a, 0x01, 0x02,
+        0x52, 0x01, 0x00,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+    block.latOffset = long.max;
+    block.lonOffset = 0;
+
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: misaligned LocationsOnWays columns.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x0d,
+        0x08, 0x01,
+        0x42, 0x02, 0x02, 0x02,
+        0x4a, 0x01, 0x02,
+        0x52, 0x02, 0x02, 0x02,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: a late ref overflow in Way #2 must remain
+    // completely fail-closed and return the identical status.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x05,
+        0x08, 0x01,
+        0x42, 0x01, 0x02,
+
+        0x1a, 0x0f,
+        0x08, 0x02,
+        0x42, 0x0b,
+        0xfe, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x01,
+        0x02,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[2] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure: missing required Way ID.
+    const(ubyte)[] groupBytes = [0x1a, 0x00];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure precedence: Info finalization must retain legacy priority
+    // over tag validation even when an invalid canonical packed tag appears first
+    // in wire order.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x0c,
+        0x08, 0x01,
+        0x12, 0x01, 0x01,
+        0x1a, 0x01, 0x01,
+        0x22, 0x02, 0x28, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+    assert(group.wayOccurrences == 1);
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == PbfError.infoUserStringIdOutOfRange);
+    assert(legacyStatus.fieldNumber == 5);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure precedence: tags must retain legacy priority over refs
+    // even when the overflowing refs field appears first in wire order.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x15,
+        0x08, 0x01,
+        0x42, 0x0b,
+        0xfe, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x01,
+        0x02,
+        0x12, 0x01, 0x01,
+        0x1a, 0x01, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+    assert(group.wayOccurrences == 1);
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == PbfError.tagStringIdOutOfRange);
+    assert(legacyStatus.fieldNumber == 2);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential failure precedence: refs must retain legacy priority over
+    // LocationsOnWays even when the overflowing coordinate appears first.
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x15,
+        0x08, 0x01,
+        0x4a, 0x01, 0x02,
+        0x52, 0x01, 0x00,
+        0x42, 0x0b,
+        0xfe, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0x01,
+        0x02,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+    assert(group.wayOccurrences == 1);
+
+    PrimitiveBlockLayout block;
+    block.granularity = 100;
+    block.latOffset = long.max;
+    block.lonOffset = 0;
+
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        size_t used;
+
+        void put(WayView) @safe nothrow @nogc
+        {
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(!decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(!decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(legacyStatus.error == PbfError.wayRefOverflow);
+    assert(legacyStatus.fieldNumber == 8);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySink.used == 0);
+    assert(planSink.used == 0);
+    assert(legacySummary.wayCount == 0);
+    assert(planSummary.wayCount == 0);
+}
+
+unittest
+{
+    import osm.io.pbf.primitive_group : decodePrimitiveGroupLayout;
+    import osm.io.pbf.string_table : StringRef;
+
+    // Differential fallback: two canonical packed refs segments are legal
+    // protobuf repeated-field encoding and must retain generic concatenation
+    // semantics rather than being rejected by the narrow one-span fast path.
+    //
+    // Deltas [10] + [2, -1] => absolute refs [10, 12, 11].
+    const(ubyte)[] groupBytes = [
+        0x1a, 0x09,
+        0x08, 0x01,
+        0x42, 0x01, 0x14,
+        0x42, 0x02, 0x04, 0x01,
+    ];
+
+    PrimitiveGroupLayout group;
+    PbfStatus layoutStatus;
+    assert(decodePrimitiveGroupLayout(groupBytes, group, layoutStatus));
+    assert(group.wayOccurrences == 1);
+
+    PrimitiveBlockLayout block;
+    const(ubyte)[] strings = [0];
+    StringRef[1] stringRefs = [StringRef(0, 0)];
+    StringTableView table = StringTableView(strings, stringRefs[]);
+
+    struct Sink
+    {
+        WayView way;
+        size_t used;
+
+        void put(WayView value) @safe nothrow @nogc
+        {
+            way = value;
+            ++used;
+        }
+    }
+
+    Sink legacySink;
+    WayDecodeSummary legacySummary;
+    PbfStatus legacyStatus;
+    assert(decodeWays(
+        block,
+        group,
+        table,
+        legacySink,
+        legacySummary,
+        legacyStatus));
+
+    WayDecodePlan[1] workspace;
+    Sink planSink;
+    WayDecodeSummary planSummary;
+    PbfStatus planStatus;
+    assert(decodeWaysWithWorkspace(
+        block,
+        group,
+        table,
+        workspace[],
+        planSink,
+        planSummary,
+        planStatus));
+
+    assert(!workspace[0].canonicalPacked);
+
+    assert(legacyStatus.error == planStatus.error);
+    assert(legacyStatus.offset == planStatus.offset);
+    assert(legacyStatus.fieldNumber == planStatus.fieldNumber);
+    assert(legacyStatus.wireError == planStatus.wireError);
+
+    assert(legacySummary.wayCount == planSummary.wayCount);
+    assert(legacySummary.tagCount == planSummary.tagCount);
+    assert(legacySummary.refCount == planSummary.refCount);
+    assert(legacySummary.locationCount == planSummary.locationCount);
+
+    assert(legacySink.used == 1);
+    assert(planSink.used == 1);
+    assert(legacySink.way.id == planSink.way.id);
+    assert(legacySink.way.raw == planSink.way.raw);
+
+    auto legacyRefs = legacySink.way.refs;
+    auto planRefs = planSink.way.refs;
+
+    assert(legacyRefs.length == 3);
+    assert(planRefs.length == 3);
+
+    const long[3] expected = [10, 12, 11];
+    foreach (value; expected)
+    {
+        assert(!legacyRefs.empty);
+        assert(!planRefs.empty);
+        assert(legacyRefs.front == value);
+        assert(planRefs.front == value);
+        legacyRefs.popFront();
+        planRefs.popFront();
+    }
+
+    assert(legacyRefs.empty);
+    assert(planRefs.empty);
 }

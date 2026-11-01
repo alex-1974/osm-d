@@ -15,7 +15,7 @@
  *
  * No owned OSM model is materialized.
  */
-module benchmark.parser.decode_count;
+module osm.benchmark.parser.decode_count;
 
 import osm.io.pbf.blob :
     BlobView,
@@ -62,9 +62,10 @@ import osm.io.pbf.string_table :
     StringTableView,
     buildStringTableView;
 import osm.io.pbf.way :
+    WayDecodePlan,
     WayDecodeSummary,
     WayView,
-    decodeWays;
+    decodeWaysWithWorkspace;
 import osm.wire.cursor :
     WireCursor;
 
@@ -87,6 +88,7 @@ private struct Scratch
 {
     ubyte[] decompressionBuffer;
     StringRef[] stringRefs;
+    WayDecodePlan[] wayPlans;
 }
 
 private struct NullSink
@@ -125,7 +127,7 @@ private bool reportFailure(string stage, PbfStatus status)
 
 private bool decodeDataBlock(
     const(ubyte)[] payloadBytes,
-    ref StringRef[] stringRefs,
+    ref Scratch scratch,
     ref Counts counts)
 {
     PbfStatus status;
@@ -134,13 +136,13 @@ private bool decodeDataBlock(
     if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
         return reportFailure("PrimitiveBlock", status);
 
-    if (stringRefs.length < block.stringCount)
-        stringRefs.length = block.stringCount;
+    if (scratch.stringRefs.length < block.stringCount)
+        scratch.stringRefs.length = block.stringCount;
 
     StringTableView table;
     if (!buildStringTableView(
         block,
-        stringRefs[0 .. block.stringCount],
+        scratch.stringRefs[0 .. block.stringCount],
         table,
         status))
     {
@@ -191,11 +193,15 @@ private bool decodeDataBlock(
             return reportFailure("Node", status);
         }
 
+        if (scratch.wayPlans.length < group.wayOccurrences)
+            scratch.wayPlans.length = group.wayOccurrences;
+
         WayDecodeSummary waySummary;
-        if (!decodeWays(
+        if (!decodeWaysWithWorkspace(
             block,
             group,
             table,
+            scratch.wayPlans[0 .. group.wayOccurrences],
             sink,
             waySummary,
             status))
@@ -320,7 +326,7 @@ private bool decodeBuffer(
                         sawData = true;
                         if (!decodeDataBlock(
                             payload.bytes,
-                            scratch.stringRefs,
+                            scratch,
                             counts))
                         {
                             return false;
@@ -397,7 +403,8 @@ int main(string[] args)
         return 0;
     }
 
-    // Untimed warm-up primes reusable decompression/StringTable scratch storage.
+    // Untimed warm-up primes reusable decompression/StringTable/Way-plan
+    // scratch storage before the measured decode.
     Counts warmCounts;
     if (!decodeBuffer(input, scratch, warmCounts))
         return 1;

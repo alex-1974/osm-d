@@ -7,6 +7,13 @@ stable release.
 
 ## Unreleased
 
+- Optimized regular Way decoding with a package-internal caller-owned preflight
+  plan that reuses canonical packed-field locations during emission while
+  preserving the generic protobuf fallback and fail-closed group semantics.
+  Final qualified Bremen whole-PBF decoding was 26.5% faster than the clean
+  production baseline with LDC 1.41.0; four pinned real-data extracts retained
+  exact semantic parity with the baseline and libosmium reference.
+
 - Added allocation-free regular Relation decoding with complete group preflight,
   borrowed ordered member ranges, packed/unpacked segmented member-column
   compatibility, checked delta-coded member IDs, StringTable-validated roles,
