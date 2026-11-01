@@ -61,13 +61,90 @@ jobs:
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
 
-      - name: Build parser decode-count benchmark (temporary qualification probe)
+      - name: Compare production reader with develop baseline (temporary qualification)
+        if: matrix.compiler == 'ldc-1.41.0'
         shell: bash
         run: |
-          cd benchmark
-          dub build \
-            --config=parser-decode-count \
-            --build=release \
-            --build-mode=allAtOnce \
-            --compiler="$DC" \
-            --force
+          set -euo pipefail
+
+          base_sha=1032f15d69a47753c7f842fc5fff17a058d7d2bf
+          base_dir="$RUNNER_TEMP/osm-d-reader-base"
+          base_bin="$RUNNER_TEMP/osm-d-reader-base-bin"
+          head_bin="$RUNNER_TEMP/osm-d-reader-head-bin"
+
+          benchmark/fetch-datasets.sh fetch bremen-260901
+          data="$GITHUB_WORKSPACE/benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf"
+          benchmark/fetch-datasets.sh verify bremen-260901
+
+          git fetch --no-tags --depth=1 origin develop
+          git worktree add --detach "$base_dir" "$base_sha"
+
+          (
+            cd "$base_dir/benchmark"
+            dub build \
+              --config=parser-decode-count \
+              --build=release \
+              --build-mode=allAtOnce \
+              --compiler="$DC" \
+              --force
+          )
+          cp "$base_dir/benchmark/bin/osm-d-bench-decode-count" "$base_bin"
+
+          (
+            cd benchmark
+            dub build \
+              --config=parser-decode-count \
+              --build=release \
+              --build-mode=allAtOnce \
+              --compiler="$DC" \
+              --force
+          )
+          cp benchmark/bin/osm-d-bench-decode-count "$head_bin"
+
+          "$base_bin" "$data" | grep -E '^(bytes|header_blocks|data_blocks|primitive_groups|nodes|ways|relations|tags)=' > "$RUNNER_TEMP/base-counts"
+          "$head_bin" "$data" | grep -E '^(bytes|header_blocks|data_blocks|primitive_groups|nodes|ways|relations|tags)=' > "$RUNNER_TEMP/head-counts"
+          diff -u "$RUNNER_TEMP/base-counts" "$RUNNER_TEMP/head-counts"
+          echo "SEMANTIC PARITY PASS"
+
+          base_samples="$RUNNER_TEMP/base-samples"
+          head_samples="$RUNNER_TEMP/head-samples"
+          : > "$base_samples"
+          : > "$head_samples"
+
+          elapsed() {
+            awk -F= '/^elapsed_ns=/ {print $2; exit}'
+          }
+
+          for round in 1 2 3 4 5 6; do
+            if (( round % 2 == 1 )); then
+              "$head_bin" --measure "$data" | elapsed >> "$head_samples"
+              "$base_bin" --measure "$data" | elapsed >> "$base_samples"
+              "$base_bin" --measure "$data" | elapsed >> "$base_samples"
+              "$head_bin" --measure "$data" | elapsed >> "$head_samples"
+            else
+              "$base_bin" --measure "$data" | elapsed >> "$base_samples"
+              "$head_bin" --measure "$data" | elapsed >> "$head_samples"
+              "$head_bin" --measure "$data" | elapsed >> "$head_samples"
+              "$base_bin" --measure "$data" | elapsed >> "$base_samples"
+            fi
+          done
+
+          python3 - "$base_samples" "$head_samples" <<'PY'
+          import statistics
+          import sys
+
+          def load(path):
+              with open(path) as f:
+                  return [int(x.strip()) / 1e6 for x in f if x.strip()]
+
+          base = load(sys.argv[1])
+          head = load(sys.argv[2])
+          b = statistics.median(base)
+          h = statistics.median(head)
+
+          print("base_samples_ms=" + " ".join(f"{x:.3f}" for x in base))
+          print("head_samples_ms=" + " ".join(f"{x:.3f}" for x in head))
+          print(f"base_p50_ms={b:.3f}")
+          print(f"head_p50_ms={h:.3f}")
+          print(f"head_vs_base={(h / b - 1.0) * 100.0:+.3f}%")
+          PY
