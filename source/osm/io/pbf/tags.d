@@ -52,17 +52,59 @@ private struct DecodedTagPair
     size_t valueOffset;
 }
 
-/** Borrowed input range over one normal element's validated ordered tags. */
+private enum TagRangeMode : ubyte
+{
+    message,
+    packed,
+}
+
+private struct TagFieldState
+{
+    size_t messageOffset;
+    size_t packedOffset;
+    size_t packedEnd;
+}
+
+private struct MessageTagState
+{
+    const(ubyte)[] input;
+    size_t baseOffset;
+    TagFieldState keys;
+    TagFieldState values;
+}
+
+private struct PackedTagState
+{
+    const(ubyte)[] keys;
+    const(ubyte)[] values;
+    size_t keyBase;
+    size_t valueBase;
+}
+
+private union TagRangeState
+{
+    MessageTagState message;
+    PackedTagState packed;
+}
+
+/**
+ * Borrowed input range over one normal element's validated ordered tags.
+ *
+ * The range stores compact offsets/slices instead of two full validation
+ * cursors. Construction is allowed only after complete tag preflight, so the
+ * iteration state needs to preserve traversal and borrowed-string semantics,
+ * not duplicate validation state. Copies remain independent cursors.
+ */
 struct TagRange
 {
 private:
-    UInt32FieldCursor _keys;
-    UInt32FieldCursor _vals;
     StringTableView _table;
     TagView _front;
+    TagRangeState _state;
+    size_t _remaining;
     uint _frontKeySid;
     uint _frontValueSid;
-    size_t _remaining;
+    TagRangeMode _mode;
 
 public:
     /** Returns `true` when no tag remains. */
@@ -113,34 +155,51 @@ public:
         --_remaining;
         if (_remaining == 0)
         {
-            _front = TagView.init;
-            _frontKeySid = 0;
-            _frontValueSid = 0;
+            clearFront();
             return;
         }
 
         PbfStatus ignored;
         if (!advance(ignored))
         {
-            // The backing bytes were completely prevalidated and must remain unchanged.
+            // The complete backing was prevalidated and must remain unchanged.
             _remaining = 0;
-            _front = TagView.init;
-            _frontKeySid = 0;
-            _frontValueSid = 0;
+            clearFront();
         }
     }
 
 private:
     pragma(inline, true)
+    void clearFront() scope @safe pure nothrow @nogc
+    {
+        _front = TagView.init;
+        _frontKeySid = 0;
+        _frontValueSid = 0;
+    }
+
+    pragma(inline, true)
     bool advance(out PbfStatus status) scope @safe nothrow @nogc
     {
         DecodedTagPair decoded;
-        if (!decodeValidatedPairScalars(
-                _keys,
-                _vals,
-                decoded,
-                status))
-            return false;
+
+        final switch (_mode)
+        {
+        case TagRangeMode.message:
+            if (!decodePrevalidatedMessagePair(
+                    _state.message,
+                    decoded,
+                    status))
+                return false;
+            break;
+
+        case TagRangeMode.packed:
+            if (!decodePrevalidatedPackedPair(
+                    _state.packed,
+                    decoded,
+                    status))
+                return false;
+            break;
+        }
 
         if (cast(size_t)decoded.keySid >= _table.entries.length)
         {
@@ -192,6 +251,217 @@ private:
         status = PbfStatus.init;
         return true;
     }
+}
+
+pragma(inline, true)
+private bool decodePrevalidatedMessagePair(
+    scope ref MessageTagState state,
+    out DecodedTagPair decoded,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    decoded = DecodedTagPair.init;
+
+    bool hasKey;
+    bool hasValue;
+    if (!nextPrevalidatedMessageField(
+            state.input,
+            state.baseOffset,
+            state.keys,
+            2,
+            decoded.keySid,
+            decoded.keyOffset,
+            hasKey,
+            status) ||
+        !nextPrevalidatedMessageField(
+            state.input,
+            state.baseOffset,
+            state.values,
+            3,
+            decoded.valueSid,
+            decoded.valueOffset,
+            hasValue,
+            status))
+        return false;
+
+    if (!hasKey || !hasValue)
+    {
+        status = PbfStatus.failure(PbfError.tagColumnLengthMismatch, 0, 2);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+pragma(inline, true)
+private bool nextPrevalidatedMessageField(
+    const(ubyte)[] input,
+    size_t baseOffset,
+    scope ref TagFieldState state,
+    uint fieldNumber,
+    out uint value,
+    out size_t valueOffset,
+    out bool hasValue,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    value = 0;
+    valueOffset = 0;
+    hasValue = false;
+
+    while (true)
+    {
+        if (state.packedOffset < state.packedEnd)
+        {
+            const start = state.packedOffset;
+            auto packed = WireCursor(input[start .. state.packedEnd]);
+            WireStatus wire;
+            valueOffset = baseOffset + start;
+
+            if (!readVarint32(packed, value, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = fieldNumber;
+                status = PbfStatus.fromTagWire(wire, baseOffset + start);
+                return false;
+            }
+
+            state.packedOffset = start + packed.offset;
+            hasValue = true;
+            status = PbfStatus.init;
+            return true;
+        }
+
+        if (state.messageOffset >= input.length)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
+
+        const start = state.messageOffset;
+        auto message = WireCursor(input[start .. $]);
+        FieldHeader field;
+        WireStatus wire;
+        if (!readFieldHeader(message, field, wire))
+        {
+            status = PbfStatus.fromTagWire(wire, baseOffset + start);
+            return false;
+        }
+
+        if (field.number == fieldNumber && field.wireType == WireType.varint)
+        {
+            valueOffset = baseOffset + start + message.offset;
+            if (!readVarint32(message, value, wire))
+            {
+                if (wire.fieldNumber == 0)
+                    wire.fieldNumber = field.number;
+                status = PbfStatus.fromTagWire(wire, baseOffset + start);
+                return false;
+            }
+
+            state.messageOffset = start + message.offset;
+            hasValue = true;
+            status = PbfStatus.init;
+            return true;
+        }
+
+        if (field.number == fieldNumber &&
+            field.wireType == WireType.lengthDelimited)
+        {
+            bool ok;
+            auto packed = readLengthDelimitedCursor(
+                message,
+                field.number,
+                ok,
+                wire);
+            if (!ok)
+            {
+                status = PbfStatus.fromTagWire(wire, baseOffset + start);
+                return false;
+            }
+
+            const payloadStart = start + message.offset - packed.remaining;
+            state.messageOffset = start + message.offset;
+            state.packedOffset = payloadStart;
+            state.packedEnd = payloadStart + packed.remaining;
+
+            // Empty packed occurrences are legal and contribute no values.
+            continue;
+        }
+
+        if (!skipFieldValue(message, field, wire))
+        {
+            status = PbfStatus.fromTagWire(wire, baseOffset + start);
+            return false;
+        }
+
+        state.messageOffset = start + message.offset;
+    }
+}
+
+pragma(inline, true)
+private bool decodePrevalidatedPackedPair(
+    scope ref PackedTagState state,
+    out DecodedTagPair decoded,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    decoded = DecodedTagPair.init;
+
+    if (!nextPrevalidatedPackedField(
+            state.keys,
+            state.keyBase,
+            2,
+            decoded.keySid,
+            decoded.keyOffset,
+            status) ||
+        !nextPrevalidatedPackedField(
+            state.values,
+            state.valueBase,
+            3,
+            decoded.valueSid,
+            decoded.valueOffset,
+            status))
+        return false;
+
+    status = PbfStatus.init;
+    return true;
+}
+
+pragma(inline, true)
+private bool nextPrevalidatedPackedField(
+    scope ref const(ubyte)[] remaining,
+    scope ref size_t baseOffset,
+    uint fieldNumber,
+    out uint value,
+    out size_t valueOffset,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    if (remaining.length == 0)
+    {
+        status = PbfStatus.failure(PbfError.tagColumnLengthMismatch, 0, fieldNumber);
+        return false;
+    }
+
+    auto cursor = WireCursor(remaining);
+    WireStatus wire;
+    valueOffset = baseOffset;
+
+    if (!readVarint32(cursor, value, wire))
+    {
+        if (wire.fieldNumber == 0)
+            wire.fieldNumber = fieldNumber;
+        status = PbfStatus.fromTagWire(wire, baseOffset);
+        return false;
+    }
+
+    const consumed = cursor.offset;
+    remaining = remaining[consumed .. $];
+    baseOffset += consumed;
+    status = PbfStatus.init;
+    return true;
 }
 
 /**
@@ -270,8 +540,9 @@ bool buildTagRange(
     @safe nothrow @nogc
 {
     range = TagRange.init;
-    range._keys = UInt32FieldCursor(input, baseOffset, 2);
-    range._vals = UInt32FieldCursor(input, baseOffset, 3);
+    range._mode = TagRangeMode.message;
+    range._state.message.input = input;
+    range._state.message.baseOffset = baseOffset;
     range._table = table;
     range._remaining = summary.tagCount;
 
@@ -309,14 +580,11 @@ bool buildPrevalidatedPackedTagRange(
     @safe nothrow @nogc
 {
     range = TagRange.init;
-    range._keys = UInt32FieldCursor.fromPrevalidatedPacked(
-        keyPayload,
-        keyPayloadBase,
-        2);
-    range._vals = UInt32FieldCursor.fromPrevalidatedPacked(
-        valuePayload,
-        valuePayloadBase,
-        3);
+    range._mode = TagRangeMode.packed;
+    range._state.packed.keys = keyPayload;
+    range._state.packed.values = valuePayload;
+    range._state.packed.keyBase = keyPayloadBase;
+    range._state.packed.valueBase = valuePayloadBase;
     range._table = table;
     range._remaining = summary.tagCount;
 
@@ -697,81 +965,5 @@ unittest
 
 version (unittest)
 {
-    pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagView.sizeof=", TagView.sizeof, " UInt32FieldCursor.sizeof=", UInt32FieldCursor.sizeof, " WireCursor.sizeof=", WireCursor.sizeof);
-}
-
-version (unittest)
-{
-    private enum CompactTagEncoding : ubyte
-    {
-        empty,
-        regular,
-        dense,
-    }
-
-    private struct CompactRepeatedFieldState
-    {
-        size_t messageOffset;
-        size_t packedOffset;
-        size_t packedEnd;
-    }
-
-    private struct CompactRegularTagState
-    {
-        const(ubyte)[] input;
-        size_t baseOffset;
-        CompactRepeatedFieldState keys;
-        CompactRepeatedFieldState values;
-    }
-
-    private struct CompactDenseTagState
-    {
-        const(ubyte)[] group;
-        size_t groupOffset;
-        size_t denseOffset;
-        size_t denseEnd;
-        size_t packedOffset;
-        size_t packedEnd;
-        size_t denseBase;
-        size_t packedBase;
-    }
-
-    private union CompactTagState
-    {
-        CompactRegularTagState regular;
-        CompactDenseTagState dense;
-    }
-
-    private struct CompactTagRangeLayout
-    {
-        StringTableView table;
-        TagView front;
-        CompactTagState state;
-        size_t remaining;
-        uint frontKeySid;
-        uint frontValueSid;
-        CompactTagEncoding encoding;
-    }
-
-    private struct CompactNodeViewLayout
-    {
-        long id;
-        long latNano;
-        long lonNano;
-        CompactTagRangeLayout tags;
-        import osm.view.metadata : MetadataView;
-        MetadataView metadata;
-    }
-
-    pragma(msg,
-        "CANDIDATE CompactRepeatedFieldState.sizeof=",
-        CompactRepeatedFieldState.sizeof,
-        " CompactRegularTagState.sizeof=",
-        CompactRegularTagState.sizeof,
-        " CompactDenseTagState.sizeof=",
-        CompactDenseTagState.sizeof,
-        " CompactTagRangeLayout.sizeof=",
-        CompactTagRangeLayout.sizeof,
-        " CompactNodeViewLayout.sizeof=",
-        CompactNodeViewLayout.sizeof);
+    pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagRangeState.sizeof=", TagRangeState.sizeof, " TagView.sizeof=", TagView.sizeof, " UInt32FieldCursor.sizeof=", UInt32FieldCursor.sizeof, " WireCursor.sizeof=", WireCursor.sizeof);
 }
