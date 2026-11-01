@@ -23,6 +23,7 @@ public import osm.view.tag : TagView;
 public import osm.view.way_node : WayNodeView;
 
 public import osm.io.pbf.reader :
+    PbfNodeIterable,
     PbfReadError,
     PbfReadStatus,
     PbfReadSummary,
