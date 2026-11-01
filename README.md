@@ -104,7 +104,7 @@ struct Handler
 {
     ulong nodes;
 
-    void node(T)(scope ref T node) @safe nothrow @nogc
+    void node(scope ref NodeView node) @safe nothrow @nogc
     {
         ++nodes;
 
@@ -152,10 +152,13 @@ if (!reader.read(pbfBytes, workspace, handler, summary, status))
 ```
 
 A handler may omit `node`, `way`, or `relation` when that element kind is
-not needed. During the current pre-1.0 transition, the node callback is normally
-templated so it accepts both regular and DenseNodes-backed borrowed views
-without exposing the encoding distinction at the call-site. Relation members
-are already format-independent at the consumer boundary: each member exposes
+not needed. `PbfReader` delivers one concrete semantic `NodeView` for both
+regular Node and DenseNodes encoding. The callback-scoped `NodeView` is
+deliberately non-copyable; copy the semantic values or ranges that need to be
+retained during the callback instead. `node.tags` returns an independent
+zero-allocation borrowed range, so advancing that range does not mutate the
+codec-owned node view. Relation members are format-independent at the consumer
+boundary: each member exposes
 `ElementType type`, `OsmId id`, and borrowed role bytes without PBF
 StringTable IDs. Tags from regular elements and DenseNodes expose the same
 format-independent `TagView` containing only borrowed key/value bytes; PBF
