@@ -84,6 +84,21 @@ struct Consumer
         ++relations;
         assert(value.type == ElementType.relation);
         inspectMetadata(value);
+
+        auto members = value.members;
+        while (!members.empty)
+        {
+            RelationMemberView member = members.front;
+            ElementType memberType = member.type;
+            OsmId memberId = member.id;
+            const role = member.role;
+
+            assert(memberType == member.type);
+            assert(memberId == member.id);
+            assert(role == member.role);
+
+            members.popFront();
+        }
     }
 }
 
