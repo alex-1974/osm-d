@@ -85,10 +85,53 @@ the fast development/correctness compiler. The current pre-1.0 supported and
 tested matrix is DMD 2.111.0 and LDC 1.41.0 with DMD frontend 2.111.0; see
 `docs/DEVELOPMENT.md` for the compiler-support policy and canonical checks.
 
-The package is still pre-1.0. `import osm;` is the curated package root but
-currently re-exports no implementation modules. The supported direct-import
+The package is still pre-1.0. `import osm;` is the curated package root and
+now exposes the whole-buffer PBF reader boundary without re-exporting the
+low-level codec or wire implementation surface. The supported direct-import
 surface and the distinction between semantic API, evolving codec API, and
 implementation modules are documented in `docs/DEVELOPMENT.md`.
+
+## Reading an in-memory PBF
+
+The first consumer reader is intentionally streaming and borrowed. The caller
+owns the encoded bytes and a reusable workspace; callbacks receive element
+views synchronously without materializing an owned OSM model.
+
+```d
+import osm;
+
+struct Handler
+{
+    ulong nodes;
+
+    void node(T)(scope ref T node) @safe nothrow @nogc
+    {
+        ++nodes;
+        // Shared node semantics such as id, coordinates, tags and metadata
+        // are available on both current PBF node representations.
+    }
+}
+
+const(ubyte)[] pbfBytes = ...;
+
+PbfReader reader;
+PbfReaderWorkspace workspace;
+Handler handler;
+PbfReadSummary summary;
+PbfReadStatus status;
+
+if (!reader.read(pbfBytes, workspace, handler, summary, status))
+{
+    // status.error is the high-level category; status.detail preserves
+    // lower-level PBF diagnostic information when applicable.
+}
+```
+
+A handler may omit `node`, `way`, or `relation` when that element kind is
+not needed. During the current pre-1.0 transition, the node callback is normally
+templated so it accepts both regular and DenseNodes-backed borrowed views
+without exposing the encoding distinction at the call-site. The planned
+semantic-view unification is tracked separately from the reader orchestration.
 
 ## Status
 
@@ -120,9 +163,9 @@ place, and the current DenseNode, regular Node, Way, and Relation PBF views
 conform to it without changing their codec-owned representations. The current
 PBF vertical slice performs fail-closed structural validation and complete
 per-group element preflight before observable sink emission. Dataset/reference
-and operation-specific validation remain separate higher layers. The production
-parallel PBF reader and public range adapter, XML/osmChange support, and the
-compact editable store remain future work.
+and operation-specific validation remain separate higher layers. The consumer-facing whole-buffer PBF reader is now in place. Parallel PBF
+execution, the final semantic view/range unification, XML/osmChange support,
+and the compact editable store remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
