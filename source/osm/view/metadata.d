@@ -16,15 +16,12 @@
  */
 module osm.view.metadata;
 
-private enum ubyte
-{
-    metadataHasVersion    = 1u << 0,
-    metadataHasTimestamp  = 1u << 1,
-    metadataHasChangeset  = 1u << 2,
-    metadataHasUserId     = 1u << 3,
-    metadataHasUsername   = 1u << 4,
-    metadataHasVisibility = 1u << 5,
-}
+private enum ubyte metadataHasVersion    = 1u << 0;
+private enum ubyte metadataHasTimestamp  = 1u << 1;
+private enum ubyte metadataHasChangeset  = 1u << 2;
+private enum ubyte metadataHasUserId     = 1u << 3;
+private enum ubyte metadataHasUsername   = 1u << 4;
+private enum ubyte metadataHasVisibility = 1u << 5;
 
 /**
  * Borrowed semantic metadata for one OSM element.
