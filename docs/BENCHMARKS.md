@@ -2970,3 +2970,66 @@ This negative result is retained deliberately. The idea should be reconsidered
 only if a future measured consumer has materially smaller DenseInfo groups, or
 if preflight structure can be reused with substantially less additional
 production complexity.
+
+## PbfReader orchestration qualification (2026-11-01)
+
+The first consumer-facing whole-buffer `PbfReader` moved the complete
+decode-count orchestration from benchmark-local code into production while
+retaining the same framing, Blob, HeaderBlock, PrimitiveBlock, StringTable,
+PrimitiveGroup, and element decoders.
+
+The acceptance question was narrow: does introducing the public reader boundary
+change observable decode semantics or add material whole-file overhead?
+
+A temporary GitHub Actions qualification step compared:
+
+- baseline: `1032f15d69a47753c7f842fc5fff17a058d7d2bf`, using the previous
+  benchmark-local direct orchestration;
+- candidate: the feature branch after `benchmark/parser/decode_count.d` was
+  migrated to the production `PbfReader`;
+- compiler: LDC 1.41.0;
+- build: release, `allAtOnce`;
+- corpus: pinned `bremen-260901` Geofabrik extract;
+- 12 measured process samples per side in alternating balanced order;
+- each measured process retained its existing internal untimed warm-up.
+
+The complete decode-count outputs were byte-for-byte identical for:
+
+```text
+bytes
+header_blocks
+data_blocks
+primitive_groups
+nodes
+ways
+relations
+tags
+```
+
+Result:
+
+| Variant | p50 |
+| --- | ---: |
+| direct orchestration baseline | 695.884 ms |
+| production `PbfReader` | 697.025 ms |
+| candidate vs baseline | +0.164% |
+
+Raw baseline samples in milliseconds:
+
+```text
+709.451 696.077 689.122 687.789 698.245 702.385
+689.015 696.865 696.780 689.757 695.692 689.129
+```
+
+Raw reader samples in milliseconds:
+
+```text
+698.666 693.549 691.900 689.726 709.503 696.965
+689.761 696.794 697.544 709.013 697.085 718.905
+```
+
+**Classification: KEEP.** Semantic parity passed and the observed +0.164%
+median difference is not a material regression. The run used a shared GitHub
+runner rather than the controlled local benchmark host, so these absolute
+times are retained only as an orchestration-overhead qualification and do not
+replace the controlled libosmium throughput baseline.
