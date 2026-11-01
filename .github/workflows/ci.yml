@@ -60,3 +60,14 @@ jobs:
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
+
+      - name: Build reader semantic qualification consumer
+        shell: bash
+        run: |
+          cd benchmark
+          dub build \
+            --config=reader-semantic-qualification \
+            --build=release \
+            --build-mode=allAtOnce \
+            --compiler="$DC" \
+            --force
