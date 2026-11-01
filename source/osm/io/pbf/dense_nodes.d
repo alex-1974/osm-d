@@ -897,7 +897,3 @@ unittest
     assert(sink.lastId == 2);
 }
 
-version (unittest)
-{
-    pragma(msg, "LAYOUT source/osm/io/pbf/dense_nodes.d: shared NodeView.sizeof=", NodeView.sizeof);
-}
