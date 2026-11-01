@@ -14,6 +14,7 @@
 module osm.io.pbf.node;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.location : LocationView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -47,6 +48,15 @@ struct NodeView
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
+
+    /** Semantic location with exact backing and lazy degree conversion. */
+    pragma(inline, true)
+    @property LocationView location() const scope
+        @safe pure nothrow @nogc
+    {
+        return LocationView(latNano, lonNano);
+    }
+
     /// Borrowed ordered normal-element tags.
     TagRange tags;
     /// Optional merged Info metadata.
