@@ -267,7 +267,9 @@ private:
     WayLocationRange _locations;
 
 package(osm):
-    this(WayRefRange refs, WayLocationRange locations)
+    this(
+        return scope WayRefRange refs,
+        return scope WayLocationRange locations)
         @safe pure nothrow @nogc
     {
         assert(locations.empty || locations.length == refs.length);
