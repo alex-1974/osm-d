@@ -1212,3 +1212,111 @@ unittest
     assert(!reader.read(changeSetFile, workspace, handler, summary, status));
     assert(status.error == PbfReadError.unsupportedChangeSet);
 }
+
+
+// PbfNodeIterable foreach natural completion and early-stop semantics.
+unittest
+{
+    ubyte[] first;
+    appendVarintField(first, 1, 2); // sint64 id = 1
+    appendVarintField(first, 8, 0);
+    appendVarintField(first, 9, 0);
+
+    ubyte[] second;
+    appendVarintField(second, 1, 4); // sint64 id = 2
+    appendVarintField(second, 8, 0);
+    appendVarintField(second, 9, 0);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 1, first);
+    appendLengthDelimited(group, 1, second);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+
+    auto all = reader.nodes(input);
+    size_t count;
+    long idSum;
+    foreach (scope ref NodeView node; all)
+    {
+        ++count;
+        idSum += node.id;
+    }
+
+    assert(all.status.ok);
+    assert(all.completed);
+    assert(count == 2);
+    assert(idSum == 3);
+
+    auto prefix = reader.nodes(input);
+    count = 0;
+    foreach (scope ref NodeView node; prefix)
+    {
+        ++count;
+        assert(node.id == 1);
+        break;
+    }
+
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+    assert(count == 1);
+}
+
+
+// PbfNodeIterable exercises the DenseNodes scalar fast representation too.
+unittest
+{
+    const(ubyte)[] ids = [0x02, 0x02]; // delta ids 1, 1
+    const(ubyte)[] coords = [0x00, 0x00];
+
+    ubyte[] dense;
+    appendLengthDelimited(dense, 1, ids);
+    appendLengthDelimited(dense, 8, coords);
+    appendLengthDelimited(dense, 9, coords);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 2, dense);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+    auto nodes = reader.nodes(input);
+
+    size_t count;
+    long idSum;
+    foreach (scope ref NodeView node; nodes)
+    {
+        ++count;
+        idSum += node.id;
+    }
+
+    assert(nodes.status.ok);
+    assert(nodes.completed);
+    assert(count == 2);
+    assert(idSum == 3);
+}
+
+
+// Decode errors terminate foreach naturally and remain available as status.
+unittest
+{
+    PbfReader reader;
+    auto nodes = reader.nodes(null);
+
+    size_t count;
+    foreach (scope ref NodeView node; nodes)
+    {
+        ++count;
+    }
+
+    assert(count == 0);
+    assert(!nodes.completed);
+    assert(nodes.status.error == PbfReadError.missingHeader);
+}
