@@ -122,8 +122,8 @@ PbfReadStatus status;
 
 if (!reader.read(pbfBytes, workspace, handler, summary, status))
 {
-    // status.error is the high-level category; status.detail preserves
-    // lower-level PBF diagnostic information when applicable.
+    // status.error is the stable high-level category.
+    // blockSequence/blockOffset identify the affected file block.
 }
 ```
 
@@ -163,8 +163,9 @@ place, and the current DenseNode, regular Node, Way, and Relation PBF views
 conform to it without changing their codec-owned representations. The current
 PBF vertical slice performs fail-closed structural validation and complete
 per-group element preflight before observable sink emission. Dataset/reference
-and operation-specific validation remain separate higher layers. The consumer-facing whole-buffer PBF reader is now in place. Parallel PBF
-execution, the final semantic view/range unification, XML/osmChange support,
+and operation-specific validation remain separate higher layers. The
+consumer-facing whole-buffer PBF reader is now in place. Parallel PBF execution,
+the final semantic view/range unification, XML/osmChange support,
 and the compact editable store remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
