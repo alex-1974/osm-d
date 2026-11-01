@@ -702,7 +702,7 @@ version (unittest)
 
 version (unittest)
 {
-    private enum ubyte CompactTagEncoding
+    private enum CompactTagEncoding : ubyte
     {
         empty,
         regular,
