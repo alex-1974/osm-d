@@ -281,8 +281,3 @@ unittest
     assert(!buildStringTableView(layout, none, table, status));
     assert(status.error == PbfError.stringTableWorkspaceTooSmall);
 }
-
-version (unittest)
-{
-    pragma(msg, "LAYOUT source/osm/io/pbf/string_table.d: StringTableView.sizeof=", StringTableView.sizeof, " StringRef.sizeof=", StringRef.sizeof);
-}
