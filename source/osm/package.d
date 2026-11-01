@@ -16,6 +16,7 @@ public import osm.view.element :
     ElementType,
     OsmId;
 public import osm.view.location : LocationView;
+public import osm.view.metadata : MetadataView;
 
 public import osm.io.pbf.reader :
     PbfReadError,
