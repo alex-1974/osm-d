@@ -49,12 +49,15 @@ The current pre-1.0 surface is classified as follows:
 - `osm` is the curated package root. It re-exports the consumer-facing
   whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
   `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
-  format-independent semantic identity/location/metadata vocabulary (`OsmId`,
-  `ElementType`, `LocationView`, `MetadataView`). It does not re-export the evolving low-level
+  format-independent semantic identity/location/metadata/member vocabulary
+  (`OsmId`, `ElementType`, `LocationView`, `MetadataView`,
+  `RelationMemberView`). It does not re-export the evolving low-level
   PBF or wire implementation surface.
-- `osm.view.element`, `osm.view.location`, and `osm.view.metadata` are supported semantic direct-import APIs. The
+- `osm.view.element`, `osm.view.location`, `osm.view.metadata`, and
+  `osm.view.relation_member` are supported semantic direct-import APIs. The
   `ElementType`, `OsmId`, structural `isElementView` contract, `LocationView`,
-  and `MetadataView` form the current format-independent borrowed semantic
+  `MetadataView`, and `RelationMemberView` form the current format-independent
+  borrowed semantic
   boundary described by ADR 0016 and the consumer API design.
 - `osm.io.pbf.reader` is the supported direct-import module for the same
   consumer-facing PBF reader boundary exported by `osm`.
