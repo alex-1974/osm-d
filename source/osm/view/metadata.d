@@ -88,7 +88,7 @@ package(osm):
 public:
     /** Whether an OSM element version is present. */
     pragma(inline, true)
-    @property bool hasVersion() const @safe pure nothrow @nogc
+    @property bool hasVersion() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasVersion) != 0;
     }
@@ -99,14 +99,14 @@ public:
      * Read this value only when hasVersion is true.
      */
     pragma(inline, true)
-    @property int versionNumber() const @safe pure nothrow @nogc
+    @property int versionNumber() const scope @safe pure nothrow @nogc
     {
         return _versionNumber;
     }
 
     /** Whether a timestamp is present. */
     pragma(inline, true)
-    @property bool hasTimestamp() const @safe pure nothrow @nogc
+    @property bool hasTimestamp() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasTimestamp) != 0;
     }
@@ -117,14 +117,14 @@ public:
      * Read this value only when hasTimestamp is true.
      */
     pragma(inline, true)
-    @property long timestampMilliseconds() const @safe pure nothrow @nogc
+    @property long timestampMilliseconds() const scope @safe pure nothrow @nogc
     {
         return _timestampMilliseconds;
     }
 
     /** Whether a changeset identifier is present. */
     pragma(inline, true)
-    @property bool hasChangeset() const @safe pure nothrow @nogc
+    @property bool hasChangeset() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasChangeset) != 0;
     }
@@ -136,14 +136,14 @@ public:
      * or relation.
      */
     pragma(inline, true)
-    @property long changesetId() const @safe pure nothrow @nogc
+    @property long changesetId() const scope @safe pure nothrow @nogc
     {
         return _changesetId;
     }
 
     /** Whether a numeric OSM user identifier is present. */
     pragma(inline, true)
-    @property bool hasUserId() const @safe pure nothrow @nogc
+    @property bool hasUserId() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasUserId) != 0;
     }
@@ -154,14 +154,14 @@ public:
      * Read this value only when hasUserId is true.
      */
     pragma(inline, true)
-    @property int userId() const @safe pure nothrow @nogc
+    @property int userId() const scope @safe pure nothrow @nogc
     {
         return _userId;
     }
 
     /** Whether a username is present. */
     pragma(inline, true)
-    @property bool hasUsername() const @safe pure nothrow @nogc
+    @property bool hasUsername() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasUsername) != 0;
     }
@@ -180,7 +180,7 @@ public:
 
     /** Whether visibility/deletion state is explicitly present. */
     pragma(inline, true)
-    @property bool hasVisibility() const @safe pure nothrow @nogc
+    @property bool hasVisibility() const scope @safe pure nothrow @nogc
     {
         return (_flags & metadataHasVisibility) != 0;
     }
@@ -191,14 +191,14 @@ public:
      * Read this value only when hasVisibility is true.
      */
     pragma(inline, true)
-    @property bool visible() const @safe pure nothrow @nogc
+    @property bool visible() const scope @safe pure nothrow @nogc
     {
         return _visible;
     }
 
     /** Whether no metadata component is present. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _flags == 0;
     }
