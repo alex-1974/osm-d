@@ -195,14 +195,15 @@ Detailed evidence and rejected alternatives are recorded in
 `docs/BENCHMARKS.md`.
 
 The format-independent borrowed `ElementView` identity contract is now in
-place, and the current DenseNode, regular Node, Way, and Relation PBF views
-conform to it without changing their codec-owned representations. The current
+place, and the codec-owned regular Node, DenseNode, Way, and Relation PBF views
+conform to it without changing their specialized representations. The current
 PBF vertical slice performs fail-closed structural validation and complete
 per-group element preflight before observable sink emission. Dataset/reference
 and operation-specific validation remain separate higher layers. The
-consumer-facing whole-buffer PBF reader is now in place. Parallel PBF execution,
-the final semantic view/range unification, XML/osmChange support,
-and the compact editable store remain future work.
+consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
+behind one concrete semantic `NodeView`. Parallel PBF execution, further
+semantic range cleanup, XML/osmChange support, and the compact editable store
+remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
