@@ -45,6 +45,12 @@ jobs:
         shell: bash
         run: dub test --compiler="$DC" --force
 
+      - name: Compile external consumer surface
+        shell: bash
+        run: |
+          CONSUMER_COMPILERS="$DC" \
+            bash tests/run-consumer-compile.sh
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
