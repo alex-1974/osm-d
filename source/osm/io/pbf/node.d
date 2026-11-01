@@ -43,13 +43,17 @@ import osm.wire.varint : readSVarint64, readVarint32;
 /** One validated regular Node with exact borrowed provenance. */
 struct NodeView
 {
+public:
     /// Signed OSM object ID.
     long id;
+
+package(osm):
     /// Exact latitude in nanodegrees after granularity/offset conversion.
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
 
+public:
     /** Semantic location with exact backing and lazy degree conversion. */
     pragma(inline, true)
     @property LocationView location() const scope
@@ -60,9 +64,12 @@ struct NodeView
 
     /// Borrowed ordered normal-element tags.
     TagRange tags;
+
+package(osm):
     /// Optional merged Info metadata.
     InfoView info;
 
+public:
     /** Format-independent OSM metadata without PBF encoding vocabulary. */
     pragma(inline, true)
     @property MetadataView metadata() const return scope
@@ -77,11 +84,13 @@ struct NodeView
             info.hasVisible, info.visible);
     }
 
+package(osm):
     /// Complete original serialized Node payload, excluding group key/length.
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
 
+public:
     /// Semantic OSM element kind.
     @property ElementType type() const scope
         @safe pure nothrow @nogc
