@@ -24,7 +24,11 @@ jobs:
       matrix:
         compiler:
           - dmd-2.111.0
+          - dmd-2.112.1
+          - dmd-2.113.0
           - ldc-1.41.0
+          - ldc-1.42.0
+          - ldc-1.43.0
 
     steps:
       - name: Check out repository
