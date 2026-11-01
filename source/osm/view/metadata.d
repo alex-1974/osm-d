@@ -173,7 +173,7 @@ public:
      * not imply UTF-8 validation, repair, normalization, or ownership.
      */
     pragma(inline, true)
-    @property const(ubyte)[] username() const @safe pure nothrow @nogc
+    @property const(ubyte)[] username() const return scope @safe pure nothrow @nogc
     {
         return _username;
     }
