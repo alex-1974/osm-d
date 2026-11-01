@@ -184,15 +184,19 @@ private:
 /** One validated regular Relation with exact borrowed provenance. */
 struct RelationView
 {
+public:
     /// Signed OSM object ID as encoded by the Relation `int64` field.
     long id;
     /// Borrowed ordered normal-element tags.
     TagRange tags;
     /// Borrowed ordered Relation members.
     RelationMemberRange members;
+
+package(osm):
     /// Optional merged Info metadata.
     InfoView info;
 
+public:
     /** Format-independent OSM metadata without PBF encoding vocabulary. */
     pragma(inline, true)
     @property MetadataView metadata() const return scope
@@ -207,11 +211,13 @@ struct RelationView
             info.hasVisible, info.visible);
     }
 
+package(osm):
     /// Complete original serialized Relation payload, excluding group key/length.
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
 
+public:
     /// Semantic OSM element kind.
     @property ElementType type() const scope
         @safe pure nothrow @nogc
