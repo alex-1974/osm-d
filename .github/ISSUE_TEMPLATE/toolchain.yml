@@ -1,6 +1,8 @@
 name: Toolchain
 description: Track a compiler, Phobos, druntime, DUB, linker, or CI-tool problem.
 title: ""
+labels:
+  - toolchain
 body:
   - type: textarea
     id: component

@@ -2,7 +2,7 @@ name: Feature
 description: Propose a consumer-visible osm-d capability.
 title: ""
 labels:
-  - enhancement
+  - "type: feature"
 body:
   - type: textarea
     id: need
