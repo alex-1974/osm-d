@@ -88,3 +88,13 @@ configuration "parser-decode-count" {
     importPaths "parser"
     mainSourceFile "parser/decode_count.d"
 }
+
+
+configuration "reader-semantic-qualification" {
+    targetType "executable"
+    targetName "osm-d-bench-reader-semantic-qualification"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/semantic_nodes_qualification.d"
+}
