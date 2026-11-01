@@ -49,14 +49,14 @@ private:
     NodeTagKind _kind;
 
 package(osm):
-    this(return scope TagRange tags) @safe nothrow @nogc
+    this(return scope ref TagRange tags) @safe nothrow @nogc
     {
         _kind = NodeTagKind.regular;
         _remaining = tags.length;
         setRegular(tags);
     }
 
-    this(return scope DenseTagRange tags) @safe nothrow @nogc
+    this(return scope ref DenseTagRange tags) @safe nothrow @nogc
     {
         _kind = NodeTagKind.dense;
         _remaining = tags.length;
@@ -116,7 +116,7 @@ private:
      * trusted.
      */
     pragma(inline, true)
-    void setRegular(return scope TagRange tags)
+    void setRegular(return scope ref TagRange tags)
         scope @trusted nothrow @nogc
     {
         assert(_kind == NodeTagKind.regular);
@@ -124,7 +124,7 @@ private:
     }
 
     pragma(inline, true)
-    void setDense(return scope DenseTagRange tags)
+    void setDense(return scope ref DenseTagRange tags)
         scope @trusted nothrow @nogc
     {
         assert(_kind == NodeTagKind.dense);
@@ -294,11 +294,13 @@ public:
      * Return an independent borrowed range over this node's semantic tags.
      *
      * The codec range is copied only when the consumer actually requests tags.
+     * The codec range is borrowed by ref during construction so the independent
+     * semantic cursor is copied exactly once into its union storage.
      * No tag cursor or metadata state is copied merely to deliver the node
      * callback.
      */
     pragma(inline, true)
-    @property NodeTagRange tags() const return scope
+    @property NodeTagRange tags() return scope
         @safe nothrow @nogc
     {
         final switch (_kind)
