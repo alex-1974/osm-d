@@ -14,7 +14,6 @@ module osm;
 
 public import osm.io.pbf.reader :
     PbfReadError,
-    PbfReadStage,
     PbfReadStatus,
     PbfReadSummary,
     PbfReaderWorkspace,
