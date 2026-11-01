@@ -208,15 +208,32 @@ public:
     }
 
     /**
-     * Iterate semantic nodes synchronously.
+     * Iterate semantic nodes from an @safe foreach body.
      *
      * The delegate return value is forwarded unchanged. D uses that non-zero
      * value to implement foreach `break`, enclosing `return`, and outer
      * `goto`; returning any invented non-zero value would violate opApply
      * semantics.
      */
-    int opApply(scope int delegate(scope ref NodeView) dg)
+    int opApply(
+        scope int delegate(scope ref NodeView) @safe dg)
         @safe
+    {
+        SafeNodeForeachSink sink = SafeNodeForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate semantic nodes from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref NodeView) @system dg)
+        @system
+    {
+        SystemNodeForeachSink sink = SystemNodeForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
     {
         _status = PbfReadStatus.init;
         _completed = false;
@@ -227,7 +244,7 @@ public:
         if (!iterateNodes(
                 input,
                 workspace,
-                dg,
+                sink,
                 control,
                 _status))
         {
@@ -452,19 +469,17 @@ struct PbfReader
     }
 }
 
-private bool iterateNodes(Dg)(
+private bool iterateNodes(Sink)(
     const(ubyte)[] input,
     ref PbfReaderWorkspace workspace,
-    scope ref Dg dg,
+    ref Sink sink,
     out int control,
     out PbfReadStatus status)
-    @safe
 {
     control = 0;
     status = PbfReadStatus.init;
 
     auto cursor = WireCursor(input);
-    NodeForeachSink!Dg sink = NodeForeachSink!Dg(dg);
     bool sawHeader;
     bool sawData;
     ulong sequence;
@@ -623,7 +638,6 @@ private bool decodeNodeDataBlock(Sink)(
     ulong sequence,
     size_t fileBlockOffset,
     out PbfReadStatus readStatus)
-    @safe
 {
     PbfStatus status;
 
@@ -730,48 +744,73 @@ private bool decodeNodeDataBlock(Sink)(
     return true;
 }
 
-private struct NodeForeachSink(Dg)
+private struct SafeNodeForeachSink
 {
 private:
-    Dg* dg;
+    int delegate(scope ref NodeView) @safe dg;
 
 public:
-    this(scope ref Dg value) @trusted nothrow @nogc
+    this(scope int delegate(scope ref NodeView) @safe value)
+        @trusted nothrow @nogc
     {
-        dg = &value;
+        // value is scope to opApply and this sink never leaves that call.
+        dg = value;
     }
 
     int putDenseNodeScalars(long id, long latNano, long lonNano)
-        @trusted
+        @safe
     {
-        assert(dg !is null);
         NodeView node = NodeView(id, latNano, lonNano);
-        return callNodeIteration(*dg, node);
+        return dg(node);
     }
 
     int put(scope ref DenseNodeView encoded)
-        @trusted
+        @safe
     {
-        assert(dg !is null);
         NodeView node = NodeView(encoded);
-        return callNodeIteration(*dg, node);
+        return dg(node);
     }
 
     int put(scope ref pbfNode.NodeView encoded)
-        @trusted
+        @safe
     {
-        assert(dg !is null);
         NodeView node = NodeView(encoded);
-        return callNodeIteration(*dg, node);
+        return dg(node);
     }
 }
 
-private int callNodeIteration(Dg)(
-    scope ref Dg dg,
-    scope ref NodeView node)
-    @safe
+private struct SystemNodeForeachSink
 {
-    return dg(node);
+private:
+    int delegate(scope ref NodeView) @system dg;
+
+public:
+    this(scope int delegate(scope ref NodeView) @system value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    int putDenseNodeScalars(long id, long latNano, long lonNano)
+        @system
+    {
+        NodeView node = NodeView(id, latNano, lonNano);
+        return dg(node);
+    }
+
+    int put(scope ref DenseNodeView encoded)
+        @system
+    {
+        NodeView node = NodeView(encoded);
+        return dg(node);
+    }
+
+    int put(scope ref pbfNode.NodeView encoded)
+        @system
+    {
+        NodeView node = NodeView(encoded);
+        return dg(node);
+    }
 }
 
 private bool decodeDataBlock(Sink)(
