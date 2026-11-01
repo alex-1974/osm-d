@@ -169,11 +169,11 @@ bool readLengthDelimited(
  *   when `ok` is false.
  */
 WireCursor readLengthDelimitedCursor(
-    scope ref WireCursor cursor,
+    return scope ref WireCursor cursor,
     uint fieldNumber,
     out bool ok,
     out WireStatus status)
-    return scope @safe nothrow @nogc
+    @safe nothrow @nogc
 {
     const start = cursor.offset;
 
