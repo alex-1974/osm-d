@@ -384,10 +384,3 @@ unittest
     static assert(NodeView.sizeof <= 288);
 }
 
-version (unittest)
-{
-    pragma(msg,
-        "CANDIDATE node_view: NodeTagRange.sizeof=", NodeTagRange.sizeof,
-        " NodeInfoState.sizeof=", NodeInfoState.sizeof,
-        " NodeView.sizeof=", NodeView.sizeof);
-}
