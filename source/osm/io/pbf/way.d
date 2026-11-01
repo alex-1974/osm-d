@@ -3,9 +3,10 @@
  *
  * A Way remains an OSM topological object at this layer: it exposes its signed
  * OSM ID, ordered tags, optional Info metadata, and the ordered absolute node
- * IDs reconstructed from the delta-coded `refs` column. Current OSM-binary
- * `LocationsOnWays` latitude/longitude columns are exposed as an optional
- * aligned borrowed range. The Way is deliberately not interpreted as a line or
+ * IDs reconstructed from the delta-coded `refs` column. The semantic
+ * `nodes` range combines those references with optional `LocationsOnWays`
+ * coordinates without exposing the parallel-column representation to ordinary
+ * consumers. The Way is deliberately not interpreted as a line or
  * polygon; geometry construction belongs to a higher resolver/geometry layer.
  *
  * Every Way in the PrimitiveGroup is fully preflighted before the first sink
@@ -22,6 +23,7 @@ module osm.io.pbf.way;
 import osm.view.element : ElementType, isElementView;
 import osm.view.location : LocationView;
 import osm.view.metadata : MetadataView;
+import osm.view.way_node : WayNodeView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -251,6 +253,65 @@ public:
     }
 }
 
+/**
+ * Borrowed semantic range over one Way's ordered node references.
+ *
+ * The PBF decoder may retain separate reference and optional location columns
+ * internally. This range projects them into one OSM-facing sequence without
+ * allocation, node lookup, or geometry construction.
+ */
+struct WayNodeRange
+{
+private:
+    WayRefRange _refs;
+    WayLocationRange _locations;
+
+package(osm):
+    this(WayRefRange refs, WayLocationRange locations)
+        @safe pure nothrow @nogc
+    {
+        assert(locations.empty || locations.length == refs.length);
+        _refs = refs;
+        _locations = locations;
+    }
+
+public:
+    /** Returns true when no Way node reference remains. */
+    pragma(inline, true)
+    @property bool empty() const scope @safe pure nothrow @nogc
+    {
+        return _refs.empty;
+    }
+
+    /** Returns the number of Way node references not yet consumed. */
+    pragma(inline, true)
+    @property size_t length() const scope @safe pure nothrow @nogc
+    {
+        return _refs.length;
+    }
+
+    /** Return the current semantic Way node reference. */
+    pragma(inline, true)
+    @property WayNodeView front() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        if (_locations.empty)
+            return WayNodeView(_refs.front);
+
+        return WayNodeView(_refs.front, _locations.front);
+    }
+
+    /** Advance to the next already validated Way node reference. */
+    pragma(inline, true)
+    void popFront() scope @safe nothrow @nogc
+    in (!empty)
+    {
+        _refs.popFront();
+        if (!_locations.empty)
+            _locations.popFront();
+    }
+}
+
 /** One validated regular Way with borrowed tags, refs, metadata, and provenance. */
 struct WayView
 {
@@ -264,6 +325,19 @@ struct WayView
     WayLocationRange locations;
     /// Optional merged Info metadata.
     InfoView info;
+
+    /**
+     * Ordered semantic Way node references with optional aligned locations.
+     *
+     * The returned range is lazy and allocation-free. It performs no node
+     * lookup and no geometry construction.
+     */
+    pragma(inline, true)
+    @property WayNodeRange nodes() return scope
+        @safe pure nothrow @nogc
+    {
+        return WayNodeRange(refs, locations);
+    }
 
     /** Format-independent OSM metadata without PBF encoding vocabulary. */
     pragma(inline, true)
@@ -2740,6 +2814,16 @@ unittest
     assert(refs.front == 11);
     refs.popFront();
     assert(refs.empty);
+
+    auto nodes = sink.way.nodes;
+    assert(nodes.length == 3);
+    assert(nodes.front.id == 10 && !nodes.front.hasLocation);
+    nodes.popFront();
+    assert(nodes.front.id == 12 && !nodes.front.hasLocation);
+    nodes.popFront();
+    assert(nodes.front.id == 11 && !nodes.front.hasLocation);
+    nodes.popFront();
+    assert(nodes.empty);
 }
 
 unittest
@@ -2842,6 +2926,20 @@ unittest
     assert(locations.front.lonNano == -5_800);
     locations.popFront();
     assert(locations.empty);
+
+    auto nodes = sink.way.nodes;
+    assert(nodes.length == 2);
+    assert(nodes.front.id == 10);
+    assert(nodes.front.hasLocation);
+    assert(nodes.front.location.latitudeNanodegrees == 11_000);
+    assert(nodes.front.location.longitudeNanodegrees == -6_000);
+    nodes.popFront();
+    assert(nodes.front.id == 12);
+    assert(nodes.front.hasLocation);
+    assert(nodes.front.location.latitudeNanodegrees == 11_100);
+    assert(nodes.front.location.longitudeNanodegrees == -5_800);
+    nodes.popFront();
+    assert(nodes.empty);
 }
 
 unittest

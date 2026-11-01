@@ -148,8 +148,12 @@ templated so it accepts both regular and DenseNodes-backed borrowed views
 without exposing the encoding distinction at the call-site. Relation members
 are already format-independent at the consumer boundary: each member exposes
 `ElementType type`, `OsmId id`, and borrowed role bytes without PBF
-StringTable IDs. The remaining semantic-view unification is tracked separately
-from the reader orchestration.
+StringTable IDs. Way callbacks expose ordered node references through
+`way.nodes`: each `WayNodeView` carries the referenced `OsmId` and, when
+the input provides `LocationsOnWays`, an optional `LocationView`. Consumers
+therefore do not need to zip PBF reference and coordinate columns themselves.
+The remaining semantic-view unification is tracked separately from the reader
+orchestration.
 
 ## Status
 

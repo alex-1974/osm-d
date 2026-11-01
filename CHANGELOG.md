@@ -7,6 +7,8 @@ stable release.
 
 ## Unreleased
 
+- Added format-independent `WayNodeView` and semantic `way.nodes` iteration. Way node IDs and optional `LocationsOnWays` coordinates are now presented as one ordered lazy range without allocation, node lookup, or geometry construction; the existing PBF `refs` / `locations` ranges remain available during the pre-1.0 transition.
+
 - Fixed DIP1000 usability of borrowed reader ranges from `scope ref` callbacks. Normal tags, DenseNodes tags, Way references, Way locations, and relation members can now be iterated from external `@safe nothrow @nogc` consumers without `@trusted`; length-delimited wire traversal uses a scope-returning child cursor so backing slices remain lifetime-bound.
 
 - Added format-independent `RelationMemberView` using `ElementType`, `OsmId`, and borrowed role bytes. PBF `role_sid` remains internal to StringTable decoding, and the duplicate public `RelationMemberType` enum no longer crosses the consumer boundary.
