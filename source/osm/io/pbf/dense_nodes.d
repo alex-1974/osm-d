@@ -224,7 +224,6 @@ bool decodeDenseNodesUntilStop(Sink)(
     out int control,
     out DenseNodeDecodeSummary summary,
     out PbfStatus status)
-    @safe
 {
     control = 0;
     summary = DenseNodeDecodeSummary.init;
@@ -311,7 +310,6 @@ private bool dispatchDenseNodesUntilStop(bool HasTags, bool HasInfo, Sink)(
     ref int control,
     ref DenseNodeDecodeSummary summary,
     out PbfStatus status)
-    @safe
 {
     return emitDenseNodesUntilStop!(HasTags, HasInfo)(
         block, group, table, tagValidation, infoValidation,
@@ -502,7 +500,6 @@ private bool emitDenseNodesUntilStop(bool HasTags, bool HasInfo, Sink)(
     ref int control,
     ref DenseNodeDecodeSummary summary,
     out PbfStatus status)
-    @safe
 {
     static if (HasTags)
         DenseTagNodeCursor tagNodes = DenseTagNodeCursor(group, table);
