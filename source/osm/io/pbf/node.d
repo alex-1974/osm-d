@@ -896,7 +896,3 @@ unittest
     assert(sink.used == 0);
 }
 
-version (unittest)
-{
-    pragma(msg, "LAYOUT source/osm/io/pbf/node.d: NodeView.sizeof=", NodeView.sizeof);
-}
