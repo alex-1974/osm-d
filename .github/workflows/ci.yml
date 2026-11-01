@@ -60,3 +60,14 @@ jobs:
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
+
+      - name: Build parser decode-count benchmark (temporary qualification probe)
+        shell: bash
+        run: |
+          cd benchmark
+          dub build \
+            --config=parser-decode-count \
+            --build=release \
+            --build-mode=allAtOnce \
+            --compiler="$DC" \
+            --force
