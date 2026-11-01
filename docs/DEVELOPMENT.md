@@ -93,8 +93,13 @@ from `PbfReader` callbacks must remain iterable from external `scope ref`
 Way nodes, and Relation members through that boundary. Normal and DenseNodes
 tag ranges both return the same semantic `TagView`; PBF StringTable IDs are
 retained only inside codec ranges for validation and internal diagnostics.
-The direct PBF `refs`/`locations` ranges remain available during the pre-1.0
-transition, but ordinary consumers should prefer `way.nodes`.
+The direct PBF representation remains available inside `package(osm)` for
+codec tests and benchmarks, but ordinary external reader consumers see only the
+semantic element surface: Node coordinates through `location`, metadata through
+`metadata`, Way references through `nodes`, and no direct raw payload/offset
+provenance fields. The external consumer compile probe protects this visibility
+boundary.
+
 Low-level validation
 summaries and validate/prevalidated-build entry points are implementation
 details when they exist only to carry proof from one internal decoding pass to
