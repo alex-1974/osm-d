@@ -1401,3 +1401,49 @@ unittest
     assert(!nodes.completed);
     assert(nodes.status.error == PbfReadError.missingHeader);
 }
+
+
+// PbfNodeIterable break leaves the unvisited semantic suffix unchecked.
+unittest
+{
+    ubyte[] node;
+    appendVarintField(node, 1, 2); // sint64 id = 1
+    appendVarintField(node, 8, 0);
+    appendVarintField(node, 9, 0);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 1, node);
+    appendLengthDelimited(group, 4, null); // malformed Relation: missing id
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+
+    auto complete = reader.nodes(input);
+    size_t completeCount;
+    foreach (scope ref NodeView value; complete)
+    {
+        ++completeCount;
+        assert(value.id == 1);
+    }
+
+    assert(completeCount == 1);
+    assert(!complete.completed);
+    assert(complete.status.error == PbfReadError.malformedInput);
+
+    auto prefix = reader.nodes(input);
+    size_t prefixCount;
+    foreach (scope ref NodeView value; prefix)
+    {
+        ++prefixCount;
+        assert(value.id == 1);
+        break;
+    }
+
+    assert(prefixCount == 1);
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+}
