@@ -694,3 +694,8 @@ unittest
 
     assert(range.empty);
 }
+
+version (unittest)
+{
+    pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagView.sizeof=", TagView.sizeof);
+}
