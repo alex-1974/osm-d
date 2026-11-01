@@ -25,9 +25,16 @@ dub build --compiler=ldc2 --build=release --force
 tests/run-dip1000-negative.sh
 ```
 
-GitHub Actions runs the supported DMD/LDC matrix for pushes to `main` and pull
-requests. Each compiler job runs its unit tests and DIP1000 lifetime-negative
-checks; the LDC job additionally performs the release build.
+GitHub Actions separates checks by branch trust level.
+
+For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
+supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
+DIP1000 lifetime-negative checks, and a release build.
+
+For pull requests targeting `main`, pushes to `main`, and release/hotfix
+branches, the Release Gate reruns the supported compiler matrix and additionally
+builds the parser decode-count benchmark as a consumer-facing parser smoke test.
+`main` remains the release line; normal development targets `develop`.
 
 ## Public module surface during pre-1.0
 

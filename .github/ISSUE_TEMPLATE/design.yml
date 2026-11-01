@@ -1,0 +1,33 @@
+name: Design
+description: Propose or review an architectural or public-contract decision.
+title: ""
+body:
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision to make
+      description: State the architectural, API, ownership, representation, or layering question.
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: List data-integrity, compatibility, performance, safety, memory, streaming, and consumer constraints.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe plausible alternatives and their trade-offs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: adr
+    attributes:
+      label: ADR impact
+      description: Note whether an ADR must be added or updated before implementation.

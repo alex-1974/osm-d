@@ -1,0 +1,69 @@
+name: Release Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+      - 'hotfix/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler-gate:
+    name: Release / ${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - dmd-2.111.0
+          - ldc-1.41.0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ${{ matrix.compiler }}
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          echo "DC=$DC"
+          "$DC" --version
+          dub --version
+
+      - name: Run unit tests
+        shell: bash
+        run: dub test --compiler="$DC" --force
+
+      - name: Run DIP1000 negative tests
+        shell: bash
+        run: |
+          DIP1000_COMPILERS="$DC" \
+            tests/run-dip1000-negative.sh
+
+      - name: Build release configuration
+        shell: bash
+        run: dub build --compiler="$DC" --build=release --force
+
+      - name: Build parser decode-count benchmark
+        shell: bash
+        run: |
+          cd benchmark
+          dub build \
+            --config=parser-decode-count \
+            --build=release \
+            --build-mode=allAtOnce \
+            --compiler="$DC" \
+            --force
