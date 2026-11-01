@@ -71,6 +71,12 @@ struct Consumer
 
     void node(T)(scope ref T value) @safe nothrow @nogc
     {
+        static assert(!__traits(compiles, value.latNano));
+        static assert(!__traits(compiles, value.lonNano));
+        static assert(!__traits(compiles, value.info));
+        static assert(!__traits(compiles, value.raw));
+        static assert(!__traits(compiles, value.rawOffset));
+
         ++nodes;
 
         OsmId id = value.id;
@@ -95,6 +101,12 @@ struct Consumer
 
     void way(T)(scope ref T value) @safe nothrow @nogc
     {
+        static assert(!__traits(compiles, value.refs));
+        static assert(!__traits(compiles, value.locations));
+        static assert(!__traits(compiles, value.info));
+        static assert(!__traits(compiles, value.raw));
+        static assert(!__traits(compiles, value.rawOffset));
+
         ++ways;
         assert(value.type == ElementType.way);
 
@@ -124,6 +136,10 @@ struct Consumer
 
     void relation(T)(scope ref T value) @safe nothrow @nogc
     {
+        static assert(!__traits(compiles, value.info));
+        static assert(!__traits(compiles, value.raw));
+        static assert(!__traits(compiles, value.rawOffset));
+
         ++relations;
         assert(value.type == ElementType.relation);
 
