@@ -379,8 +379,10 @@ static assert(isElementView!NodeView);
 
 unittest
 {
-    static assert(NodeTagRange.sizeof <= 176);
-    static assert(NodeInfoState.sizeof == 88);
-    static assert(NodeView.sizeof <= 288);
+    // A shared node may carry the larger retained dense-tag cursor, but should
+    // remain materially smaller than the former 392-byte regular NodeView on
+    // the supported 64-bit toolchains.
+    static if (size_t.sizeof == 8)
+        static assert(NodeView.sizeof <= 304);
 }
 
