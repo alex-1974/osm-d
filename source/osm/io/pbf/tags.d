@@ -699,3 +699,79 @@ version (unittest)
 {
     pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagView.sizeof=", TagView.sizeof, " UInt32FieldCursor.sizeof=", UInt32FieldCursor.sizeof, " WireCursor.sizeof=", WireCursor.sizeof);
 }
+
+version (unittest)
+{
+    private enum ubyte CompactTagEncoding
+    {
+        empty,
+        regular,
+        dense,
+    }
+
+    private struct CompactRepeatedFieldState
+    {
+        size_t messageOffset;
+        size_t packedOffset;
+        size_t packedEnd;
+    }
+
+    private struct CompactRegularTagState
+    {
+        const(ubyte)[] input;
+        size_t baseOffset;
+        CompactRepeatedFieldState keys;
+        CompactRepeatedFieldState values;
+    }
+
+    private struct CompactDenseTagState
+    {
+        const(ubyte)[] group;
+        size_t groupOffset;
+        size_t denseOffset;
+        size_t denseEnd;
+        size_t packedOffset;
+        size_t packedEnd;
+        size_t denseBase;
+        size_t packedBase;
+    }
+
+    private union CompactTagState
+    {
+        CompactRegularTagState regular;
+        CompactDenseTagState dense;
+    }
+
+    private struct CompactTagRangeLayout
+    {
+        StringTableView table;
+        TagView front;
+        CompactTagState state;
+        size_t remaining;
+        uint frontKeySid;
+        uint frontValueSid;
+        CompactTagEncoding encoding;
+    }
+
+    private struct CompactNodeViewLayout
+    {
+        long id;
+        long latNano;
+        long lonNano;
+        CompactTagRangeLayout tags;
+        import osm.view.metadata : MetadataView;
+        MetadataView metadata;
+    }
+
+    pragma(msg,
+        "CANDIDATE CompactRepeatedFieldState.sizeof=",
+        CompactRepeatedFieldState.sizeof,
+        " CompactRegularTagState.sizeof=",
+        CompactRegularTagState.sizeof,
+        " CompactDenseTagState.sizeof=",
+        CompactDenseTagState.sizeof,
+        " CompactTagRangeLayout.sizeof=",
+        CompactTagRangeLayout.sizeof,
+        " CompactNodeViewLayout.sizeof=",
+        CompactNodeViewLayout.sizeof);
+}
