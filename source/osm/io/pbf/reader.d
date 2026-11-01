@@ -1403,7 +1403,7 @@ unittest
 }
 
 
-// PbfNodeIterable break leaves the unvisited semantic suffix unchecked.
+// PbfNodeIterable break leaves the unvisited file suffix unchecked.
 unittest
 {
     ubyte[] node;
@@ -1413,12 +1413,18 @@ unittest
 
     ubyte[] group;
     appendLengthDelimited(group, 1, node);
-    appendLengthDelimited(group, 4, null); // malformed Relation: missing id
 
     ubyte[] input;
     appendFileBlock(input, "OSMHeader", null);
-    const data = makePrimitiveBlock(group);
-    appendFileBlock(input, "OSMData", data);
+
+    const firstData = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", firstData);
+
+    // A second framed OSMData block whose PrimitiveBlock payload contains a
+    // truncated protobuf key. Natural traversal must reach and reject it;
+    // breaking after the first node must stop before this block is inspected.
+    const(ubyte)[] malformedSecondData = [0x80];
+    appendFileBlock(input, "OSMData", malformedSecondData);
 
     PbfReader reader;
 
