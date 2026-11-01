@@ -39,15 +39,10 @@ private bool decodeBuffer(
         return true;
 
     stderr.writefln(
-        "PBF read failed: error=%s stage=%s block=%s block_offset=%s "
-        ~ "detail=%s detail_offset=%s field=%s",
+        "PBF read failed: error=%s block=%s block_offset=%s",
         status.error,
-        status.stage,
         status.blockSequence,
-        status.blockOffset,
-        status.detail,
-        status.detailOffset,
-        status.detailFieldNumber);
+        status.blockOffset);
     return false;
 }
 
