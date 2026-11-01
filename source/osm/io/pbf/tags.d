@@ -52,59 +52,17 @@ private struct DecodedTagPair
     size_t valueOffset;
 }
 
-private enum TagRangeMode : ubyte
-{
-    message,
-    packed,
-}
-
-private struct TagFieldState
-{
-    size_t messageOffset;
-    size_t packedOffset;
-    size_t packedEnd;
-}
-
-private struct MessageTagState
-{
-    const(ubyte)[] input;
-    size_t baseOffset;
-    TagFieldState keys;
-    TagFieldState values;
-}
-
-private struct PackedTagState
-{
-    const(ubyte)[] keys;
-    const(ubyte)[] values;
-    size_t keyBase;
-    size_t valueBase;
-}
-
-private union TagRangeState
-{
-    MessageTagState message;
-    PackedTagState packed;
-}
-
-/**
- * Borrowed input range over one normal element's validated ordered tags.
- *
- * The range stores compact offsets/slices instead of two full validation
- * cursors. Construction is allowed only after complete tag preflight, so the
- * iteration state needs to preserve traversal and borrowed-string semantics,
- * not duplicate validation state. Copies remain independent cursors.
- */
+/** Borrowed input range over one normal element's validated ordered tags. */
 struct TagRange
 {
 private:
+    UInt32FieldCursor _keys;
+    UInt32FieldCursor _vals;
     StringTableView _table;
     TagView _front;
-    TagRangeState _state;
-    size_t _remaining;
     uint _frontKeySid;
     uint _frontValueSid;
-    TagRangeMode _mode;
+    size_t _remaining;
 
 public:
     /** Returns `true` when no tag remains. */
@@ -155,120 +113,34 @@ public:
         --_remaining;
         if (_remaining == 0)
         {
-            clearFront();
+            _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
             return;
         }
 
         PbfStatus ignored;
         if (!advance(ignored))
         {
-            // The complete backing was prevalidated and must remain unchanged.
+            // The backing bytes were completely prevalidated and must remain unchanged.
             _remaining = 0;
-            clearFront();
+            _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
         }
     }
 
 private:
     pragma(inline, true)
-    void clearFront() scope @safe pure nothrow @nogc
-    {
-        _front = TagView.init;
-        _frontKeySid = 0;
-        _frontValueSid = 0;
-    }
-
-    /**
-     * Access the active message-state union member.
-     *
-     * Safety:
-     *   _mode is construction-controlled and asserted before the overlapped
-     *   slice-containing union member is touched. DMD cannot prove this active
-     *   member invariant in @safe code.
-     */
-    pragma(inline, true)
-    bool advanceMessage(
-        out DecodedTagPair decoded,
-        out PbfStatus status)
-        scope @trusted nothrow @nogc
-    {
-        assert(_mode == TagRangeMode.message);
-        return decodePrevalidatedMessagePair(_state.message, decoded, status);
-    }
-
-    /**
-     * Access the active packed-state union member.
-     *
-     * Safety:
-     *   _mode is construction-controlled and asserted before the overlapped
-     *   slice-containing union member is touched.
-     */
-    pragma(inline, true)
-    bool advancePacked(
-        out DecodedTagPair decoded,
-        out PbfStatus status)
-        scope @trusted nothrow @nogc
-    {
-        assert(_mode == TagRangeMode.packed);
-        return decodePrevalidatedPackedPair(_state.packed, decoded, status);
-    }
-
-    /**
-     * Initialize the message-state union member.
-     *
-     * Safety:
-     *   The range is reset to .init before construction and _mode is set to
-     *   message before this state becomes observable.
-     */
-    pragma(inline, true)
-    void setMessageState(const(ubyte)[] input, size_t baseOffset)
-        scope @trusted pure nothrow @nogc
-    {
-        assert(_mode == TagRangeMode.message);
-        _state.message = MessageTagState.init;
-        _state.message.input = input;
-        _state.message.baseOffset = baseOffset;
-    }
-
-    /**
-     * Initialize the packed-state union member.
-     *
-     * Safety:
-     *   The range is reset to .init before construction and _mode is set to
-     *   packed before this state becomes observable.
-     */
-    pragma(inline, true)
-    void setPackedState(
-        const(ubyte)[] keys,
-        size_t keyBase,
-        const(ubyte)[] values,
-        size_t valueBase)
-        scope @trusted pure nothrow @nogc
-    {
-        assert(_mode == TagRangeMode.packed);
-        _state.packed = PackedTagState.init;
-        _state.packed.keys = keys;
-        _state.packed.values = values;
-        _state.packed.keyBase = keyBase;
-        _state.packed.valueBase = valueBase;
-    }
-
-    pragma(inline, true)
     bool advance(out PbfStatus status) scope @safe nothrow @nogc
     {
         DecodedTagPair decoded;
-
-        final switch (_mode)
-        {
-        case TagRangeMode.message:
-            if (!advanceMessage(decoded, status))
-                return false;
-            break;
-
-        case TagRangeMode.packed:
-            if (!advancePacked(decoded, status))
-                return false;
-            break;
-        }
+        if (!decodeValidatedPairScalars(
+                _keys,
+                _vals,
+                decoded,
+                status))
+            return false;
 
         if (cast(size_t)decoded.keySid >= _table.entries.length)
         {
@@ -320,217 +192,6 @@ private:
         status = PbfStatus.init;
         return true;
     }
-}
-
-pragma(inline, true)
-private bool decodePrevalidatedMessagePair(
-    scope ref MessageTagState state,
-    out DecodedTagPair decoded,
-    out PbfStatus status)
-    @safe nothrow @nogc
-{
-    decoded = DecodedTagPair.init;
-
-    bool hasKey;
-    bool hasValue;
-    if (!nextPrevalidatedMessageField(
-            state.input,
-            state.baseOffset,
-            state.keys,
-            2,
-            decoded.keySid,
-            decoded.keyOffset,
-            hasKey,
-            status) ||
-        !nextPrevalidatedMessageField(
-            state.input,
-            state.baseOffset,
-            state.values,
-            3,
-            decoded.valueSid,
-            decoded.valueOffset,
-            hasValue,
-            status))
-        return false;
-
-    if (!hasKey || !hasValue)
-    {
-        status = PbfStatus.failure(PbfError.tagColumnLengthMismatch, 0, 2);
-        return false;
-    }
-
-    status = PbfStatus.init;
-    return true;
-}
-
-pragma(inline, true)
-private bool nextPrevalidatedMessageField(
-    const(ubyte)[] input,
-    size_t baseOffset,
-    scope ref TagFieldState state,
-    uint fieldNumber,
-    out uint value,
-    out size_t valueOffset,
-    out bool hasValue,
-    out PbfStatus status)
-    @safe nothrow @nogc
-{
-    value = 0;
-    valueOffset = 0;
-    hasValue = false;
-
-    while (true)
-    {
-        if (state.packedOffset < state.packedEnd)
-        {
-            const start = state.packedOffset;
-            auto packed = WireCursor(input[start .. state.packedEnd]);
-            WireStatus wire;
-            valueOffset = baseOffset + start;
-
-            if (!readVarint32(packed, value, wire))
-            {
-                if (wire.fieldNumber == 0)
-                    wire.fieldNumber = fieldNumber;
-                status = PbfStatus.fromTagWire(wire, baseOffset + start);
-                return false;
-            }
-
-            state.packedOffset = start + packed.offset;
-            hasValue = true;
-            status = PbfStatus.init;
-            return true;
-        }
-
-        if (state.messageOffset >= input.length)
-        {
-            status = PbfStatus.init;
-            return true;
-        }
-
-        const start = state.messageOffset;
-        auto message = WireCursor(input[start .. $]);
-        FieldHeader field;
-        WireStatus wire;
-        if (!readFieldHeader(message, field, wire))
-        {
-            status = PbfStatus.fromTagWire(wire, baseOffset + start);
-            return false;
-        }
-
-        if (field.number == fieldNumber && field.wireType == WireType.varint)
-        {
-            valueOffset = baseOffset + start + message.offset;
-            if (!readVarint32(message, value, wire))
-            {
-                if (wire.fieldNumber == 0)
-                    wire.fieldNumber = field.number;
-                status = PbfStatus.fromTagWire(wire, baseOffset + start);
-                return false;
-            }
-
-            state.messageOffset = start + message.offset;
-            hasValue = true;
-            status = PbfStatus.init;
-            return true;
-        }
-
-        if (field.number == fieldNumber &&
-            field.wireType == WireType.lengthDelimited)
-        {
-            bool ok;
-            auto packed = readLengthDelimitedCursor(
-                message,
-                field.number,
-                ok,
-                wire);
-            if (!ok)
-            {
-                status = PbfStatus.fromTagWire(wire, baseOffset + start);
-                return false;
-            }
-
-            const payloadStart = start + message.offset - packed.remaining;
-            state.messageOffset = start + message.offset;
-            state.packedOffset = payloadStart;
-            state.packedEnd = payloadStart + packed.remaining;
-
-            // Empty packed occurrences are legal and contribute no values.
-            continue;
-        }
-
-        if (!skipFieldValue(message, field, wire))
-        {
-            status = PbfStatus.fromTagWire(wire, baseOffset + start);
-            return false;
-        }
-
-        state.messageOffset = start + message.offset;
-    }
-}
-
-pragma(inline, true)
-private bool decodePrevalidatedPackedPair(
-    scope ref PackedTagState state,
-    out DecodedTagPair decoded,
-    out PbfStatus status)
-    @safe nothrow @nogc
-{
-    decoded = DecodedTagPair.init;
-
-    if (!nextPrevalidatedPackedField(
-            state.keys,
-            state.keyBase,
-            2,
-            decoded.keySid,
-            decoded.keyOffset,
-            status) ||
-        !nextPrevalidatedPackedField(
-            state.values,
-            state.valueBase,
-            3,
-            decoded.valueSid,
-            decoded.valueOffset,
-            status))
-        return false;
-
-    status = PbfStatus.init;
-    return true;
-}
-
-pragma(inline, true)
-private bool nextPrevalidatedPackedField(
-    scope ref const(ubyte)[] remaining,
-    scope ref size_t baseOffset,
-    uint fieldNumber,
-    out uint value,
-    out size_t valueOffset,
-    out PbfStatus status)
-    @safe nothrow @nogc
-{
-    if (remaining.length == 0)
-    {
-        status = PbfStatus.failure(PbfError.tagColumnLengthMismatch, 0, fieldNumber);
-        return false;
-    }
-
-    auto cursor = WireCursor(remaining);
-    WireStatus wire;
-    valueOffset = baseOffset;
-
-    if (!readVarint32(cursor, value, wire))
-    {
-        if (wire.fieldNumber == 0)
-            wire.fieldNumber = fieldNumber;
-        status = PbfStatus.fromTagWire(wire, baseOffset);
-        return false;
-    }
-
-    const consumed = cursor.offset;
-    remaining = remaining[consumed .. $];
-    baseOffset += consumed;
-    status = PbfStatus.init;
-    return true;
 }
 
 /**
@@ -609,8 +270,8 @@ bool buildTagRange(
     @safe nothrow @nogc
 {
     range = TagRange.init;
-    range._mode = TagRangeMode.message;
-    range.setMessageState(input, baseOffset);
+    range._keys = UInt32FieldCursor(input, baseOffset, 2);
+    range._vals = UInt32FieldCursor(input, baseOffset, 3);
     range._table = table;
     range._remaining = summary.tagCount;
 
@@ -648,12 +309,14 @@ bool buildPrevalidatedPackedTagRange(
     @safe nothrow @nogc
 {
     range = TagRange.init;
-    range._mode = TagRangeMode.packed;
-    range.setPackedState(
+    range._keys = UInt32FieldCursor.fromPrevalidatedPacked(
         keyPayload,
         keyPayloadBase,
+        2);
+    range._vals = UInt32FieldCursor.fromPrevalidatedPacked(
         valuePayload,
-        valuePayloadBase);
+        valuePayloadBase,
+        3);
     range._table = table;
     range._remaining = summary.tagCount;
 
@@ -1031,4 +694,3 @@ unittest
 
     assert(range.empty);
 }
-
