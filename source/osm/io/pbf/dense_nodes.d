@@ -14,9 +14,6 @@
  */
 module osm.io.pbf.dense_nodes;
 
-import osm.view.element : ElementType, isElementView;
-import osm.view.location : LocationView;
-import osm.view.metadata : MetadataView;
 import osm.io.pbf.dense_info :
     DenseInfoNodeCursor,
     DenseInfoValidationSummary,
@@ -28,6 +25,7 @@ import osm.io.pbf.dense_tags :
     DenseTagValidationSummary,
     validateDenseTags;
 import osm.io.pbf.error : PbfError, PbfStatus;
+public import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block : PrimitiveBlockLayout;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
 import osm.io.pbf.string_table : StringTableView;
@@ -41,60 +39,6 @@ import osm.wire.field :
     readLengthDelimited,
     skipFieldValue;
 import osm.wire.varint : readSVarint64FailureOnly;
-
-/** One validated dense node with exact coordinates in nanodegrees. */
-struct DenseNodeView
-{
-public:
-    /// Signed OSM object ID after delta accumulation.
-    long id;
-
-package(osm):
-    /// Exact latitude in nanodegrees after granularity/offset conversion.
-    long latNano;
-    /// Exact longitude in nanodegrees after granularity/offset conversion.
-    long lonNano;
-
-public:
-    /** Semantic location with exact backing and lazy degree conversion. */
-    pragma(inline, true)
-    @property LocationView location() const scope
-        @safe pure nothrow @nogc
-    {
-        return LocationView(latNano, lonNano);
-    }
-
-    /// Borrowed ordered tags for this node.
-    DenseTagRange tags;
-
-package(osm):
-    /// Optional decoded metadata from the DenseInfo columns.
-    DenseInfoView info;
-
-public:
-    /** Format-independent OSM metadata without DenseInfo vocabulary. */
-    pragma(inline, true)
-    @property MetadataView metadata() const return scope
-        @safe pure nothrow @nogc
-    {
-        return MetadataView(
-            info.hasVersion, info.version_,
-            info.hasTimestamp, info.timestampMillis,
-            info.hasChangeset, info.changeset,
-            info.hasUid, info.uid,
-            info.hasUser, info.user,
-            info.hasVisible, info.visible);
-    }
-
-    /// Semantic OSM element kind, independent of DenseNodes encoding.
-    @property ElementType type() const scope
-        @safe pure nothrow @nogc
-    {
-        return ElementType.node;
-    }
-}
-
-static assert(isElementView!DenseNodeView);
 
 /**
  * Summary of one successfully completed DenseNodes decode operation.
@@ -124,15 +68,15 @@ struct DenseNodeDecodeSummary
  * The sink must provide a compatible `put` overload and itself satisfy the
  * `@safe nothrow @nogc` contract required by this function instantiation.
  * Performance-sensitive sinks that consume the mutable tag input range should
- * accept `scope ref DenseNodeView` so the callback-scoped borrowed view is not
+ * accept `scope ref NodeView` so the callback-scoped borrowed view is not
  * copied. The view is intentionally non-const because advancing
  * `DenseTagRange` mutates its cursor state; an existing by-value
- * `put(DenseNodeView)` remains source-compatible.
+ * `put(NodeView)` remains source-compatible.
  *
  * As an optional zero-overhead hook, a sink may additionally provide
  * `putDenseNodeScalars(long id, long latNano, long lonNano)`. That overload is
  * selected only after complete preflight when the DenseNodes sequence contains
- * neither tags nor DenseInfo; otherwise normal `put(DenseNodeView)` delivery is
+ * neither tags nor DenseInfo; otherwise normal `put(NodeView)` delivery is
  * used. The hook therefore changes neither validation nor observable OSM data.
  *
  * Params:
@@ -312,7 +256,7 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
         {
             // Optional sink fast path: once preflight proved that this sequence
             // has neither tags nor DenseInfo, scalar-only consumers do not need
-            // a large DenseNodeView or its empty borrowed-range members.
+            // a large NodeView or its empty borrowed-range members.
             sink.putDenseNodeScalars(id, latNano, lonNano);
         }
         else
@@ -339,7 +283,7 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
                     return false;
             }
 
-            DenseNodeView node = DenseNodeView(id, latNano, lonNano, tags, info);
+            NodeView node = NodeView(id, latNano, lonNano, tags, info);
             sink.put(node);
         }
     }
@@ -626,10 +570,10 @@ unittest
 
     struct Sink
     {
-        DenseNodeView[3] nodes;
+        NodeView[3] nodes;
         size_t used;
 
-        void put(DenseNodeView node) @safe nothrow @nogc
+        void put(NodeView node) @safe nothrow @nogc
         {
             nodes[used++] = node;
         }
@@ -683,10 +627,10 @@ unittest
 
     struct Sink
     {
-        DenseNodeView[3] nodes;
+        NodeView[3] nodes;
         size_t used;
 
-        void put(DenseNodeView node) @safe nothrow @nogc
+        void put(NodeView node) @safe nothrow @nogc
         {
             nodes[used++] = node;
         }
@@ -734,7 +678,7 @@ unittest
     struct CountingSink
     {
         size_t used;
-        void put(DenseNodeView) @safe nothrow @nogc { ++used; }
+        void put(NodeView) @safe nothrow @nogc { ++used; }
     }
 
     CountingSink sink;
@@ -782,7 +726,7 @@ unittest
         const(ubyte)[] firstKey;
         const(ubyte)[] secondKey;
 
-        void put(DenseNodeView node) @safe nothrow @nogc
+        void put(NodeView node) @safe nothrow @nogc
         {
             if (used == 0)
             {
@@ -843,7 +787,7 @@ unittest
     struct CountingSink
     {
         size_t used;
-        void put(DenseNodeView) @safe nothrow @nogc { ++used; }
+        void put(NodeView) @safe nothrow @nogc { ++used; }
     }
 
     CountingSink sink;
@@ -881,10 +825,10 @@ unittest
 
     struct Sink
     {
-        DenseNodeView node;
+        NodeView node;
         size_t used;
 
-        void put(DenseNodeView value) @safe nothrow @nogc
+        void put(NodeView value) @safe nothrow @nogc
         {
             node = value;
             ++used;
@@ -904,7 +848,7 @@ unittest
 
 unittest
 {
-    // A scalar-capable sink bypasses DenseNodeView construction only when the
+    // A scalar-capable sink bypasses NodeView construction only when the
     // completely prevalidated sequence contains neither tags nor DenseInfo.
     const(ubyte)[] groupBytes = [
         0x12, 0x0c,
@@ -938,7 +882,7 @@ unittest
             lastId = id;
         }
 
-        void put(DenseNodeView) @safe nothrow @nogc
+        void put(NodeView) @safe nothrow @nogc
         {
             ++viewUsed;
         }
@@ -955,5 +899,5 @@ unittest
 
 version (unittest)
 {
-    pragma(msg, "LAYOUT source/osm/io/pbf/dense_nodes.d: DenseNodeView.sizeof=", DenseNodeView.sizeof);
+    pragma(msg, "LAYOUT source/osm/io/pbf/dense_nodes.d: shared NodeView.sizeof=", NodeView.sizeof);
 }
