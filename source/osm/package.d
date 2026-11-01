@@ -18,6 +18,7 @@ public import osm.view.element :
 public import osm.view.location : LocationView;
 public import osm.view.metadata : MetadataView;
 public import osm.view.relation_member : RelationMemberView;
+public import osm.view.way_node : WayNodeView;
 
 public import osm.io.pbf.reader :
     PbfReadError,

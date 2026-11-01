@@ -98,25 +98,24 @@ struct Consumer
         inspectMetadata(value);
         inspectTags(value);
 
-        auto refs = value.refs;
-        while (!refs.empty)
+        auto nodes = value.nodes;
+        while (!nodes.empty)
         {
-            OsmId nodeId = refs.front;
-            assert(nodeId == refs.front);
-            refs.popFront();
-        }
+            WayNodeView node = nodes.front;
+            OsmId nodeId = node.id;
+            assert(nodeId == node.id);
 
-        auto locations = value.locations;
-        while (!locations.empty)
-        {
-            LocationView location = locations.front;
-            const latitude = location.latitude;
-            const longitude = location.longitude;
+            if (node.hasLocation)
+            {
+                LocationView location = node.location;
+                const latitude = location.latitude;
+                const longitude = location.longitude;
 
-            assert(latitude == location.latitude);
-            assert(longitude == location.longitude);
+                assert(latitude == location.latitude);
+                assert(longitude == location.longitude);
+            }
 
-            locations.popFront();
+            nodes.popFront();
         }
     }
 

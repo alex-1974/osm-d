@@ -310,6 +310,13 @@ if that is faster.
 
 Consumers should not need to construct any of these ranges manually.
 
+Implementation note (2026-11-01): the first Way-node semantic slice now
+exports format-independent `WayNodeView` and exposes `way.nodes` as a lazy,
+allocation-free projection over the already validated PBF reference and optional
+location ranges. Existing `refs` / `locations` remain available during the
+pre-1.0 transition, but the external package-root consumer probe uses
+`way.nodes` and no longer needs to zip parallel PBF columns.
+
 ## Decoder boundary
 
 The following functions currently expose codec assembly details:
