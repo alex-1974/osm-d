@@ -46,11 +46,12 @@ module part of a compatibility promise.
 
 The current pre-1.0 surface is classified as follows:
 
-- `osm` is the curated package root. It now re-exports the consumer-facing
-  whole-buffer PBF reader boundary: `PbfReader`, `PbfReaderWorkspace`,
-  `PbfReadSummary`, `PbfReadStatus`, and `PbfReadError`.
-  It does not re-export the evolving low-level PBF or wire implementation
-  surface.
+- `osm` is the curated package root. It re-exports the consumer-facing
+  whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
+  `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
+  format-independent semantic identity/location vocabulary (`OsmId`,
+  `ElementType`, `LocationView`). It does not re-export the evolving low-level
+  PBF or wire implementation surface.
 - `osm.view.element` is a supported semantic direct-import API. Its
   `ElementType`, `OsmId`, and structural `isElementView` contract form the
   format-independent borrowed element identity boundary described by ADR 0016.
