@@ -1,6 +1,8 @@
 name: Research
 description: Track an evidence-producing technical question.
 title: ""
+labels:
+  - "type: research"
 body:
   - type: textarea
     id: question

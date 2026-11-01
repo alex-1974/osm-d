@@ -1,6 +1,8 @@
 name: Design
 description: Propose or review an architectural or public-contract decision.
 title: ""
+labels:
+  - "type: design"
 body:
   - type: textarea
     id: decision
