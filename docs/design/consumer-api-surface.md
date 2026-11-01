@@ -210,6 +210,13 @@ The following is internal PBF machinery:
 roleSid
 ~~~
 
+Implementation note (2026-11-01): relation-member delivery now uses the
+format-independent `osm.view.relation_member.RelationMemberView`. Its public
+surface is exactly `ElementType type`, `OsmId id`, and borrowed `role`
+bytes. PBF `role_sid` remains local to StringTable validation/materialization,
+and the duplicate `RelationMemberType` enum no longer crosses the consumer
+boundary.
+
 ### Raw provenance
 
 Fields such as:

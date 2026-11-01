@@ -49,20 +49,20 @@ public:
 
     /** Returns `true` when no unread bytes remain. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining.length == 0;
     }
 
     /** Returns the number of bytes consumed from the original input. */
     pragma(inline, true)
-    @property size_t offset() const @safe pure nothrow @nogc
+    @property size_t offset() const scope @safe pure nothrow @nogc
     {
         return _offset;
     }
 
     /** Returns the number of unread bytes. */
-    @property size_t remaining() const @safe pure nothrow @nogc
+    @property size_t remaining() const scope @safe pure nothrow @nogc
     {
         return _remaining.length;
     }
@@ -77,7 +77,7 @@ public:
      *   `true` when one byte was available; `false` at end of input.
      */
     pragma(inline, true)
-    bool readByte(out ubyte value) @safe nothrow @nogc
+    bool readByte(out ubyte value) scope @safe nothrow @nogc
     {
         if (_remaining.length == 0)
             return false;
@@ -97,7 +97,7 @@ public:
      * Returns:
      *   `true` if `count` bytes were available; `false` otherwise.
      */
-    bool skip(size_t count) @safe nothrow @nogc
+    bool skip(size_t count) scope @safe nothrow @nogc
     {
         if (count > _remaining.length)
             return false;
@@ -105,6 +105,39 @@ public:
         _remaining = _remaining[count .. $];
         _offset += count;
         return true;
+    }
+
+    /**
+     * Borrow the next `count` bytes as a child cursor and advance this cursor.
+     *
+     * Params:
+     *   count = Number of bytes to expose through the child cursor.
+     *   ok = Receives true when `count` bytes were available.
+     *
+     * Returns:
+     *   A cursor over exactly the borrowed bytes on success, or an empty cursor
+     *   when `ok` is false.
+     *
+     * Notes:
+     *   The returned cursor borrows the same backing storage as this cursor.
+     *   `return scope` ties that borrow to the caller-visible lifetime of this
+     *   cursor without requiring an out-slice escape.
+     */
+    pragma(inline, true)
+    WireCursor takeCursor(size_t count, out bool ok) return scope
+        @safe pure nothrow @nogc
+    {
+        if (count > _remaining.length)
+        {
+            ok = false;
+            return WireCursor.init;
+        }
+
+        auto child = WireCursor(_remaining[0 .. count]);
+        _remaining = _remaining[count .. $];
+        _offset += count;
+        ok = true;
+        return child;
     }
 
     /**
@@ -160,6 +193,29 @@ unittest
     assert(tail == expected);
     assert(cursor.empty);
     assert(!cursor.readByte(value));
+}
+
+unittest
+{
+    const(ubyte)[] bytes = [0x10, 0x20, 0x30, 0x40];
+    auto cursor = WireCursor(bytes);
+
+    bool ok;
+    auto child = cursor.takeCursor(3, ok);
+    assert(ok);
+    assert(cursor.offset == 3);
+    assert(cursor.remaining == 1);
+
+    ubyte value;
+    assert(child.readByte(value) && value == 0x10);
+    assert(child.readByte(value) && value == 0x20);
+    assert(child.readByte(value) && value == 0x30);
+    assert(child.empty);
+
+    auto missing = cursor.takeCursor(2, ok);
+    assert(!ok);
+    assert(missing.empty);
+    assert(cursor.offset == 3);
 }
 
 unittest

@@ -55,7 +55,7 @@ struct FieldHeader
  * Returns:
  *   `true` when a valid protobuf field key was decoded; `false` otherwise.
  */
-bool readFieldHeader(ref WireCursor cursor, out FieldHeader header, out WireStatus status)
+bool readFieldHeader(scope ref WireCursor cursor, out FieldHeader header, out WireStatus status)
     @safe nothrow @nogc
 {
     const start = cursor.offset;

@@ -145,8 +145,11 @@ if (!reader.read(pbfBytes, workspace, handler, summary, status))
 A handler may omit `node`, `way`, or `relation` when that element kind is
 not needed. During the current pre-1.0 transition, the node callback is normally
 templated so it accepts both regular and DenseNodes-backed borrowed views
-without exposing the encoding distinction at the call-site. The planned
-semantic-view unification is tracked separately from the reader orchestration.
+without exposing the encoding distinction at the call-site. Relation members
+are already format-independent at the consumer boundary: each member exposes
+`ElementType type`, `OsmId id`, and borrowed role bytes without PBF
+StringTable IDs. The remaining semantic-view unification is tracked separately
+from the reader orchestration.
 
 ## Status
 
