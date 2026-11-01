@@ -65,7 +65,7 @@ struct NodeView
 
     /** Format-independent OSM metadata without PBF encoding vocabulary. */
     pragma(inline, true)
-    @property MetadataView metadata() const scope
+    @property MetadataView metadata() const return scope
         @safe pure nothrow @nogc
     {
         return MetadataView(
