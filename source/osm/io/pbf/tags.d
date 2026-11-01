@@ -697,5 +697,5 @@ unittest
 
 version (unittest)
 {
-    pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagView.sizeof=", TagView.sizeof);
+    pragma(msg, "LAYOUT source/osm/io/pbf/tags.d: TagRange.sizeof=", TagRange.sizeof, " TagView.sizeof=", TagView.sizeof, " UInt32FieldCursor.sizeof=", UInt32FieldCursor.sizeof, " WireCursor.sizeof=", WireCursor.sizeof);
 }
