@@ -13,12 +13,14 @@
  */
 module osm.io.pbf.node;
 
+import osm.view.element : ElementType, isElementView;
+import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
     finalizeInfo,
     mergeInfoMessage;
-public import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block : PrimitiveBlockLayout;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
 import osm.io.pbf.string_table : StringTableView;
@@ -37,6 +39,67 @@ import osm.wire.field :
     readLengthDelimited,
     skipFieldValue;
 import osm.wire.varint : readSVarint64, readVarint32;
+
+/** One validated regular Node with exact borrowed provenance. */
+struct NodeView
+{
+public:
+    /// Signed OSM object ID.
+    long id;
+
+package(osm):
+    /// Exact latitude in nanodegrees after granularity/offset conversion.
+    long latNano;
+    /// Exact longitude in nanodegrees after granularity/offset conversion.
+    long lonNano;
+
+public:
+    /** Semantic location with exact backing and lazy degree conversion. */
+    pragma(inline, true)
+    @property LocationView location() const scope
+        @safe pure nothrow @nogc
+    {
+        return LocationView(latNano, lonNano);
+    }
+
+    /// Borrowed ordered normal-element tags.
+    TagRange tags;
+
+package(osm):
+    /// Optional merged Info metadata.
+    InfoView info;
+
+public:
+    /** Format-independent OSM metadata without PBF encoding vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const return scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
+
+package(osm):
+    /// Complete original serialized Node payload, excluding group key/length.
+    const(ubyte)[] raw;
+    /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
+    size_t rawOffset;
+
+public:
+    /// Semantic OSM element kind.
+    @property ElementType type() const scope
+        @safe pure nothrow @nogc
+    {
+        return ElementType.node;
+    }
+}
+
+static assert(isElementView!NodeView);
 
 /** Summary of one completed regular-Node decode operation. */
 struct NodeDecodeSummary
@@ -138,7 +201,9 @@ bool decodeNodes(Sink)(
             parsed.latNano,
             parsed.lonNano,
             tags,
-            parsed.info);
+            parsed.info,
+            nodeRef.bytes,
+            nodeRef.rawOffset);
 
         sink.put(node);
         ++summary.nodeCount;
@@ -651,6 +716,7 @@ unittest
     assert(sink.node.id == 100);
     assert(sink.node.latNano == 2000);
     assert(sink.node.lonNano == -3000);
+    assert(sink.node.raw.length == 25);
 
     auto tags = sink.node.tags;
     assert(tags.length == 2);
@@ -895,4 +961,3 @@ unittest
     assert(status.fieldNumber == 5);
     assert(sink.used == 0);
 }
-
