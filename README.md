@@ -104,7 +104,7 @@ struct Handler
 {
     ulong nodes;
 
-    void node(T)(scope ref T node) @safe nothrow @nogc
+    void node(scope ref NodeView node) @safe nothrow @nogc
     {
         ++nodes;
 
@@ -152,10 +152,13 @@ if (!reader.read(pbfBytes, workspace, handler, summary, status))
 ```
 
 A handler may omit `node`, `way`, or `relation` when that element kind is
-not needed. During the current pre-1.0 transition, the node callback is normally
-templated so it accepts both regular and DenseNodes-backed borrowed views
-without exposing the encoding distinction at the call-site. Relation members
-are already format-independent at the consumer boundary: each member exposes
+not needed. `PbfReader` delivers one concrete semantic `NodeView` for both
+regular Node and DenseNodes encoding. The callback-scoped `NodeView` is
+deliberately non-copyable; copy the semantic values or ranges that need to be
+retained during the callback instead. `node.tags` returns an independent
+zero-allocation borrowed range, so advancing that range does not mutate the
+codec-owned node view. Relation members are format-independent at the consumer
+boundary: each member exposes
 `ElementType type`, `OsmId id`, and borrowed role bytes without PBF
 StringTable IDs. Tags from regular elements and DenseNodes expose the same
 format-independent `TagView` containing only borrowed key/value bytes; PBF
@@ -192,14 +195,15 @@ Detailed evidence and rejected alternatives are recorded in
 `docs/BENCHMARKS.md`.
 
 The format-independent borrowed `ElementView` identity contract is now in
-place, and the current DenseNode, regular Node, Way, and Relation PBF views
-conform to it without changing their codec-owned representations. The current
+place, and the codec-owned regular Node, DenseNode, Way, and Relation PBF views
+conform to it without changing their specialized representations. The current
 PBF vertical slice performs fail-closed structural validation and complete
 per-group element preflight before observable sink emission. Dataset/reference
 and operation-specific validation remain separate higher layers. The
-consumer-facing whole-buffer PBF reader is now in place. Parallel PBF execution,
-the final semantic view/range unification, XML/osmChange support,
-and the compact editable store remain future work.
+consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
+behind one concrete semantic `NodeView`. Parallel PBF execution, further
+semantic range cleanup, XML/osmChange support, and the compact editable store
+remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use

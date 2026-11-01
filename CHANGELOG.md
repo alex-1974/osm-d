@@ -7,6 +7,15 @@ stable release.
 
 ## Unreleased
 
+- Unified regular Node and DenseNodes delivery at the high-level `PbfReader`
+  boundary behind one concrete semantic `NodeView`. The callback-scoped view
+  is a small non-copyable borrow over unchanged codec-specific representations;
+  `node.tags` produces one independent zero-allocation cursor copy on demand.
+  Controlled LDC 1.41.0 Bremen A/B qualification retained exact semantic parity
+  and measured median deltas of -1.02% for core node access, -0.86% for tag-range
+  materialization, and -0.62% for full node-tag traversal versus the pre-change
+  baseline.
+
 - Tightened the semantic reader boundary: direct PBF coordinate, Info/DenseInfo, raw provenance, and Way parallel ref/location representation fields are now package-internal while codec tests and benchmarks retain access. External `import osm;` compile probes verify that ordinary consumers use `location`, `metadata`, `nodes`, tags, and relation members instead.
 
 - Added one format-independent `TagView` for regular and DenseNodes tags. Consumer-facing tags now expose only exact borrowed key/value bytes; PBF StringTable IDs remain inside codec ranges for validation and internal benchmark/diagnostic use, preserving the existing tag-ID benchmark semantics.

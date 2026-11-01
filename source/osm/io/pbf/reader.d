@@ -39,7 +39,8 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
-import osm.io.pbf.node : NodeDecodeSummary, NodeView, decodeNodes;
+import pbfNode = osm.io.pbf.node;
+import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
     PrimitiveBlockLayout,
     decodePrimitiveBlockLayout;
@@ -157,8 +158,8 @@ private:
  *
  * Handler callbacks are discovered statically by name. A handler may omit
  * node, way, or relation entirely when that element kind is not needed. When a
- * node callback is present it must accept both regular NodeView and
- * DenseNodeView, normally with one templated node method. Callbacks execute
+ * node callback is present it accepts one concrete semantic NodeView for both
+ * regular Node and DenseNodes encoding. Callbacks execute
  * synchronously and must satisfy @safe nothrow @nogc. Borrowed views must not
  * escape the callback.
  */
@@ -427,8 +428,8 @@ private bool decodeDataBlock(Sink)(
             return false;
         }
 
-        NodeDecodeSummary nodeSummary;
-        if (!decodeNodes(
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
                 block,
                 group,
                 table,
@@ -511,24 +512,27 @@ public:
     {
         static if (__traits(hasMember, Handler, "node"))
         {
-            DenseNodeView node;
-            node.id = id;
-            node.latNano = latNano;
-            node.lonNano = lonNano;
+            NodeView node = NodeView(id, latNano, lonNano);
             callNode(*handler, node);
         }
     }
 
-    void put(scope ref DenseNodeView node) @trusted nothrow @nogc
+    void put(scope ref DenseNodeView encoded) @trusted nothrow @nogc
     {
         static if (__traits(hasMember, Handler, "node"))
+        {
+            NodeView node = NodeView(encoded);
             callNode(*handler, node);
+        }
     }
 
-    void put(scope ref NodeView node) @trusted nothrow @nogc
+    void put(scope ref pbfNode.NodeView encoded) @trusted nothrow @nogc
     {
         static if (__traits(hasMember, Handler, "node"))
+        {
+            NodeView node = NodeView(encoded);
             callNode(*handler, node);
+        }
     }
 
     void put(scope ref WayView way) @trusted nothrow @nogc
@@ -544,9 +548,9 @@ public:
     }
 }
 
-private void callNode(Handler, View)(
+private void callNode(Handler)(
     ref Handler handler,
-    scope ref View node)
+    scope ref NodeView node)
     @safe nothrow @nogc
 {
     handler.node(node);
@@ -710,7 +714,7 @@ unittest
         size_t nodes;
         long lastId;
 
-        void node(T)(scope ref T value) @safe nothrow @nogc
+        void node(scope ref NodeView value) @safe nothrow @nogc
         {
             ++nodes;
             lastId = value.id;

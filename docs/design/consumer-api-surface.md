@@ -151,12 +151,12 @@ The same `LocationView` should represent optional `LocationsOnWays`
 coordinates. Consumers should not need a second coordinate vocabulary merely
 because the location originated in a different PBF field.
 
-Implementation note (2026-11-01): the first location slice now provides this
-surface additively. `NodeView` and the current DenseNodes-backed node view expose
-`location`; optional Way locations use the same `LocationView`. Exact signed
-nanodegrees remain the decoder backing, while `latitude` / `longitude` convert
-to degrees only when requested. Existing low-level `latNano` / `lonNano` access
-is retained temporarily during the pre-1.0 transition.
+Implementation note (2026-11-01): the location slice provides this surface
+through the concrete semantic `NodeView` delivered by `PbfReader`; optional
+Way locations use the same `LocationView`. Exact signed nanodegrees remain
+codec backing, while `latitude` / `longitude` convert to degrees only when
+requested. Direct codec `latNano` / `lonNano` fields are package-internal at
+the ordinary consumer boundary.
 
 ### `TagView`
 
@@ -256,7 +256,13 @@ DenseNodes ---------/
 The optimized DenseNodes parser remains free to use specialized internal
 representations and fast paths.
 
-The public result must preserve equivalent OSM semantics.
+Implementation note (2026-11-01): `PbfReader` now implements this boundary
+with one concrete callback-scoped `NodeView`. It is a small non-copyable
+borrow over the existing regular or dense codec view; the codec representations
+and scalar-only DenseNodes fast path remain specialized. `node.tags` creates
+one independent zero-allocation range copy only when tags are requested.
+
+The public result preserves equivalent OSM semantics.
 
 ## Semantic tags
 
@@ -408,13 +414,14 @@ not define the performance-critical core API. The core must not force:
 Borrowed views remain callback-scoped unless a later ownership API explicitly
 provides durable values.
 
-Implementation note (2026-11-01): the first production PbfReader slice keeps
-callbacks mutable `scope ref` because current borrowed tag/member/location
-ranges advance internal cursor state while being consumed. Until regular and
-DenseNodes-backed nodes share one concrete public `NodeView`, a consumer can
-use one templated `node(T)(scope ref T node)` callback to accept both current
-representations without naming the PBF encoding at the call site. This is a
-transition detail, not a reversal of the target semantic unification.
+Implementation note (2026-11-01): `PbfReader` now delivers one concrete
+semantic `NodeView` for regular Node and DenseNodes encoding through
+`void node(scope ref NodeView node)`. The wrapper is deliberately non-copyable
+because it borrows the codec-local view only for the synchronous callback.
+Requested tag ranges are copied once into an independent borrowed cursor;
+advancing them does not mutate the codec-owned range. The measured reader
+boundary remains performance-neutral on the pinned Bremen qualification
+workload while preserving the specialized decoder hot paths.
 
 ## Internal-only candidates
 
@@ -483,8 +490,8 @@ smaller semantic error surface.
 
 | Current consumer-visible name | Target | Action |
 |---|---|---|
-| `NodeView` | `NodeView` | keep semantic name |
-| `DenseNodeView` | `NodeView` | hide encoding distinction |
+| `NodeView` | `NodeView` | one concrete reader callback type |
+| `DenseNodeView` | `NodeView` | encoding distinction hidden by PbfReader |
 | `WayView` | `WayView` | keep semantic name |
 | `RelationView` | `RelationView` | keep semantic name |
 | `InfoView` | `MetadataView` | rename semantic surface |

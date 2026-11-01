@@ -49,9 +49,11 @@ The current pre-1.0 surface is classified as follows:
 - `osm` is the curated package root. It re-exports the consumer-facing
   whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
   `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
-  format-independent semantic identity/location/metadata/tag/member/way-node
-  vocabulary (`OsmId`, `ElementType`, `LocationView`, `MetadataView`,
-  `TagView`, `RelationMemberView`, `WayNodeView`). It does not re-export
+  format-independent semantic node/identity/location/metadata/tag/member/way-node
+  vocabulary (`NodeView`, `OsmId`, `ElementType`, `LocationView`,
+  `MetadataView`, `TagView`, `RelationMemberView`, `WayNodeView`).
+  `NodeView` is the one concrete callback type used for regular Node and
+  DenseNodes encoding. It does not re-export
   the evolving low-level
   PBF or wire implementation surface.
 - `osm.view.element`, `osm.view.location`, `osm.view.metadata`,
@@ -59,8 +61,10 @@ The current pre-1.0 surface is classified as follows:
   supported semantic direct-import APIs. The `ElementType`, `OsmId`,
   structural `isElementView` contract, `LocationView`, `MetadataView`,
   `TagView`, `RelationMemberView`, and `WayNodeView` form the current
-  format-independent borrowed semantic
-  boundary described by ADR 0016 and the consumer API design.
+  format-independent borrowed semantic boundary described by ADR 0016 and the
+  consumer API design. The package-root `NodeView` is callback-scoped and
+  deliberately non-copyable; semantic subviews and tag-range copies remain
+  ordinary values.
 - `osm.io.pbf.reader` is the supported direct-import module for the same
   consumer-facing PBF reader boundary exported by `osm`.
 - Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
