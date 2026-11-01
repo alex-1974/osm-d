@@ -258,6 +258,29 @@ representations and fast paths.
 
 The public result must preserve equivalent OSM semantics.
 
+## Semantic tags
+
+Normal element tags and DenseNodes tags are the same OSM concept. Their public
+value type is therefore one format-independent `TagView`:
+
+~~~d
+struct TagView
+{
+    const(ubyte)[] key;
+    const(ubyte)[] value;
+}
+~~~
+
+PBF StringTable IDs remain codec state. The PBF ranges may retain the current
+key/value IDs internally for validation, diagnostics, and controlled
+microbenchmarks, but `tags.front` exposes only the exact borrowed key/value
+bytes. No normalization, transcoding, or materialization is introduced.
+
+Implementation note (2026-11-01): both normal `TagRange` and
+`DenseTagRange` now return the same semantic `TagView`. The package-root
+consumer probe also asserts that `keySid` and `valueSid` are absent from the
+semantic type.
+
 ## Ranges and way nodes
 
 Range types are useful implementation tools, but the consumer should discover
