@@ -9,8 +9,22 @@ struct Consumer
     void node(T)(scope ref T value) @safe nothrow @nogc
     {
         ++nodes;
-        const id = value.id;
+
+        OsmId id = value.id;
+        ElementType type = value.type;
+        assert(type == ElementType.node);
         assert(id == value.id);
+
+        LocationView location = value.location;
+        const exactLatitude = location.latitudeNanodegrees;
+        const exactLongitude = location.longitudeNanodegrees;
+        const latitude = location.latitude;
+        const longitude = location.longitude;
+
+        assert(exactLatitude == location.latNano);
+        assert(exactLongitude == location.lonNano);
+        assert(latitude == location.latitude);
+        assert(longitude == location.longitude);
     }
 }
 

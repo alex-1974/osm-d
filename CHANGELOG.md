@@ -7,6 +7,8 @@ stable release.
 
 ## Unreleased
 
+- Added format-independent `LocationView` with exact nanodegree access and lazy latitude/longitude degree conversion. Regular and DenseNodes-backed node views now expose the same `location` property, optional `LocationsOnWays` coordinates reuse the same semantic type, and the curated `osm` root exports `OsmId`, `ElementType`, and `LocationView` for consumer discovery.
+
 - Optimized regular Way decoding with a package-internal caller-owned preflight
   plan that reuses canonical packed-field locations during emission while
   preserving the generic protobuf fallback and fail-closed group semantics.

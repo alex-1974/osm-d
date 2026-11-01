@@ -20,6 +20,7 @@
 module osm.io.pbf.way;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.location : LocationView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -147,14 +148,14 @@ public:
     }
 }
 
-/** Exact borrowed node location aligned with one Way reference. */
-struct WayLocationView
-{
-    /// Exact latitude in nanodegrees.
-    long latNano;
-    /// Exact longitude in nanodegrees.
-    long lonNano;
-}
+/**
+ * Compatibility name for a semantic location aligned with one Way reference.
+ *
+ * New consumer code should use LocationView. The alias keeps the evolving
+ * pre-1.0 direct-PBF surface source-compatible while way locations adopt the
+ * same coordinate vocabulary as nodes.
+ */
+alias WayLocationView = LocationView;
 
 /**
  * Borrowed range over optional `LocationsOnWays` coordinates.

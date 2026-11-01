@@ -139,6 +139,13 @@ The same `LocationView` should represent optional `LocationsOnWays`
 coordinates. Consumers should not need a second coordinate vocabulary merely
 because the location originated in a different PBF field.
 
+Implementation note (2026-11-01): the first location slice now provides this
+surface additively. `NodeView` and the current DenseNodes-backed node view expose
+`location`; optional Way locations use the same `LocationView`. Exact signed
+nanodegrees remain the decoder backing, while `latitude` / `longitude` convert
+to degrees only when requested. Existing low-level `latNano` / `lonNano` access
+is retained temporarily during the pre-1.0 transition.
+
 ### `TagView`
 
 Normal consumers need:

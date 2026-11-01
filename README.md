@@ -107,8 +107,15 @@ struct Handler
     void node(T)(scope ref T node) @safe nothrow @nogc
     {
         ++nodes;
-        // Shared node semantics such as id, coordinates, tags and metadata
-        // are available on both current PBF node representations.
+
+        OsmId id = node.id;
+        auto location = node.location;
+        double latitude = location.latitude;
+        double longitude = location.longitude;
+
+        // Exact integer coordinates remain available when required:
+        long latitudeNanodegrees = location.latitudeNanodegrees;
+        long longitudeNanodegrees = location.longitudeNanodegrees;
     }
 }
 
