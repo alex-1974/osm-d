@@ -16,12 +16,14 @@ run_negative()
     local diagnostic_pattern="$3"
 
     local base
+    local compiler_id
     local log
     local object
 
     base="$(basename "$source" .d)"
-    log="$TMPDIR/${base}-${compiler}.log"
-    object="$TMPDIR/${base}-${compiler}.o"
+    compiler_id="$(basename "$compiler")"
+    log="$TMPDIR/${base}-${compiler_id}.log"
+    object="$TMPDIR/${base}-${compiler_id}.o"
 
     if "$compiler" \
         -preview=dip1000 \
