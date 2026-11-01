@@ -45,11 +45,14 @@ private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
 
 private void inspectTags(T)(scope ref T value) @safe nothrow @nogc
 {
+    static assert(!__traits(hasMember, TagView, "keySid"));
+    static assert(!__traits(hasMember, TagView, "valueSid"));
+
     auto tags = value.tags;
 
     while (!tags.empty)
     {
-        auto tag = tags.front;
+        TagView tag = tags.front;
         const key = tag.key;
         const tagValue = tag.value;
 
