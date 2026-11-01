@@ -1289,3 +1289,8 @@ unittest
     assert(status.error == PbfError.denseInfoTimestampOverflow);
     assert(status.fieldNumber == 2);
 }
+
+version (unittest)
+{
+    pragma(msg, "LAYOUT source/osm/io/pbf/dense_info.d: DenseInfoView.sizeof=", DenseInfoView.sizeof);
+}
