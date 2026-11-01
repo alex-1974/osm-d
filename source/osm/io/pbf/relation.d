@@ -22,6 +22,7 @@ module osm.io.pbf.relation;
 
 import osm.view.element : ElementType, isElementView;
 import osm.view.metadata : MetadataView;
+import osm.view.relation_member : RelationMemberView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -48,29 +49,6 @@ import osm.wire.varint :
     readSVarint64,
     readVarint32,
     readVarint64;
-
-
-/** Validated OSMPBF Relation member type. */
-enum RelationMemberType : ubyte
-{
-    node = 0,
-    way = 1,
-    relation = 2,
-}
-
-
-/** One validated borrowed Relation member. */
-struct RelationMemberView
-{
-    /// OSM element type of the referenced member.
-    RelationMemberType type;
-    /// Absolute signed OSM member ID reconstructed from `memids` deltas.
-    long id;
-    /// Validated StringTable ID of the role. Zero denotes the empty role.
-    uint roleSid;
-    /// Borrowed raw role bytes. Empty for role StringTable ID zero.
-    const(ubyte)[] role;
-}
 
 
 /** Validation summary for one Relation's three parallel member columns. */
@@ -123,7 +101,7 @@ public:
 
     /** Return the current validated Relation member. */
     pragma(inline, true)
-    @property RelationMemberView front() const @safe nothrow @nogc
+    @property RelationMemberView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
@@ -699,9 +677,8 @@ private bool decodeValidatedMember(
 
     currentId = nextId;
     member = RelationMemberView(
-        cast(RelationMemberType)typeValue,
+        cast(ElementType)typeValue,
         nextId,
-        roleSid,
         role);
 
     status = PbfStatus.init;
@@ -1137,22 +1114,19 @@ unittest
     auto members = sink.relation.members;
     assert(members.length == 3);
 
-    assert(members.front.type == RelationMemberType.node);
+    assert(members.front.type == ElementType.node);
     assert(members.front.id == 10);
-    assert(members.front.roleSid == 0);
     assert(members.front.role.length == 0);
     members.popFront();
 
-    assert(members.front.type == RelationMemberType.way);
+    assert(members.front.type == ElementType.way);
     assert(members.front.id == 12);
-    assert(members.front.roleSid == 3);
     const(ubyte)[] from = ['f', 'r', 'o', 'm'];
     assert(members.front.role == from);
     members.popFront();
 
-    assert(members.front.type == RelationMemberType.relation);
+    assert(members.front.type == ElementType.relation);
     assert(members.front.id == 11);
-    assert(members.front.roleSid == 4);
     const(ubyte)[] to = ['t', 'o'];
     assert(members.front.role == to);
     members.popFront();
@@ -1220,7 +1194,7 @@ unittest
     foreach (_; 0 .. 3)
     {
         assert(!members.empty);
-        assert(members.front.type == RelationMemberType.node);
+        assert(members.front.type == ElementType.node);
         assert(members.front.id == 5);
         members.popFront();
     }
@@ -1552,8 +1526,7 @@ unittest
 
     auto members = sink.relation.members;
     assert(members.front.id == -1);
-    assert(members.front.type == RelationMemberType.relation);
-    assert(members.front.roleSid == 0);
+    assert(members.front.type == ElementType.relation);
     members.popFront();
     assert(members.empty);
 }
