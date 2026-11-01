@@ -6,15 +6,32 @@ DMD is suitable for fast edit/build/test cycles. LDC is the reference compiler
 for release-performance measurements because the production hot paths are
 intended to benefit from LLVM optimization.
 
-During pre-1.0 development, the currently supported and tested compiler matrix is:
+During pre-1.0 development, compiler qualification is intentionally split by
+branch trust level.
+
+The Fast CI baseline used for every `develop` push and pull request is:
 
 - DMD 2.111.0;
 - LDC 1.41.0 using DMD frontend 2.111.0.
 
-No compatibility guarantee is currently made for older D frontends. A historical
-minimum frontend will be fixed only when there is evidence that supporting it is
-useful and the corresponding compiler matrix can be tested deliberately. Newer
-compiler releases are added to the supported matrix only after validation.
+The full Release Gate used for promotion/release qualification covers three
+frontend generations in both compiler families:
+
+- DMD 2.111.0;
+- DMD 2.112.1;
+- DMD 2.113.0;
+- LDC 1.41.0 using DMD frontend 2.111.0;
+- LDC 1.42.0 using DMD frontend 2.112.1;
+- LDC 1.43.0 using DMD frontend 2.113.0.
+
+DUB remains fixed at 1.40.0 in CI so compiler qualification does not
+simultaneously change the build tool.
+
+No compatibility guarantee is currently made for frontends older than 2.111.
+The 2.111 generation is therefore the current tested compatibility floor, while
+the two newer generations are release canaries and qualification targets.
+Raising the floor remains a deliberate compatibility decision rather than an
+incidental consequence of adopting a newer compiler.
 
 The canonical local correctness checks are:
 
@@ -34,9 +51,12 @@ an external-consumer compile probe through the curated package root, DIP1000
 lifetime-negative checks, and a release build.
 
 For pull requests targeting `main`, pushes to `main`, and release/hotfix
-branches, the Release Gate reruns the supported compiler matrix and additionally
-builds the parser decode-count benchmark as a consumer-facing parser smoke test.
-`main` remains the release line; normal development targets `develop`.
+branches, the Release Gate runs the full six-compiler qualification matrix and
+additionally builds the parser decode-count benchmark as a consumer-facing
+parser smoke test. This deliberately keeps expensive cross-generation
+qualification out of ordinary `develop` commits while requiring it before
+release promotion. `main` remains the release line; normal development targets
+`develop`.
 
 ## Public module surface during pre-1.0
 
