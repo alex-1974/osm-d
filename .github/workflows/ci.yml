@@ -60,17 +60,3 @@ jobs:
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
-
-      # Temporary qualification gate for draft PR #32. Remove before merge.
-      - name: Build Node benchmark configurations
-        shell: bash
-        run: |
-          cd benchmark
-          for config in dense-nodes regular-nodes regular-node-stages; do
-            dub build \
-              --config="$config" \
-              --build=release \
-              --build-mode=allAtOnce \
-              --compiler="$DC" \
-              --force
-          done
