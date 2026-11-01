@@ -7,6 +7,8 @@ stable release.
 
 ## Unreleased
 
+- Added format-independent `MetadataView` for OSM element version, timestamp, changeset, independently optional user ID/username, and visibility. Regular Node, DenseNodes-backed Node, Way, and Relation views expose the same `metadata` property without changing decoder storage; raw PBF timestamp units and StringTable IDs remain below the consumer boundary.
+
 - Added format-independent `LocationView` with exact nanodegree access and lazy latitude/longitude degree conversion. Regular and DenseNodes-backed node views now expose the same `location` property, optional `LocationsOnWays` coordinates reuse the same semantic type, and the curated `osm` root exports `OsmId`, `ElementType`, and `LocationView` for consumer discovery.
 
 - Optimized regular Way decoding with a package-internal caller-owned preflight
