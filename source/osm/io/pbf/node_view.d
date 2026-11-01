@@ -379,10 +379,11 @@ static assert(isElementView!NodeView);
 
 unittest
 {
-    // A shared node may carry the larger retained dense-tag cursor, but should
-    // remain materially smaller than the former 392-byte regular NodeView on
-    // the supported 64-bit toolchains.
+    // The shared node deliberately retains both proven tag cursor
+    // representations. On supported 64-bit toolchains it remains smaller than
+    // the former 392-byte regular NodeView while avoiding cursor reconstruction
+    // in either hot path.
     static if (size_t.sizeof == 8)
-        static assert(NodeView.sizeof <= 304);
+        static assert(NodeView.sizeof <= 368);
 }
 
