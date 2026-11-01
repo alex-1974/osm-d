@@ -24,6 +24,7 @@ import osm.wire.field :
     WireType,
     readFieldHeader,
     readLengthDelimited,
+    readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint : readVarint64;
 
@@ -51,6 +52,15 @@ struct DenseTagValidationSummary
     size_t encodedValueCount;
 }
 
+
+private struct DecodedDenseTagPair
+{
+    uint keySid;
+    uint valueSid;
+    size_t keyOffset;
+    size_t valueOffset;
+}
+
 /**
  * Borrowed input range over the tags belonging to one dense node.
  *
@@ -70,21 +80,21 @@ private:
 public:
     /** Returns `true` when no tag remains in this node. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of tags not yet consumed from this range. */
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current validated tag. The range must be non-empty. */
     pragma(inline, true)
-    @property DenseTagView front() const @safe nothrow @nogc
+    @property DenseTagView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
@@ -92,7 +102,7 @@ public:
 
     /** Advance to the next validated tag in this node. */
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
@@ -103,21 +113,76 @@ public:
         }
 
         PbfStatus ignoredStatus;
-        DenseTagView next;
-        if (!decodePrevalidatedPair(_stream, _table, next, ignoredStatus))
+        if (!advance(ignoredStatus))
         {
             // The complete stream was prevalidated and its backing is required
             // to remain unchanged while this range is used. Reaching this branch
-            // therefore indicates
-            // an internal invariant failure rather than hostile input.
+            // therefore indicates an internal invariant failure rather than
+            // hostile input.
             _remaining = 0;
             _front = DenseTagView.init;
-            return;
         }
-        _front = next;
     }
 
 private:
+    pragma(inline, true)
+    bool advance(out PbfStatus status) scope @safe nothrow @nogc
+    {
+        DecodedDenseTagPair decoded;
+        if (!decodePrevalidatedPairScalars(_stream, decoded, status))
+            return false;
+
+        if (cast(size_t)decoded.keySid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.denseTagStringIdOutOfRange,
+                decoded.keyOffset,
+                10);
+            return false;
+        }
+        if (cast(size_t)decoded.valueSid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.denseTagStringIdOutOfRange,
+                decoded.valueOffset,
+                10);
+            return false;
+        }
+
+        const keyRef = _table.entries[cast(size_t)decoded.keySid];
+        const valueRef = _table.entries[cast(size_t)decoded.valueSid];
+
+        const keyStart = cast(size_t)keyRef.offset;
+        const keyFinish = keyStart + cast(size_t)keyRef.length;
+        const valueStart = cast(size_t)valueRef.offset;
+        const valueFinish = valueStart + cast(size_t)valueRef.length;
+
+        if (keyFinish < keyStart || keyFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.denseTagStringIdOutOfRange,
+                decoded.keyOffset,
+                10);
+            return false;
+        }
+        if (valueFinish < valueStart || valueFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.denseTagStringIdOutOfRange,
+                decoded.valueOffset,
+                10);
+            return false;
+        }
+
+        _front = DenseTagView(
+            decoded.keySid,
+            decoded.valueSid,
+            _table.rawBlock[keyStart .. keyFinish],
+            _table.rawBlock[valueStart .. valueFinish]);
+        status = PbfStatus.init;
+        return true;
+    }
+
     static bool fromValidated(
         KeysValsCursor stream,
         StringTableView table,
@@ -133,7 +198,7 @@ private:
 
         if (pairCount != 0)
         {
-            if (!decodePrevalidatedPair(range._stream, table, range._front, status))
+            if (!range.advance(status))
             {
                 range = DenseTagRange.init;
                 return false;
@@ -475,59 +540,35 @@ private bool validateStringId(
 }
 
 pragma(inline, true)
-/**
- * Decode one tag pair from a construction-controlled prevalidated node range.
- *
- * The caller guarantees that both logical values were already proven to be
- * valid positive int32 StringTable IDs for this same table and that the
- * validated backing bytes have not changed. StringTableView.get() remains
- * defensive for the actual borrowed-string lookup.
- */
-private bool decodePrevalidatedPair(
-    ref KeysValsCursor stream,
-    StringTableView table,
-    out DenseTagView tag,
+private bool decodePrevalidatedPairScalars(
+    scope ref KeysValsCursor stream,
+    out DecodedDenseTagPair decoded,
     out PbfStatus status)
     @safe nothrow @nogc
 {
-    tag = DenseTagView.init;
+    decoded = DecodedDenseTagPair.init;
 
     ulong rawKey;
     ulong rawValue;
     bool hasKey;
     bool hasValue;
+
     if (!stream.next(rawKey, hasKey, status) || !hasKey)
         return false;
-    const keyOffset = stream.lastValueOffset;
+    decoded.keyOffset = stream.lastValueOffset;
+
     if (!stream.next(rawValue, hasValue, status) || !hasValue)
         return false;
-    const valueOffset = stream.lastValueOffset;
+    decoded.valueOffset = stream.lastValueOffset;
 
-    // DenseTagRange is construction-controlled: its stream is produced only
-    // after the corresponding node segment has established valid non-zero
-    // StringTable IDs, either defensively in nextNode() or through the complete
-    // validateDenseTags() proof required by nextPrevalidatedNode(). The backing
-    // bytes must remain unchanged while the range relies on that proof.
-    const keySid = cast(uint)rawKey;
-    const valueSid = cast(uint)rawValue;
-
-    const(ubyte)[] key;
-    const(ubyte)[] value;
-    if (!table.get(keySid, key))
-    {
-        status = PbfStatus.failure(PbfError.denseTagStringIdOutOfRange, keyOffset, 10);
-        return false;
-    }
-    if (!table.get(valueSid, value))
-    {
-        status = PbfStatus.failure(PbfError.denseTagStringIdOutOfRange, valueOffset, 10);
-        return false;
-    }
-
-    tag = DenseTagView(keySid, valueSid, key, value);
+    // The containing DenseTagRange exists only after full semantic preflight,
+    // so both values are already proven valid positive int32 StringTable IDs.
+    decoded.keySid = cast(uint)rawKey;
+    decoded.valueSid = cast(uint)rawValue;
     status = PbfStatus.init;
     return true;
 }
+
 
 private struct KeysValsCursor
 {
@@ -545,14 +586,14 @@ public:
         _group = WireCursor(group);
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     pragma(inline, true)
     bool next(out ulong value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -602,14 +643,19 @@ public:
 
                 if (field.number == 10 && field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(_dense, field.number, packed, wire))
+                    bool ok;
+                    auto packed = readLengthDelimitedCursor(
+                        _dense,
+                        field.number,
+                        ok,
+                        wire);
+                    if (!ok)
                     {
                         status = PbfStatus.fromDenseNodesWire(wire, _denseBase);
                         return false;
                     }
-                    _packedBase = _denseBase + _dense.offset - packed.length;
-                    _packed = WireCursor(packed);
+                    _packedBase = _denseBase + _dense.offset - packed.remaining;
+                    _packed = packed;
                     break;
                 }
 
@@ -635,14 +681,19 @@ public:
 
                 if (field.number == 2 && field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] dense;
-                    if (!readLengthDelimited(_group, field.number, dense, wire))
+                    bool ok;
+                    auto dense = readLengthDelimitedCursor(
+                        _group,
+                        field.number,
+                        ok,
+                        wire);
+                    if (!ok)
                     {
                         status = PbfStatus.fromPrimitiveGroupWire(wire);
                         return false;
                     }
-                    _denseBase = _group.offset - dense.length;
-                    _dense = WireCursor(dense);
+                    _denseBase = _group.offset - dense.remaining;
+                    _dense = dense;
                     break;
                 }
 
