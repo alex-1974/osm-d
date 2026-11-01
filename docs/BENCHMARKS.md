@@ -3284,3 +3284,246 @@ The intended production shape is therefore:
     compact preflight-produced emission plan
 
 Canonical form must remain an optimization capability, never a validity rule.
+
+### Production prototype validation and final classification
+
+The package-internal production prototype was implemented after the benchmark-only
+research above. It retains the same architectural split:
+
+    generic correctness path
+            +
+    runtime-detected canonical packed fast path
+            +
+    caller-owned preflight-produced WayDecodePlan
+
+The existing `decodeWays` implementation and its generic validators/range builders
+remain available and authoritative for the compatibility path. The optimized path
+is exercised through package-internal caller-owned workspace by the whole-PBF
+benchmark consumer.
+
+#### Production plan and memory cost
+
+On the measured 64-bit target the retained production types are:
+
+    WayCompactInfo        48 bytes
+    WayPackedSpan          8 bytes
+    WayDecodePlan        120 bytes
+
+The production plan is larger than the earlier 88-byte benchmark-only research
+plan because it retains canonical packed spans for keys, values, refs, latitudes
+and longitudes rather than only refs.
+
+At 8,000 Ways:
+
+    8,000 * 120 bytes = 960,000 bytes
+                      = 937.5 KiB
+                      = 0.916 MiB
+
+This storage is reusable caller-owned scratch. It is not proportional to total
+file size and does not materialize node-reference arrays, tags, coordinates or
+`WayView` objects.
+
+#### Semantic-equivalence gate
+
+The production prototype was exercised against the established generic decoder
+with differential tests covering both successful and failing input.
+
+The retained tests cover, among other cases:
+
+- ordinary canonical packed Ways;
+- `Info`, tags and refs;
+- `LocationsOnWays`;
+- legal unpacked repeated refs;
+- mixed/reordered legal representations through generic fallback;
+- multiple packed refs segments through generic fallback;
+- malformed packed refs;
+- missing required Way ID;
+- invalid tag StringTable IDs;
+- ref accumulation overflow;
+- coordinate accumulation/conversion overflow;
+- wrong wire types;
+- late group failure with no observable sink publication; and
+- exact `PbfStatus` parity where failure ordering is part of the established
+  decoder behavior.
+
+A targeted dual-error probe found one real prototype defect before retention:
+the first canonical implementation validated packed columns immediately in wire
+order, while the established decoder finalizes semantic failures in the order:
+
+    Info -> tags -> refs -> LocationsOnWays
+
+That changed the first reported `PbfStatus` for inputs containing more than one
+independent defect. The production prototype was corrected so the one-pass
+structural scan first records packed spans and then performs semantic validation
+in the established order.
+
+Explicit differential regressions now protect:
+
+    Info before tags
+    tags before refs
+    refs before LocationsOnWays
+
+The fail-closed group contract remains unchanged: a later malformed Way publishes
+no earlier Way to the sink.
+
+#### Supported compiler gate
+
+Final correctness qualification used the documented pre-1.0 compiler matrix:
+
+    DMD 2.111.0
+    LDC 1.41.0
+      D frontend 2.111.0
+      LLVM 20.1.5
+
+Both complete unittest suites passed. The LDC 1.41.0 release build and the
+whole-PBF parser benchmark build also passed.
+
+The unversioned system `ldc2` on the qualification host was LDC 1.42.0 and was
+therefore not used as the reference compiler for the final retained-performance
+decision.
+
+#### Four-dataset whole-PBF semantic parity
+
+The final candidate, the clean `365400f` baseline and the libosmium reference
+produced identical complete parser counts on all four pinned Geofabrik
+2026-09-01 datasets:
+
+| Dataset | Bytes | Data blocks | Nodes | Ways | Relations | Tags |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 690,567 | 8 | 41,703 | 6,249 | 348 | 44,946 |
+| Liechtenstein | 3,451,831 | 53 | 361,543 | 42,051 | 973 | 210,505 |
+| Bremen | 21,159,666 | 251 | 1,662,874 | 328,626 | 5,985 | 2,073,595 |
+| Austria | 808,820,532 | 12,147 | 87,627,541 | 9,359,891 | 180,296 | 43,979,849 |
+
+The verified dataset SHA-256 values were:
+
+    Monaco
+    f2d904ee0aa156a2252c39c0ab80ca7b3fafb28da6a84b909084a26f068ac962
+
+    Liechtenstein
+    69e694d15ac822665381bf47fa8a5f437b3c0c3d72af458727f94e131930d818
+
+    Bremen
+    52bc46f09ce1f1198b95de308aba10c1b59108c9fdbb827fea305f7316b4ea0e
+
+    Austria
+    0bfa5f1db8a468b3792b1ead07b56d4f7a8c456e500d23dc8d3083e82508dfb8
+
+#### Controlled whole-PBF performance gate
+
+The final performance comparison used Bremen and rebuilt both implementations
+with the same supported compiler:
+
+    baseline commit    365400fa6d24cc091b80feeb538483f1728fcbb6
+    compiler           LDC 1.41.0
+    D frontend         2.111.0
+    LLVM               20.1.5
+    logical CPU        5
+    pre-run gate       <= 65 C twice consecutively
+    balanced blocks    4
+    samples/impl       8
+    Brave renderers    paused during measurement
+
+The candidate and baseline were run in balanced `BCOOCB` / `OCBBCO` order with
+the same complete loaded-PBF decode/count workload.
+
+Final medians:
+
+| Implementation | p50 |
+| --- | ---: |
+| baseline `365400f` | 896.629 ms |
+| production Way plan | 659.302 ms |
+| libosmium reference | 352.660 ms |
+
+Primary paired result:
+
+    candidate / baseline = 0.735x
+    candidate delta      = -26.5%
+
+This independently reproduces the earlier approximately 27% whole-PBF
+improvement after the semantic-precedence correction. The optimization therefore
+survived the correctness fix rather than depending on the earlier validation
+ordering.
+
+For context:
+
+    baseline / libosmium  = 2.542x
+    candidate / libosmium = 1.870x
+
+The libosmium samples in this particular final run were substantially noisier
+than the D baseline/candidate samples (`delta80` 16.5% versus 5.2% and 3.9%).
+The libosmium ratio is therefore retained as secondary context, not promoted as
+a new stable absolute libosmium baseline. The paired D candidate-versus-baseline
+result is the deciding performance evidence.
+
+Raw result file generated by the run:
+
+    benchmark/results/way-plan-final-ldc141-bremen-20261101T084824Z.csv
+
+Benchmark result files remain local/ignored unless explicitly selected for
+retention by repository policy.
+
+#### Code-size gate
+
+A clean baseline and candidate parser benchmark executable were rebuilt with the
+same LDC 1.41.0 release/all-at-once configuration.
+
+GNU `size` reported:
+
+    baseline text-like total     982,956 bytes
+    candidate text-like total    998,932 bytes
+    delta                         +15,976 bytes  (+1.625%)
+
+The ELF `.text` section itself changed from:
+
+    baseline .text               575,776 bytes
+    candidate .text              591,776 bytes
+    delta                         +16,000 bytes  (+2.779%)
+
+Total allocatable `text + data + bss` changed by:
+
+    +15,864 bytes  (+1.460%)
+
+File size changed from:
+
+    1,471,168 bytes
+    1,488,440 bytes
+    delta +17,272 bytes (+1.174%)
+
+This increase is accepted for a reproducible 26.5% reduction in the complete
+Bremen parser workload, especially because the optimization removes repeated
+protobuf searches from a demonstrated hot path rather than adding a new
+compile-time specialization family.
+
+#### Final gate review
+
+The production candidate satisfies every gate defined before implementation:
+
+1. **Exact malformed/unusual semantic equivalence:** PASS.
+2. **Packed, unpacked, segmented and mixed legal fallback:** PASS.
+3. **Fail-closed group emission unchanged:** PASS.
+4. **No supported public API regression:** PASS; new planning helpers remain
+   package-internal implementation surface.
+5. **Acceptable code-size and scratch impact:** PASS.
+6. **Real-PBF semantic parity on the pinned corpus:** PASS on all four datasets.
+7. **Reproducible whole-parser performance improvement:** PASS, with a final
+   26.5% Bremen reduction against the clean production baseline.
+
+### Classification
+
+**KEEP.**
+
+The production Way plan is retained.
+
+The result supports the original architectural hypothesis: successful regular-Way
+preflight should preserve compact structural information that emission can reuse.
+For the common canonical packed representation this removes repeated message-wide
+field discovery while preserving the general protobuf decoder as the fallback for
+legal non-canonical input.
+
+Canonical representation remains an optimization capability only. It is not a
+validity requirement.
+
+The remaining gap to libosmium is still material. Retaining this optimization
+therefore closes one identified structural deficit but does not complete the
+single-thread performance work.

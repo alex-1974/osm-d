@@ -185,6 +185,9 @@ enum PbfError : ubyte
     unsupportedRelationMemberType,
     /// A defensive regular-Relation rescan disagreed with the validated group summary.
     relationCountMismatch,
+
+    /// Caller-owned WayDecodePlan storage is smaller than the validated Way count.
+    wayWorkspaceTooSmall,
 }
 
 /**

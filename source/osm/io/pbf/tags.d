@@ -211,6 +211,56 @@ bool buildTagRange(
     return true;
 }
 
+/**
+ * Build a borrowed TagRange directly from prevalidated canonical packed
+ * key/value payloads.
+ *
+ * This is the no-search counterpart of `buildTagRange`. The supplied summary
+ * and payloads must describe the same immutable element bytes that were
+ * completely semantically validated before observable emission.
+ */
+package(osm)
+bool buildPrevalidatedPackedTagRange(
+    const(ubyte)[] keyPayload,
+    size_t keyPayloadBase,
+    const(ubyte)[] valuePayload,
+    size_t valuePayloadBase,
+    StringTableView table,
+    TagValidationSummary summary,
+    out TagRange range,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    range = TagRange.init;
+    range._keys = UInt32FieldCursor.fromPrevalidatedPacked(
+        keyPayload,
+        keyPayloadBase,
+        2);
+    range._vals = UInt32FieldCursor.fromPrevalidatedPacked(
+        valuePayload,
+        valuePayloadBase,
+        3);
+    range._table = table;
+    range._remaining = summary.tagCount;
+
+    if (range._remaining != 0)
+    {
+        if (!decodeValidatedPair(
+            range._keys,
+            range._vals,
+            table,
+            range._front,
+            status))
+        {
+            range = TagRange.init;
+            return false;
+        }
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
 pragma(inline, true)
 private bool validateStringId(
     uint sid,
@@ -313,6 +363,26 @@ public:
         _message = WireCursor(input);
         _baseOffset = baseOffset;
         _fieldNumber = fieldNumber;
+    }
+
+    /**
+     * Construct a cursor that starts directly in one already validated packed
+     * repeated-field payload.
+     *
+     * No message-wide field search is performed. The caller must have proved
+     * that this payload represents the complete logical repeated column.
+     */
+    static UInt32FieldCursor fromPrevalidatedPacked(
+        const(ubyte)[] packed,
+        size_t packedBase,
+        uint fieldNumber)
+        @safe nothrow @nogc
+    {
+        UInt32FieldCursor result;
+        result._packed = WireCursor(packed);
+        result._packedBase = packedBase;
+        result._fieldNumber = fieldNumber;
+        return result;
     }
 
     @property size_t lastValueOffset() const @safe pure nothrow @nogc
@@ -518,4 +588,52 @@ unittest
     assert(tags.length == 1);
     assert(tags.front.keySid == 1);
     assert(tags.front.valueSid == 2);
+}
+
+
+unittest
+{
+    import osm.io.pbf.string_table : StringRef;
+
+    // Canonical prevalidated packed keys [1,3] and vals [2,4].
+    const(ubyte)[] strings = [0, 'k', 'v', 'n', 'x'];
+    StringRef[5] refs = [
+        StringRef(0, 0),
+        StringRef(1, 1),
+        StringRef(2, 1),
+        StringRef(3, 1),
+        StringRef(4, 1),
+    ];
+    StringTableView table = StringTableView(strings, refs[]);
+
+    const(ubyte)[] keys = [0x01, 0x03];
+    const(ubyte)[] vals = [0x02, 0x04];
+
+    TagValidationSummary summary;
+    summary.keyCount = 2;
+    summary.valueCount = 2;
+
+    TagRange range;
+    PbfStatus status;
+    assert(buildPrevalidatedPackedTagRange(
+        keys,
+        100,
+        vals,
+        200,
+        table,
+        summary,
+        range,
+        status));
+    assert(status.ok);
+    assert(range.length == 2);
+
+    assert(range.front.keySid == 1);
+    assert(range.front.valueSid == 2);
+    range.popFront();
+
+    assert(range.front.keySid == 3);
+    assert(range.front.valueSid == 4);
+    range.popFront();
+
+    assert(range.empty);
 }

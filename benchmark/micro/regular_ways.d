@@ -52,6 +52,7 @@ import osm.io.pbf.string_table :
     StringTableView,
     buildStringTableView;
 import osm.io.pbf.way :
+    WayDecodePlan,
     WayDecodeSummary,
     WayLocationRange,
     WayLocationValidationSummary,
@@ -61,6 +62,7 @@ import osm.io.pbf.way :
     buildWayLocationRange,
     buildWayRefRange,
     decodeWays,
+    decodeWaysWithWorkspace,
     validateWayLocations,
     validateWayRefs;
 
@@ -147,6 +149,7 @@ version (RegularWayStageBenchmark)
         refRangeEmission,
         packedRefsEmission,
         canonicalCachedPackedRefs,
+        productionPlan,
         fullDecode,
     }
 
@@ -255,6 +258,7 @@ version (RegularWayStageBenchmark)
         StageCachedWay[] cachedWays;
         StageCompactWay[] compactWays;
         StagePackedRefs[] packedRefs;
+        WayDecodePlan[] wayPlans;
         size_t compactCount;
         size_t packedRefCount;
     }
@@ -3434,6 +3438,40 @@ version (RegularWayStageBenchmark)
         return runCompactEmission(workload, scratch);
     }
 
+    /**
+     * Production WayDecodePlan path with caller-owned scratch provisioned
+     * outside the timed region.
+     */
+    private StageRun runProductionPlan(
+        ref const Workload workload,
+        ref StageScratch scratch)
+        @safe nothrow @nogc
+    {
+        RefSink sink;
+        WayDecodeSummary summary;
+        PbfStatus status;
+
+        const ok = decodeWaysWithWorkspace(
+            workload.block,
+            workload.group,
+            workload.table,
+            scratch.wayPlans,
+            sink,
+            summary,
+            status);
+
+        return StageRun(
+            sink.checksum,
+            summary.wayCount,
+            summary.tagCount,
+            summary.refCount,
+            summary.locationCount,
+            sink.infoCount,
+            ok &&
+                sink.wayCount == summary.wayCount &&
+                sink.refCount == summary.refCount);
+    }
+
     private StageRun runFullDecode(ref const Workload workload)
         @safe nothrow @nogc
     {
@@ -3476,6 +3514,8 @@ version (RegularWayStageBenchmark)
             return runPackedRefsEmission(workload, scratch);
         case StageKind.canonicalCachedPackedRefs:
             return runCanonicalCachedPackedRefs(workload, scratch);
+        case StageKind.productionPlan:
+            return runProductionPlan(workload, scratch);
         case StageKind.fullDecode:
             return runFullDecode(workload);
         }
@@ -3508,6 +3548,7 @@ version (RegularWayStageBenchmark)
         case StageKind.refRangeEmission:
         case StageKind.packedRefsEmission:
         case StageKind.canonicalCachedPackedRefs:
+        case StageKind.productionPlan:
         case StageKind.fullDecode:
             return workload.refsChecksum;
         }
@@ -3567,7 +3608,9 @@ version (RegularWayStageBenchmark)
         @system
     {
         StageScratch scratch;
-        if (stage == StageKind.cachedSummary)
+        if (stage == StageKind.productionPlan)
+            scratch.wayPlans = new WayDecodePlan[workload.wayCount];
+        else if (stage == StageKind.cachedSummary)
             scratch.cachedWays = new StageCachedWay[workload.wayCount];
         else if (stage == StageKind.cachedCompact ||
             stage == StageKind.compactEmission ||
@@ -3610,7 +3653,9 @@ version (RegularWayStageBenchmark)
         @system
     {
         StageScratch scratch;
-        if (stage == StageKind.cachedSummary)
+        if (stage == StageKind.productionPlan)
+            scratch.wayPlans = new WayDecodePlan[workload.wayCount];
+        else if (stage == StageKind.cachedSummary)
             scratch.cachedWays = new StageCachedWay[workload.wayCount];
         else if (stage == StageKind.cachedCompact ||
             stage == StageKind.compactEmission ||
@@ -3712,6 +3757,8 @@ version (RegularWayStageBenchmark)
             return "packed-refs-emission";
         case StageKind.canonicalCachedPackedRefs:
             return "canonical-cached-packed-refs";
+        case StageKind.productionPlan:
+            return "production-plan";
         case StageKind.fullDecode:
             return "full-decode";
         }
@@ -3761,6 +3808,10 @@ version (RegularWayStageBenchmark)
         case "canonical-cached-packed-refs":
         case "canonical-integrated":
             stage = StageKind.canonicalCachedPackedRefs;
+            return true;
+        case "production-plan":
+        case "plan":
+            stage = StageKind.productionPlan;
             return true;
         case "full-decode":
         case "full":
@@ -3813,6 +3864,7 @@ version (RegularWayStageBenchmark)
         case StageKind.refRangeEmission:
         case StageKind.packedRefsEmission:
         case StageKind.canonicalCachedPackedRefs:
+        case StageKind.productionPlan:
             // The benchmark's historical --stage=all mode deliberately
             // retains its original four-stage rotation. Candidate cache
             // stages are measured explicitly as single stages.
@@ -4092,7 +4144,7 @@ version (RegularWayStageBenchmark)
             "samples", "Timed samples; robust quantiles are reported", &samples,
             "warmup", "Untimed stage runs before measurement", &warmupIterations,
             "profile", "all|ref-only|typical|typical-info|locations|rich", &selectedProfile,
-            "stage", "all|group-scan|semantic-preflight|canonical-one-scan-preflight|prevalidated-emission|cached-summary|cached-compact|compact-emission|ref-range-emission|packed-refs-emission|canonical-cached-packed-refs|full-decode", &selectedStageName);
+            "stage", "all|group-scan|semantic-preflight|canonical-one-scan-preflight|prevalidated-emission|cached-summary|cached-compact|compact-emission|ref-range-emission|packed-refs-emission|canonical-cached-packed-refs|production-plan|full-decode", &selectedStageName);
 
         if (options.helpWanted)
         {
@@ -4144,6 +4196,7 @@ version (RegularWayStageBenchmark)
         writeln("ref-range-emission: RefSink-only emission using current generic WayRefRange; compact-plan preparation excluded");
         writeln("packed-refs-emission: canonical packed field-8 emission ceiling; semantic/cache/payload discovery and scratch allocation excluded");
         writeln("canonical-cached-packed-refs: integrated fail-closed ceiling: one-scan preflight + 80+8-byte plan + direct refs emission; scratch allocation excluded");
+        writeln("production-plan: production decodeWaysWithWorkspace with caller-owned WayDecodePlan scratch; allocation excluded");
         writeln("full-decode: production decodeWays with the refs sink");
         writeln("derived values subtract medians and are diagnostic, not independently timed stages");
         writeln("excluded: workload generation, block/group layout, StringTable indexing, sorting and reporting");
