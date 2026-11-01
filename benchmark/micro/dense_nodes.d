@@ -22,7 +22,7 @@ module osm.benchmark.micro.dense_nodes;
 import osm.io.pbf.dense_info : DenseInfoView;
 import osm.io.pbf.dense_nodes :
     DenseNodeDecodeSummary,
-    DenseNodeView,
+    NodeView,
     decodeDenseNodes;
 import osm.io.pbf.error : PbfStatus;
 import osm.io.pbf.primitive_block :
@@ -114,7 +114,7 @@ private struct CoordinateSink
         ++nodeCount;
     }
 
-    void put(DenseNodeView node) @safe nothrow @nogc
+    void put(NodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
@@ -139,7 +139,7 @@ private struct TagIdSink
         ++nodeCount;
     }
 
-    void put(scope ref DenseNodeView node) @safe nothrow @nogc
+    void put(scope ref NodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
@@ -174,7 +174,7 @@ private struct TagByteSink
         ++nodeCount;
     }
 
-    void put(scope ref DenseNodeView node) @safe nothrow @nogc
+    void put(scope ref NodeView node) @safe nothrow @nogc
     {
         checksum = mix(checksum, cast(ulong)node.id);
         checksum = mix(checksum, cast(ulong)node.latNano);
@@ -216,10 +216,10 @@ private ulong mix(ulong state, ulong value) @safe pure nothrow @nogc
 }
 
 pragma(inline, true)
-private void consumeInfo(
+private void consumeInfo(T)(
     ref ulong checksum,
     ref size_t infoCount,
-    scope ref DenseInfoView info)
+    scope ref T info)
     @safe nothrow @nogc
 {
     const present = info.hasVersion || info.hasTimestamp || info.hasChangeset ||
