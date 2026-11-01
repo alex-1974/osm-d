@@ -177,6 +177,81 @@ private:
         _frontValueSid = 0;
     }
 
+    /**
+     * Access the active message-state union member.
+     *
+     * Safety:
+     *   _mode is construction-controlled and asserted before the overlapped
+     *   slice-containing union member is touched. DMD cannot prove this active
+     *   member invariant in @safe code.
+     */
+    pragma(inline, true)
+    bool advanceMessage(
+        out DecodedTagPair decoded,
+        out PbfStatus status)
+        scope @trusted nothrow @nogc
+    {
+        assert(_mode == TagRangeMode.message);
+        return decodePrevalidatedMessagePair(_state.message, decoded, status);
+    }
+
+    /**
+     * Access the active packed-state union member.
+     *
+     * Safety:
+     *   _mode is construction-controlled and asserted before the overlapped
+     *   slice-containing union member is touched.
+     */
+    pragma(inline, true)
+    bool advancePacked(
+        out DecodedTagPair decoded,
+        out PbfStatus status)
+        scope @trusted nothrow @nogc
+    {
+        assert(_mode == TagRangeMode.packed);
+        return decodePrevalidatedPackedPair(_state.packed, decoded, status);
+    }
+
+    /**
+     * Initialize the message-state union member.
+     *
+     * Safety:
+     *   The range is reset to .init before construction and _mode is set to
+     *   message before this state becomes observable.
+     */
+    pragma(inline, true)
+    void setMessageState(const(ubyte)[] input, size_t baseOffset)
+        scope @trusted pure nothrow @nogc
+    {
+        assert(_mode == TagRangeMode.message);
+        _state.message = MessageTagState.init;
+        _state.message.input = input;
+        _state.message.baseOffset = baseOffset;
+    }
+
+    /**
+     * Initialize the packed-state union member.
+     *
+     * Safety:
+     *   The range is reset to .init before construction and _mode is set to
+     *   packed before this state becomes observable.
+     */
+    pragma(inline, true)
+    void setPackedState(
+        const(ubyte)[] keys,
+        size_t keyBase,
+        const(ubyte)[] values,
+        size_t valueBase)
+        scope @trusted pure nothrow @nogc
+    {
+        assert(_mode == TagRangeMode.packed);
+        _state.packed = PackedTagState.init;
+        _state.packed.keys = keys;
+        _state.packed.values = values;
+        _state.packed.keyBase = keyBase;
+        _state.packed.valueBase = valueBase;
+    }
+
     pragma(inline, true)
     bool advance(out PbfStatus status) scope @safe nothrow @nogc
     {
@@ -185,18 +260,12 @@ private:
         final switch (_mode)
         {
         case TagRangeMode.message:
-            if (!decodePrevalidatedMessagePair(
-                    _state.message,
-                    decoded,
-                    status))
+            if (!advanceMessage(decoded, status))
                 return false;
             break;
 
         case TagRangeMode.packed:
-            if (!decodePrevalidatedPackedPair(
-                    _state.packed,
-                    decoded,
-                    status))
+            if (!advancePacked(decoded, status))
                 return false;
             break;
         }
@@ -541,8 +610,7 @@ bool buildTagRange(
 {
     range = TagRange.init;
     range._mode = TagRangeMode.message;
-    range._state.message.input = input;
-    range._state.message.baseOffset = baseOffset;
+    range.setMessageState(input, baseOffset);
     range._table = table;
     range._remaining = summary.tagCount;
 
@@ -581,10 +649,11 @@ bool buildPrevalidatedPackedTagRange(
 {
     range = TagRange.init;
     range._mode = TagRangeMode.packed;
-    range._state.packed.keys = keyPayload;
-    range._state.packed.values = valuePayload;
-    range._state.packed.keyBase = keyPayloadBase;
-    range._state.packed.valueBase = valuePayloadBase;
+    range.setPackedState(
+        keyPayload,
+        keyPayloadBase,
+        valuePayload,
+        valuePayloadBase);
     range._table = table;
     range._remaining = summary.tagCount;
 
