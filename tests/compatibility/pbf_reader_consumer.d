@@ -43,6 +43,23 @@ private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
     }
 }
 
+private void inspectTags(T)(scope ref T value) @safe nothrow @nogc
+{
+    auto tags = value.tags;
+
+    while (!tags.empty)
+    {
+        auto tag = tags.front;
+        const key = tag.key;
+        const tagValue = tag.value;
+
+        assert(key == tag.key);
+        assert(tagValue == tag.value);
+
+        tags.popFront();
+    }
+}
+
 struct Consumer
 {
     size_t nodes;
@@ -70,20 +87,46 @@ struct Consumer
         assert(longitude == location.longitude);
 
         inspectMetadata(value);
+        inspectTags(value);
     }
 
     void way(T)(scope ref T value) @safe nothrow @nogc
     {
         ++ways;
         assert(value.type == ElementType.way);
+
         inspectMetadata(value);
+        inspectTags(value);
+
+        auto refs = value.refs;
+        while (!refs.empty)
+        {
+            OsmId nodeId = refs.front;
+            assert(nodeId == refs.front);
+            refs.popFront();
+        }
+
+        auto locations = value.locations;
+        while (!locations.empty)
+        {
+            LocationView location = locations.front;
+            const latitude = location.latitude;
+            const longitude = location.longitude;
+
+            assert(latitude == location.latitude);
+            assert(longitude == location.longitude);
+
+            locations.popFront();
+        }
     }
 
     void relation(T)(scope ref T value) @safe nothrow @nogc
     {
         ++relations;
         assert(value.type == ElementType.relation);
+
         inspectMetadata(value);
+        inspectTags(value);
 
         auto members = value.members;
         while (!members.empty)
