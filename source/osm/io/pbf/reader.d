@@ -160,11 +160,11 @@ private:
  * enclosing `return`, and outer `goto` through the delegate's exact control
  * value without materializing elements or introducing a coroutine runtime.
  *
- * The adapter validates framing, HeaderBlock capabilities, PrimitiveBlock and
- * StringTable structure, PrimitiveGroup structure, and every DenseNodes/Node
- * sequence that it reaches. It intentionally does not semantically decode
- * Ways or Relations. If iteration stops early, the unvisited file suffix is
- * not validated.
+ * A natural traversal to end-of-file retains the same whole-file validation
+ * scope as PbfReader.read: Ways and Relations are decoded/validated but are not
+ * delivered to the node foreach body. If iteration stops early, parsing stops
+ * immediately after the node that produced the foreach control value, so the
+ * unvisited file suffix is deliberately not validated.
  *
  * Scratch storage is local to each opApply invocation. It may grow through the
  * garbage collector in the same cases as a fresh PbfReaderWorkspace, but there
@@ -738,6 +738,42 @@ private bool decodeNodeDataBlock(Sink)(
             readStatus = PbfReadStatus.init;
             return true;
         }
+
+        if (workspace.wayPlans.length < group.wayOccurrences)
+            workspace.wayPlans.length = group.wayOccurrences;
+
+        WayDecodeSummary waySummary;
+        if (!decodeWaysWithWorkspace(
+                block,
+                group,
+                table,
+                workspace.wayPlans[0 .. group.wayOccurrences],
+                sink,
+                waySummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        RelationDecodeSummary relationSummary;
+        if (!decodeRelations(
+                block,
+                group,
+                table,
+                sink,
+                relationSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
     }
 
     readStatus = PbfReadStatus.init;
@@ -777,6 +813,9 @@ public:
         NodeView node = NodeView(encoded);
         return dg(node);
     }
+
+    void put(scope ref WayView) @safe nothrow @nogc {}
+    void put(scope ref RelationView) @safe nothrow @nogc {}
 }
 
 private struct SystemNodeForeachSink
@@ -811,6 +850,9 @@ public:
         NodeView node = NodeView(encoded);
         return dg(node);
     }
+
+    void put(scope ref WayView) @safe nothrow @nogc {}
+    void put(scope ref RelationView) @safe nothrow @nogc {}
 }
 
 private bool decodeDataBlock(Sink)(
