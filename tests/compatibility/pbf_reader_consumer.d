@@ -182,4 +182,17 @@ void compileConsumer()
     const ok = reader.read(input, workspace, consumer, summary, status);
     assert(!ok);
     assert(status.error == PbfReadError.missingHeader);
+
+    auto nodes = reader.nodes(input);
+    foreach (scope ref NodeView node; nodes)
+    {
+        OsmId id = node.id;
+        assert(id == node.id);
+        break;
+    }
+
+    PbfReadStatus nodeStatus = nodes.status;
+    const nodeCompleted = nodes.completed;
+    assert(!nodeStatus.ok);
+    assert(!nodeCompleted);
 }
