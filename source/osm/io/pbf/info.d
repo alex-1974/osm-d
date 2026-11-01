@@ -305,3 +305,8 @@ unittest
     assert(status.error == PbfError.infoUserStringIdOutOfRange);
     assert(status.fieldNumber == 5);
 }
+
+version (unittest)
+{
+    pragma(msg, "LAYOUT source/osm/io/pbf/info.d: InfoView.sizeof=", InfoView.sizeof);
+}
