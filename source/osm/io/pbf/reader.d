@@ -512,10 +512,7 @@ public:
     {
         static if (__traits(hasMember, Handler, "node"))
         {
-            NodeView node;
-            node.id = id;
-            node.latNano = latNano;
-            node.lonNano = lonNano;
+            NodeView node = NodeView(id, latNano, lonNano);
             callNode(*handler, node);
         }
     }
@@ -524,12 +521,7 @@ public:
     {
         static if (__traits(hasMember, Handler, "node"))
         {
-            NodeView node = NodeView(
-                encoded.id,
-                encoded.latNano,
-                encoded.lonNano,
-                encoded.tags,
-                encoded.info);
+            NodeView node = NodeView(encoded);
             callNode(*handler, node);
         }
     }
@@ -538,12 +530,7 @@ public:
     {
         static if (__traits(hasMember, Handler, "node"))
         {
-            NodeView node = NodeView(
-                encoded.id,
-                encoded.latNano,
-                encoded.lonNano,
-                encoded.tags,
-                encoded.info);
+            NodeView node = NodeView(encoded);
             callNode(*handler, node);
         }
     }
