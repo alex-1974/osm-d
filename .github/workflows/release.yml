@@ -1,0 +1,72 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Verify and publish GitHub Release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out tagged state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag belongs to main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin main --no-tags
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Release tag is not reachable from main: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Verify annotated release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]]; then
+            echo "Release tag must be annotated: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Verify changelog entry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+
+          if ! grep -Fq "## $version" CHANGELOG.md; then
+            echo "CHANGELOG.md has no release entry for $version" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "GitHub Release already exists: $GITHUB_REF_NAME"
+            exit 0
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"

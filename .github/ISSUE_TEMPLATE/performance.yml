@@ -1,0 +1,37 @@
+name: Performance
+description: Investigate a measured performance problem or opportunity.
+title: ""
+labels:
+  - "type: performance"
+body:
+  - type: textarea
+    id: workload
+    attributes:
+      label: Comparable workload
+      description: Define input corpus, decoded semantics, validation, allocation, threading, and output work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current evidence
+      description: Include compiler versions, CPU/platform, flags, affinity/frequency controls, warm-up, samples, baseline commit, and wall-clock distribution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference or target
+      description: Give a comparable libosmium/C/C++/Rust baseline or explain the regression baseline.
+    validations:
+      required: true
+
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Semantic equivalence
+      description: Explain how integrity, malformed-input behavior, ordering, allocation and fail-closed semantics will be shown equivalent.
+    validations:
+      required: true
