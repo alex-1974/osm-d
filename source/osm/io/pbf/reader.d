@@ -27,7 +27,6 @@ import osm.io.pbf.decompress :
     requiredOutputSize;
 import osm.io.pbf.dense_nodes :
     DenseNodeDecodeSummary,
-    DenseNodeView,
     decodeDenseNodes;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.features :
@@ -39,7 +38,8 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
-import osm.io.pbf.node : NodeDecodeSummary, NodeView, decodeNodes;
+import osm.io.pbf.node : NodeDecodeSummary, decodeNodes;
+import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
     PrimitiveBlockLayout,
     decodePrimitiveBlockLayout;
@@ -157,8 +157,8 @@ private:
  *
  * Handler callbacks are discovered statically by name. A handler may omit
  * node, way, or relation entirely when that element kind is not needed. When a
- * node callback is present it must accept both regular NodeView and
- * DenseNodeView, normally with one templated node method. Callbacks execute
+ * node callback is present it accepts one concrete semantic NodeView for both
+ * regular Node and DenseNodes encoding. Callbacks execute
  * synchronously and must satisfy @safe nothrow @nogc. Borrowed views must not
  * escape the callback.
  */
@@ -519,12 +519,6 @@ public:
         }
     }
 
-    void put(scope ref DenseNodeView node) @trusted nothrow @nogc
-    {
-        static if (__traits(hasMember, Handler, "node"))
-            callNode(*handler, node);
-    }
-
     void put(scope ref NodeView node) @trusted nothrow @nogc
     {
         static if (__traits(hasMember, Handler, "node"))
@@ -544,9 +538,9 @@ public:
     }
 }
 
-private void callNode(Handler, View)(
+private void callNode(Handler)(
     ref Handler handler,
-    scope ref View node)
+    scope ref NodeView node)
     @safe nothrow @nogc
 {
     handler.node(node);
@@ -710,7 +704,7 @@ unittest
         size_t nodes;
         long lastId;
 
-        void node(T)(scope ref T value) @safe nothrow @nogc
+        void node(scope ref NodeView value) @safe nothrow @nogc
         {
             ++nodes;
             lastId = value.id;
