@@ -242,7 +242,6 @@ bool decodeNodesUntilStop(Sink)(
     out int control,
     out NodeDecodeSummary summary,
     out PbfStatus status)
-    @safe
 {
     control = 0;
     summary = NodeDecodeSummary.init;
