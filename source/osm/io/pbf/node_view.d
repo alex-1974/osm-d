@@ -1,10 +1,10 @@
 /**
- * Shared PBF-backed semantic node view.
+ * Shared consumer-facing PBF node view.
  *
- * Regular OSMPBF Node messages and DenseNodes use different wire layouts, but
- * consumers observe the same OSM node semantics. This module keeps the
- * encoding-specific tag cursors and metadata diagnostics below one concrete
- * borrowed NodeView without materializing tags or allocating storage.
+ * Regular OSMPBF Node messages and DenseNodes retain their proven codec-owned
+ * representations. PbfReader wraps either representation in this small
+ * synchronous borrowed view so consumers see one concrete NodeView without
+ * copying codec tag cursors or metadata state on every node callback.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-11-01
@@ -17,9 +17,9 @@ import osm.view.element : ElementType, OsmId, isElementView;
 import osm.view.location : LocationView;
 import osm.view.metadata : MetadataView;
 import osm.view.tag : TagView;
-import osm.io.pbf.dense_info : DenseInfoView;
+import osm.io.pbf.dense_nodes : DenseNodeView;
 import osm.io.pbf.dense_tags : DenseTagRange;
-import osm.io.pbf.info : InfoView;
+import osm.io.pbf.node : PbfRegularNodeView = NodeView;
 import osm.io.pbf.tags : TagRange;
 
 private enum NodeTagKind : ubyte
@@ -35,12 +35,11 @@ private union NodeTagState
 }
 
 /**
- * Borrowed semantic tag range for one PBF-backed node.
+ * Independent borrowed semantic tag range for one PBF-backed node.
  *
- * The two PBF encodings retain specialized internal cursors. The wrapper adds
- * only a stable encoding discriminator and delegates traversal without copying
- * or materializing tag strings. Range copies remain independent because the
- * complete cursor state is stored inline.
+ * The enclosing NodeView is only a synchronous callback borrow. Requesting
+ * `tags` copies the selected proven codec range into this value, after which
+ * traversal is independent of the codec view and remains zero-allocation.
  */
 struct NodeTagRange
 {
@@ -62,42 +61,6 @@ package(osm):
         _kind = NodeTagKind.dense;
         _remaining = tags.length;
         setDense(tags);
-    }
-
-    /**
-     * Current PBF StringTable ID of the key for diagnostics/benchmarks.
-     *
-     * This is intentionally package-internal and not part of OSM semantics.
-     */
-    pragma(inline, true)
-    @property uint frontKeyStringId() const scope @safe nothrow @nogc
-    in (!empty)
-    {
-        final switch (_kind)
-        {
-        case NodeTagKind.regular:
-            return regularKeyId();
-        case NodeTagKind.dense:
-            return denseKeyId();
-        }
-    }
-
-    /**
-     * Current PBF StringTable ID of the value for diagnostics/benchmarks.
-     *
-     * This is intentionally package-internal and not part of OSM semantics.
-     */
-    pragma(inline, true)
-    @property uint frontValueStringId() const scope @safe nothrow @nogc
-    in (!empty)
-    {
-        final switch (_kind)
-        {
-        case NodeTagKind.regular:
-            return regularValueId();
-        case NodeTagKind.dense:
-            return denseValueId();
-        }
     }
 
 public:
@@ -129,7 +92,7 @@ public:
         }
     }
 
-    /** Advance to the next already validated tag. */
+    /** Advance this independent range copy to the next validated tag. */
     pragma(inline, true)
     void popFront() scope @safe nothrow @nogc
     in (!empty)
@@ -147,10 +110,10 @@ public:
 
 private:
     /*
-     * DMD correctly rejects direct @safe access to overlapped union members
-     * that contain slices. Each helper below is the minimal trusted boundary:
-     * _kind is construction-controlled, asserted before access, and the active
-     * member is copied or traversed only according to that invariant.
+     * DMD rejects direct @safe access to overlapped union members containing
+     * slices. The discriminator is construction-controlled and asserted before
+     * each active-member access; only that compiler-unverifiable operation is
+     * trusted.
      */
     pragma(inline, true)
     void setRegular(return scope TagRange tags)
@@ -197,174 +160,158 @@ private:
         _state.dense.popFront();
         return _state.dense.length;
     }
-
-    pragma(inline, true)
-    uint regularKeyId() const scope @trusted nothrow @nogc
-    {
-        assert(_kind == NodeTagKind.regular);
-        return _state.regular.frontKeyStringId;
-    }
-
-    pragma(inline, true)
-    uint denseKeyId() const scope @trusted nothrow @nogc
-    {
-        assert(_kind == NodeTagKind.dense);
-        return _state.dense.frontKeyStringId;
-    }
-
-    pragma(inline, true)
-    uint regularValueId() const scope @trusted nothrow @nogc
-    {
-        assert(_kind == NodeTagKind.regular);
-        return _state.regular.frontValueStringId;
-    }
-
-    pragma(inline, true)
-    uint denseValueId() const scope @trusted nothrow @nogc
-    {
-        assert(_kind == NodeTagKind.dense);
-        return _state.dense.frontValueStringId;
-    }
 }
 
-/**
- * Encoding-neutralized PBF metadata state retained for internal diagnostics.
- *
- * The public metadata property projects this state into MetadataView. The raw
- * PBF timestamp value and StringTable user ID stay package-internal so existing
- * decoder benchmarks can preserve their historical checksum semantics.
- */
-package(osm)
-struct NodeInfoState
+private enum NodeBackingKind : ubyte
 {
-    bool hasVersion;
-    int version_ = -1;
-
-    bool hasTimestamp;
-    long timestampValue;
-    long timestampMillis;
-
-    bool hasChangeset;
-    long changeset;
-
-    bool hasUid;
-    int uid;
-
-    bool hasUser;
-    uint userSid;
-    const(ubyte)[] user;
-
-    bool hasVisible;
-    bool visible;
-
-    this(return scope InfoView info) @safe pure nothrow @nogc
-    {
-        copyFrom(info);
-    }
-
-    this(return scope DenseInfoView info) @safe pure nothrow @nogc
-    {
-        copyFrom(info);
-    }
-
-private:
-    void copyFrom(T)(return scope T info) @safe pure nothrow @nogc
-    {
-        hasVersion = info.hasVersion;
-        version_ = info.version_;
-        hasTimestamp = info.hasTimestamp;
-        timestampValue = info.timestampValue;
-        timestampMillis = info.timestampMillis;
-        hasChangeset = info.hasChangeset;
-        changeset = info.changeset;
-        hasUid = info.hasUid;
-        uid = info.uid;
-        hasUser = info.hasUser;
-        userSid = info.userSid;
-        user = info.user;
-        hasVisible = info.hasVisible;
-        visible = info.visible;
-    }
+    scalars,
+    regular,
+    dense,
 }
 
 /**
- * One concrete borrowed PBF node view for regular Node and DenseNodes encoding.
+ * One concrete semantic node view delivered synchronously by PbfReader.
  *
- * Public fields/properties describe OSM semantics. PBF coordinate backing and
- * diagnostic metadata remain package-internal. Tags are zero-copy and retain
- * independent range-copy semantics.
+ * The view is deliberately non-copyable. For regular and dense encoded nodes
+ * it borrows the codec view only for the duration of the callback; this keeps
+ * construction constant-size and prevents a copied NodeView from outliving the
+ * stack object it references. Semantic subviews may be requested normally:
+ * `location` and `metadata` are lightweight values, while `tags` returns
+ * an independent borrowed range copy.
+ *
+ * `NodeView.init` is a structurally valid scalar node with id and exact
+ * coordinates equal to zero, empty metadata, and no tags.
  */
 struct NodeView
 {
-public:
-    /// Signed OSM node identifier.
-    OsmId id;
+private:
+    PbfRegularNodeView* _regular;
+    DenseNodeView* _dense;
+    OsmId _scalarId;
+    long _scalarLatNano;
+    long _scalarLonNano;
+    NodeBackingKind _kind;
+
+    // A copied fat reference could outlive the codec-local object it borrows.
+    @disable this(this);
 
 package(osm):
-    /// Exact latitude in nanodegrees after validated PBF coordinate conversion.
-    long latNano;
-    /// Exact longitude in nanodegrees after validated PBF coordinate conversion.
-    long lonNano;
-
-public:
-    /// Borrowed ordered semantic tags.
-    NodeTagRange tags;
-
-package(osm):
-    /// PBF metadata state retained for diagnostics and semantic projection.
-    NodeInfoState info;
-
-    this(
-        OsmId id,
-        long latNano,
-        long lonNano,
-        return scope TagRange tags,
-        return scope InfoView info)
-        @safe nothrow @nogc
+    /** Construct the scalar-only DenseNodes fast-path view. */
+    this(OsmId id, long latNano, long lonNano)
+        @safe pure nothrow @nogc
     {
-        this.id = id;
-        this.latNano = latNano;
-        this.lonNano = lonNano;
-        this.tags = NodeTagRange(tags);
-        this.info = NodeInfoState(info);
+        _scalarId = id;
+        _scalarLatNano = latNano;
+        _scalarLonNano = lonNano;
+        _kind = NodeBackingKind.scalars;
     }
 
-    this(
-        OsmId id,
-        long latNano,
-        long lonNano,
-        return scope DenseTagRange tags,
-        return scope DenseInfoView info)
-        @safe nothrow @nogc
+    /**
+     * Borrow one regular codec view for the enclosing synchronous callback.
+     *
+     * Safety:
+     *   PbfReader calls the handler before `encoded` leaves scope. NodeView is
+     *   non-copyable and is itself passed as `scope ref`, so the borrowed
+     *   pointer cannot be retained through the public value API.
+     */
+    this(scope ref PbfRegularNodeView encoded)
+        @trusted pure nothrow @nogc
     {
-        this.id = id;
-        this.latNano = latNano;
-        this.lonNano = lonNano;
-        this.tags = NodeTagRange(tags);
-        this.info = NodeInfoState(info);
+        _regular = &encoded;
+        _kind = NodeBackingKind.regular;
+    }
+
+    /**
+     * Borrow one dense codec view for the enclosing synchronous callback.
+     *
+     * Safety:
+     *   PbfReader calls the handler before `encoded` leaves scope. NodeView is
+     *   non-copyable and is itself passed as `scope ref`, so the borrowed
+     *   pointer cannot be retained through the public value API.
+     */
+    this(scope ref DenseNodeView encoded)
+        @trusted pure nothrow @nogc
+    {
+        _dense = &encoded;
+        _kind = NodeBackingKind.dense;
     }
 
 public:
+    /** Signed OSM node identifier. */
+    pragma(inline, true)
+    @property OsmId id() const scope @safe pure nothrow @nogc
+    {
+        final switch (_kind)
+        {
+        case NodeBackingKind.scalars:
+            return _scalarId;
+        case NodeBackingKind.regular:
+            assert(_regular !is null);
+            return _regular.id;
+        case NodeBackingKind.dense:
+            assert(_dense !is null);
+            return _dense.id;
+        }
+    }
+
     /** Semantic location with exact integer backing and lazy degree conversion. */
     pragma(inline, true)
     @property LocationView location() const scope
         @safe pure nothrow @nogc
     {
-        return LocationView(latNano, lonNano);
+        final switch (_kind)
+        {
+        case NodeBackingKind.scalars:
+            return LocationView(_scalarLatNano, _scalarLonNano);
+        case NodeBackingKind.regular:
+            assert(_regular !is null);
+            return _regular.location;
+        case NodeBackingKind.dense:
+            assert(_dense !is null);
+            return _dense.location;
+        }
     }
 
-    /** Format-independent OSM metadata without PBF encoding vocabulary. */
+    /** Format-independent OSM metadata. */
     pragma(inline, true)
     @property MetadataView metadata() const return scope
         @safe pure nothrow @nogc
     {
-        return MetadataView(
-            info.hasVersion, info.version_,
-            info.hasTimestamp, info.timestampMillis,
-            info.hasChangeset, info.changeset,
-            info.hasUid, info.uid,
-            info.hasUser, info.user,
-            info.hasVisible, info.visible);
+        final switch (_kind)
+        {
+        case NodeBackingKind.scalars:
+            return MetadataView.init;
+        case NodeBackingKind.regular:
+            assert(_regular !is null);
+            return _regular.metadata;
+        case NodeBackingKind.dense:
+            assert(_dense !is null);
+            return _dense.metadata;
+        }
+    }
+
+    /**
+     * Return an independent borrowed range over this node's semantic tags.
+     *
+     * The codec range is copied only when the consumer actually requests tags.
+     * No tag cursor or metadata state is copied merely to deliver the node
+     * callback.
+     */
+    pragma(inline, true)
+    @property NodeTagRange tags() const return scope
+        @safe nothrow @nogc
+    {
+        final switch (_kind)
+        {
+        case NodeBackingKind.scalars:
+            return NodeTagRange.init;
+        case NodeBackingKind.regular:
+            assert(_regular !is null);
+            return NodeTagRange(_regular.tags);
+        case NodeBackingKind.dense:
+            assert(_dense !is null);
+            return NodeTagRange(_dense.tags);
+        }
     }
 
     /// Semantic OSM element kind.
@@ -379,11 +326,14 @@ static assert(isElementView!NodeView);
 
 unittest
 {
-    // The shared node deliberately retains both proven tag cursor
-    // representations. On supported 64-bit toolchains it remains smaller than
-    // the former 392-byte regular NodeView while avoiding cursor reconstruction
-    // in either hot path.
-    static if (size_t.sizeof == 8)
-        static assert(NodeView.sizeof <= 368);
-}
+    static assert(!__traits(compiles, (scope ref NodeView value)
+    {
+        NodeView copy = value;
+    }));
 
+    // Three scalar values, two codec pointers, and one discriminator plus
+    // alignment. Keep this callback adapter small enough that its construction
+    // cannot reproduce the former 368-byte per-node copy.
+    static if (size_t.sizeof == 8)
+        static assert(NodeView.sizeof <= 48);
+}
