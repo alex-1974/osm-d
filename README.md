@@ -116,6 +116,14 @@ struct Handler
         // Exact integer coordinates remain available when required:
         long latitudeNanodegrees = location.latitudeNanodegrees;
         long longitudeNanodegrees = location.longitudeNanodegrees;
+
+        auto metadata = node.metadata;
+        if (metadata.hasVersion)
+            int versionNumber = metadata.versionNumber;
+        if (metadata.hasUserId)
+            int userId = metadata.userId;
+        if (metadata.hasUsername)
+            auto username = metadata.username;
     }
 }
 
