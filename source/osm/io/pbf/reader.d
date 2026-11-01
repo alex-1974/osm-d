@@ -27,6 +27,7 @@ import osm.io.pbf.decompress :
     requiredOutputSize;
 import osm.io.pbf.dense_nodes :
     DenseNodeDecodeSummary,
+    DenseNodeView,
     decodeDenseNodes;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.features :
@@ -38,7 +39,7 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
-import osm.io.pbf.node : NodeDecodeSummary, decodeNodes;
+import pbfNode = osm.io.pbf.node;
 import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
     PrimitiveBlockLayout,
@@ -427,8 +428,8 @@ private bool decodeDataBlock(Sink)(
             return false;
         }
 
-        NodeDecodeSummary nodeSummary;
-        if (!decodeNodes(
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
                 block,
                 group,
                 table,
@@ -519,10 +520,32 @@ public:
         }
     }
 
-    void put(scope ref NodeView node) @trusted nothrow @nogc
+    void put(scope ref DenseNodeView encoded) @trusted nothrow @nogc
     {
         static if (__traits(hasMember, Handler, "node"))
+        {
+            NodeView node = NodeView(
+                encoded.id,
+                encoded.latNano,
+                encoded.lonNano,
+                encoded.tags,
+                encoded.info);
             callNode(*handler, node);
+        }
+    }
+
+    void put(scope ref pbfNode.NodeView encoded) @trusted nothrow @nogc
+    {
+        static if (__traits(hasMember, Handler, "node"))
+        {
+            NodeView node = NodeView(
+                encoded.id,
+                encoded.latNano,
+                encoded.lonNano,
+                encoded.tags,
+                encoded.info);
+            callNode(*handler, node);
+        }
     }
 
     void put(scope ref WayView way) @trusted nothrow @nogc
