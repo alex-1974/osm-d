@@ -952,3 +952,8 @@ unittest
     assert(sink.scalarUsed == 2 && sink.viewUsed == 0);
     assert(sink.lastId == 2);
 }
+
+version (unittest)
+{
+    pragma(msg, "LAYOUT source/osm/io/pbf/dense_nodes.d: DenseNodeView.sizeof=", DenseNodeView.sizeof);
+}
