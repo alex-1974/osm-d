@@ -28,7 +28,8 @@ import osm.io.pbf.decompress :
 import osm.io.pbf.dense_nodes :
     DenseNodeDecodeSummary,
     DenseNodeView,
-    decodeDenseNodes;
+    decodeDenseNodes,
+    decodeDenseNodesUntilStop;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.features :
     HeaderFeatureAssessment,
@@ -151,6 +152,97 @@ private:
 }
 
 /**
+ * Foreach adapter over semantic OSM nodes in one already-loaded PBF file.
+ *
+ * This is deliberately a foreach/opApply adapter rather than a Phobos
+ * InputRange. The underlying PBF decoders are synchronous push decoders; using
+ * opApply preserves that execution model and lets D propagate `break`,
+ * enclosing `return`, and outer `goto` through the delegate's exact control
+ * value without materializing elements or introducing a coroutine runtime.
+ *
+ * The adapter validates framing, HeaderBlock capabilities, PrimitiveBlock and
+ * StringTable structure, PrimitiveGroup structure, and every DenseNodes/Node
+ * sequence that it reaches. It intentionally does not semantically decode
+ * Ways or Relations. If iteration stops early, the unvisited file suffix is
+ * not validated.
+ *
+ * Scratch storage is local to each opApply invocation. It may grow through the
+ * garbage collector in the same cases as a fresh PbfReaderWorkspace, but there
+ * is no per-node allocation or owned node materialization.
+ *
+ * After foreach finishes, inspect `status`. A successful natural traversal
+ * has `status.ok == true` and `completed == true`. A user `break` has
+ * `status.ok == true` and `completed == false`. A decode failure has
+ * `status.ok == false` and `completed == false`.
+ *
+ * `PbfNodeIterable.init` represents an empty input. Iterating it produces no
+ * nodes and records `PbfReadError.missingHeader`.
+ */
+struct PbfNodeIterable
+{
+private:
+    const(ubyte)[] input;
+    PbfReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(return scope const(ubyte)[] value)
+        @safe pure nothrow @nogc
+    {
+        input = value;
+    }
+
+public:
+    /** Status from the most recent foreach traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    /** True only when the most recent traversal reached the end of the file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    /**
+     * Iterate semantic nodes synchronously.
+     *
+     * The delegate return value is forwarded unchanged. D uses that non-zero
+     * value to implement foreach `break`, enclosing `return`, and outer
+     * `goto`; returning any invented non-zero value would violate opApply
+     * semantics.
+     */
+    int opApply(scope int delegate(scope ref NodeView) dg)
+        @safe
+    {
+        _status = PbfReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+
+        if (!iterateNodes(
+                input,
+                workspace,
+                dg,
+                control,
+                _status))
+        {
+            return 0;
+        }
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
@@ -165,6 +257,18 @@ private:
  */
 struct PbfReader
 {
+    /**
+     * Return a foreach adapter over semantic nodes in `input`.
+     *
+     * The returned adapter owns no input bytes and materializes no OSM
+     * elements. See PbfNodeIterable for completion and validation semantics.
+     */
+    PbfNodeIterable nodes(return scope const(ubyte)[] input)
+        @safe pure nothrow @nogc
+    {
+        return PbfNodeIterable(input);
+    }
+
     /**
      * Decode one complete already-loaded .osm.pbf byte sequence.
      *
@@ -346,6 +450,328 @@ struct PbfReader
 
         return true;
     }
+}
+
+private bool iterateNodes(Dg)(
+    const(ubyte)[] input,
+    ref PbfReaderWorkspace workspace,
+    scope ref Dg dg,
+    out int control,
+    out PbfReadStatus status)
+    @safe
+{
+    control = 0;
+    status = PbfReadStatus.init;
+
+    auto cursor = WireCursor(input);
+    NodeForeachSink!Dg sink = NodeForeachSink!Dg(dg);
+    bool sawHeader;
+    bool sawData;
+    ulong sequence;
+
+    while (true)
+    {
+        const blockOffset = cursor.offset;
+        FileBlockView fileBlock;
+        PbfStatus pbfStatus;
+        const frameResult =
+            readFileBlock(cursor, sequence, fileBlock, pbfStatus);
+
+        final switch (frameResult)
+        {
+            case FrameReadResult.endOfInput:
+                break;
+
+            case FrameReadResult.error:
+                status = fromPbfFailure(
+                    sequence,
+                    blockOffset,
+                    pbfStatus);
+                return false;
+
+            case FrameReadResult.block:
+                BlobView blob;
+                if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                const outputSize = requiredOutputSize(blob);
+                if (workspace.decompressionBuffer.length < outputSize)
+                    workspace.decompressionBuffer.length = outputSize;
+
+                BlobPayloadView payload;
+                if (!decodeBlobPayloadInto(
+                        blob,
+                        workspace.decompressionBuffer,
+                        payload,
+                        pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                final switch (fileBlock.header.kind)
+                {
+                    case BlobKind.osmHeader:
+                        if (sawHeader || sawData)
+                        {
+                            status = readerFailure(
+                                PbfReadError.duplicateHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        HeaderBlockView header;
+                        if (!decodeHeaderBlock(
+                                payload.bytes,
+                                header,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        HeaderFeatureAssessment assessment;
+                        if (!validateRequiredFeatures(
+                                header,
+                                HeaderFeatureSupport.allKnown(),
+                                assessment,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        sawHeader = true;
+                        break;
+
+                    case BlobKind.osmData:
+                        if (!sawHeader)
+                        {
+                            status = readerFailure(
+                                PbfReadError.dataBeforeHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        sawData = true;
+                        if (!decodeNodeDataBlock(
+                                payload.bytes,
+                                workspace,
+                                sink,
+                                control,
+                                sequence,
+                                fileBlock.offset,
+                                status))
+                        {
+                            return false;
+                        }
+
+                        if (control != 0)
+                            return true;
+                        break;
+
+                    case BlobKind.unknown:
+                        status = readerFailure(
+                            PbfReadError.unsupportedBlockType,
+                            sequence,
+                            fileBlock.offset);
+                        return false;
+                }
+
+                ++sequence;
+                continue;
+        }
+
+        break;
+    }
+
+    if (!sawHeader)
+    {
+        status = readerFailure(
+            PbfReadError.missingHeader,
+            sequence,
+            input.length);
+        return false;
+    }
+
+    status = PbfReadStatus.init;
+    return true;
+}
+
+private bool decodeNodeDataBlock(Sink)(
+    const(ubyte)[] payloadBytes,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref int control,
+    ulong sequence,
+    size_t fileBlockOffset,
+    out PbfReadStatus readStatus)
+    @safe
+{
+    PbfStatus status;
+
+    PrimitiveBlockLayout block;
+    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    if (workspace.stringRefs.length < block.stringCount)
+        workspace.stringRefs.length = block.stringCount;
+
+    StringTableView table;
+    if (!buildStringTableView(
+            block,
+            workspace.stringRefs[0 .. block.stringCount],
+            table,
+            status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    auto groups = block.primitiveGroups;
+    while (!groups.empty)
+    {
+        const groupRef = groups.front;
+        groups.popFront();
+
+        PrimitiveGroupLayout group;
+        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (group.changeSetOccurrences != 0)
+        {
+            readStatus = readerFailure(
+                PbfReadError.unsupportedChangeSet,
+                sequence,
+                fileBlockOffset);
+            return false;
+        }
+
+        DenseNodeDecodeSummary denseSummary;
+        if (!decodeDenseNodesUntilStop(
+                block,
+                group,
+                table,
+                sink,
+                control,
+                denseSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodesUntilStop(
+                block,
+                group,
+                table,
+                sink,
+                control,
+                nodeSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+    }
+
+    readStatus = PbfReadStatus.init;
+    return true;
+}
+
+private struct NodeForeachSink(Dg)
+{
+private:
+    Dg* dg;
+
+public:
+    this(scope ref Dg value) @trusted nothrow @nogc
+    {
+        dg = &value;
+    }
+
+    int putDenseNodeScalars(long id, long latNano, long lonNano)
+        @trusted
+    {
+        assert(dg !is null);
+        NodeView node = NodeView(id, latNano, lonNano);
+        return callNodeIteration(*dg, node);
+    }
+
+    int put(scope ref DenseNodeView encoded)
+        @trusted
+    {
+        assert(dg !is null);
+        NodeView node = NodeView(encoded);
+        return callNodeIteration(*dg, node);
+    }
+
+    int put(scope ref pbfNode.NodeView encoded)
+        @trusted
+    {
+        assert(dg !is null);
+        NodeView node = NodeView(encoded);
+        return callNodeIteration(*dg, node);
+    }
+}
+
+private int callNodeIteration(Dg)(
+    scope ref Dg dg,
+    scope ref NodeView node)
+    @safe
+{
+    return dg(node);
 }
 
 private bool decodeDataBlock(Sink)(
