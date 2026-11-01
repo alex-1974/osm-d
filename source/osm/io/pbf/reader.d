@@ -84,66 +84,25 @@ enum PbfReadError : ubyte
     unsupportedChangeSet,
 }
 
-/** Processing stage associated with a PbfReadStatus diagnostic. */
-enum PbfReadStage : ubyte
-{
-    /// No stage is associated with a successful status.
-    none,
-    /// File-level ordering or block-kind validation.
-    file,
-    /// File-block framing and BlobHeader decoding.
-    framing,
-    /// Blob protobuf validation.
-    blob,
-    /// Blob decompression/materialization.
-    payload,
-    /// HeaderBlock decoding.
-    header,
-    /// Required-feature compatibility validation.
-    features,
-    /// PrimitiveBlock decoding.
-    primitiveBlock,
-    /// StringTable indexing.
-    stringTable,
-    /// PrimitiveGroup decoding or file-level group policy.
-    primitiveGroup,
-    /// DenseNodes semantic decoding.
-    denseNodes,
-    /// Regular Node semantic decoding.
-    node,
-    /// Regular Way semantic decoding.
-    way,
-    /// Regular Relation semantic decoding.
-    relation,
-}
-
 /**
  * Diagnostic for one complete-file PBF read.
  *
- * error is the stable high-level category. detail preserves the lower-level
- * PbfError when the failure came from an existing PBF decoder. blockSequence
- * and blockOffset identify the enclosing file block when available.
- * detailOffset is relative to the input of stage; for framing failures it is
- * an offset in the complete file buffer.
+ * `error` is the stable high-level category. `blockSequence` and
+ * `blockOffset` identify the enclosing file block when one was being
+ * processed. Detailed protobuf/PBF decoder diagnostics deliberately remain
+ * below this consumer boundary and are available from the direct low-level
+ * PBF APIs.
  *
- * PbfReadStatus.init is the successful status.
+ * `PbfReadStatus.init` is the successful status.
  */
 struct PbfReadStatus
 {
-    /// High-level failure category; PbfReadError.none denotes success.
+    /// High-level failure category; `PbfReadError.none` denotes success.
     PbfReadError error = PbfReadError.none;
-    /// Reader stage that detected the failure.
-    PbfReadStage stage = PbfReadStage.none;
     /// Zero-based file-block sequence being processed.
     ulong blockSequence;
     /// Offset of the enclosing file block in the complete input buffer.
     size_t blockOffset;
-    /// Lower-level PBF error, or PbfError.none for reader-level failures.
-    PbfError detail = PbfError.none;
-    /// Offset reported by the lower-level decoder for its stage input.
-    size_t detailOffset;
-    /// Protobuf field number reported by the lower-level decoder, if any.
-    uint detailFieldNumber;
 
     /** Returns true when no read error has occurred. */
     @property bool ok() const @safe pure nothrow @nogc
@@ -259,7 +218,6 @@ struct PbfReader
 
                 case FrameReadResult.error:
                     status = fromPbfFailure(
-                        PbfReadStage.framing,
                         sequence,
                         blockOffset,
                         pbfStatus);
@@ -270,7 +228,6 @@ struct PbfReader
                     if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
                     {
                         status = fromPbfFailure(
-                            PbfReadStage.blob,
                             sequence,
                             fileBlock.offset,
                             pbfStatus);
@@ -289,7 +246,6 @@ struct PbfReader
                             pbfStatus))
                     {
                         status = fromPbfFailure(
-                            PbfReadStage.payload,
                             sequence,
                             fileBlock.offset,
                             pbfStatus);
@@ -303,7 +259,6 @@ struct PbfReader
                             {
                                 status = readerFailure(
                                     PbfReadError.duplicateHeader,
-                                    PbfReadStage.file,
                                     sequence,
                                     fileBlock.offset);
                                 return false;
@@ -316,7 +271,6 @@ struct PbfReader
                                     pbfStatus))
                             {
                                 status = fromPbfFailure(
-                                    PbfReadStage.header,
                                     sequence,
                                     fileBlock.offset,
                                     pbfStatus);
@@ -331,7 +285,6 @@ struct PbfReader
                                     pbfStatus))
                             {
                                 status = fromPbfFailure(
-                                    PbfReadStage.features,
                                     sequence,
                                     fileBlock.offset,
                                     pbfStatus);
@@ -347,7 +300,6 @@ struct PbfReader
                             {
                                 status = readerFailure(
                                     PbfReadError.dataBeforeHeader,
-                                    PbfReadStage.file,
                                     sequence,
                                     fileBlock.offset);
                                 return false;
@@ -370,7 +322,6 @@ struct PbfReader
                         case BlobKind.unknown:
                             status = readerFailure(
                                 PbfReadError.unsupportedBlockType,
-                                PbfReadStage.file,
                                 sequence,
                                 fileBlock.offset);
                             return false;
@@ -387,7 +338,6 @@ struct PbfReader
         {
             status = readerFailure(
                 PbfReadError.missingHeader,
-                PbfReadStage.file,
                 sequence,
                 input.length);
             return false;
@@ -413,7 +363,6 @@ private bool decodeDataBlock(Sink)(
     if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
     {
         readStatus = fromPbfFailure(
-            PbfReadStage.primitiveBlock,
             sequence,
             fileBlockOffset,
             status);
@@ -431,7 +380,6 @@ private bool decodeDataBlock(Sink)(
             status))
     {
         readStatus = fromPbfFailure(
-            PbfReadStage.stringTable,
             sequence,
             fileBlockOffset,
             status);
@@ -448,7 +396,6 @@ private bool decodeDataBlock(Sink)(
         if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
         {
             readStatus = fromPbfFailure(
-                PbfReadStage.primitiveGroup,
                 sequence,
                 fileBlockOffset,
                 status);
@@ -459,7 +406,6 @@ private bool decodeDataBlock(Sink)(
         {
             readStatus = readerFailure(
                 PbfReadError.unsupportedChangeSet,
-                PbfReadStage.primitiveGroup,
                 sequence,
                 fileBlockOffset);
             return false;
@@ -475,7 +421,6 @@ private bool decodeDataBlock(Sink)(
                 status))
         {
             readStatus = fromPbfFailure(
-                PbfReadStage.denseNodes,
                 sequence,
                 fileBlockOffset,
                 status);
@@ -492,7 +437,6 @@ private bool decodeDataBlock(Sink)(
                 status))
         {
             readStatus = fromPbfFailure(
-                PbfReadStage.node,
                 sequence,
                 fileBlockOffset,
                 status);
@@ -513,7 +457,6 @@ private bool decodeDataBlock(Sink)(
                 status))
         {
             readStatus = fromPbfFailure(
-                PbfReadStage.way,
                 sequence,
                 fileBlockOffset,
                 status);
@@ -530,7 +473,6 @@ private bool decodeDataBlock(Sink)(
                 status))
         {
             readStatus = fromPbfFailure(
-                PbfReadStage.relation,
                 sequence,
                 fileBlockOffset,
                 status);
@@ -628,21 +570,18 @@ private void callRelation(Handler)(
 
 private PbfReadStatus readerFailure(
     PbfReadError error,
-    PbfReadStage stage,
     ulong sequence,
     size_t blockOffset)
     @safe pure nothrow @nogc
 {
     PbfReadStatus result;
     result.error = error;
-    result.stage = stage;
     result.blockSequence = sequence;
     result.blockOffset = blockOffset;
     return result;
 }
 
 private PbfReadStatus fromPbfFailure(
-    PbfReadStage stage,
     ulong sequence,
     size_t blockOffset,
     PbfStatus detail)
@@ -650,12 +589,8 @@ private PbfReadStatus fromPbfFailure(
 {
     PbfReadStatus result;
     result.error = classifyPbfError(detail.error);
-    result.stage = stage;
     result.blockSequence = sequence;
     result.blockOffset = blockOffset;
-    result.detail = detail.error;
-    result.detailOffset = detail.offset;
-    result.detailFieldNumber = detail.fieldNumber;
     return result;
 }
 
