@@ -14,6 +14,7 @@
  */
 module osm.io.pbf.dense_tags;
 
+import osm.view.tag : TagView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.primitive_group : PrimitiveGroupLayout;
 import osm.io.pbf.string_table : StringTableView;
@@ -27,19 +28,6 @@ import osm.wire.field :
     readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint : readVarint64;
-
-/** One ordered borrowed DenseNodes tag. */
-struct DenseTagView
-{
-    /// Validated non-zero StringTable ID of the tag key.
-    uint keySid;
-    /// Validated non-zero StringTable ID of the tag value.
-    uint valueSid;
-    /// Borrowed raw key bytes from the PrimitiveBlock StringTable.
-    const(ubyte)[] key;
-    /// Borrowed raw value bytes from the PrimitiveBlock StringTable.
-    const(ubyte)[] value;
-}
 
 /** Summary produced by a complete DenseNodes tag preflight. */
 struct DenseTagValidationSummary
@@ -74,7 +62,9 @@ struct DenseTagRange
 private:
     KeysValsCursor _stream;
     StringTableView _table;
-    DenseTagView _front;
+    TagView _front;
+    uint _frontKeySid;
+    uint _frontValueSid;
     size_t _remaining;
 
 public:
@@ -94,12 +84,30 @@ public:
 
     /** Return the current validated tag. The range must be non-empty. */
     pragma(inline, true)
-    @property DenseTagView front() const return scope @safe nothrow @nogc
+    @property TagView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
     }
 
+package(osm):
+    /** Current PBF StringTable ID of the key, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontKeyStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontKeySid;
+    }
+
+    /** Current PBF StringTable ID of the value, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontValueStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontValueSid;
+    }
+
+public:
     /** Advance to the next validated tag in this node. */
     pragma(inline, true)
     void popFront() scope @safe nothrow @nogc
@@ -108,7 +116,9 @@ public:
         --_remaining;
         if (_remaining == 0)
         {
-            _front = DenseTagView.init;
+            _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
             return;
         }
 
@@ -120,7 +130,9 @@ public:
             // therefore indicates an internal invariant failure rather than
             // hostile input.
             _remaining = 0;
-            _front = DenseTagView.init;
+            _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
         }
     }
 
@@ -174,9 +186,9 @@ private:
             return false;
         }
 
-        _front = DenseTagView(
-            decoded.keySid,
-            decoded.valueSid,
+        _frontKeySid = decoded.keySid;
+        _frontValueSid = decoded.valueSid;
+        _front = TagView(
             _table.rawBlock[keyStart .. keyFinish],
             _table.rawBlock[valueStart .. valueFinish]);
         status = PbfStatus.init;
@@ -747,8 +759,8 @@ unittest
     DenseTagRange tags;
     assert(cursor.nextNode(tags, status));
     assert(tags.length == 1);
-    DenseTagView tag = tags.front;
-    assert(tag.keySid == 1 && tag.valueSid == 2);
+    TagView tag = tags.front;
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     const(ubyte)[] name = ['n', 'a', 'm', 'e'];
     const(ubyte)[] x = ['x'];
     assert(tag.key == name);
