@@ -1,362 +1,52 @@
 /**
- * Whole-buffer OSMPBF decode-count benchmark for the production osm-d decoder.
+ * Whole-buffer OSMPBF decode-count benchmark for the production PbfReader.
  *
- * The input file is loaded before the measured/parser region by the eventual
- * benchmark harness. This executable currently establishes semantic parity:
+ * The input file is loaded before the measured parser region. The benchmark
+ * exercises the same consumer-facing whole-file orchestration shipped by
+ * osm-d and observes only semantic counts; no owned OSM model is materialized.
  *
- *   compressed PBF bytes
- *   -> framing
- *   -> Blob validation/decompression
- *   -> HeaderBlock + required-feature validation
- *   -> PrimitiveBlock/StringTable
- *   -> PrimitiveGroup structural validation
- *   -> complete Node/Way/Relation semantic preflight + emission
- *   -> node/way/relation/tag counts
- *
- * No owned OSM model is materialized.
+ * Authors: Alexander Bernardi
+ * Date: 2026-09-22
+ * Copyright: Copyright © 2026 Alexander Bernardi
+ * License: MIT
  */
 module osm.benchmark.parser.decode_count;
 
-import osm.io.pbf.blob :
-    BlobView,
-    decodeBlob;
-import osm.io.pbf.blob_header :
-    BlobKind;
-import osm.io.pbf.decompress :
-    BlobPayloadView,
-    decodeBlobPayloadInto,
-    requiredOutputSize;
-import osm.io.pbf.dense_nodes :
-    DenseNodeDecodeSummary,
-    DenseNodeView,
-    decodeDenseNodes;
-import osm.io.pbf.error :
-    PbfStatus;
-import osm.io.pbf.features :
-    HeaderFeatureAssessment,
-    HeaderFeatureSupport,
-    validateRequiredFeatures;
-import osm.io.pbf.framing :
-    FileBlockView,
-    FrameReadResult,
-    readFileBlock;
-import osm.io.pbf.header_block :
-    HeaderBlockView,
-    decodeHeaderBlock;
-import osm.io.pbf.node :
-    NodeDecodeSummary,
-    NodeView,
-    decodeNodes;
-import osm.io.pbf.primitive_block :
-    PrimitiveBlockLayout,
-    decodePrimitiveBlockLayout;
-import osm.io.pbf.primitive_group :
-    PrimitiveGroupLayout,
-    decodePrimitiveGroupLayout;
-import osm.io.pbf.relation :
-    RelationDecodeSummary,
-    RelationView,
-    decodeRelations;
-import osm.io.pbf.string_table :
-    StringRef,
-    StringTableView,
-    buildStringTableView;
-import osm.io.pbf.way :
-    WayDecodePlan,
-    WayDecodeSummary,
-    WayView,
-    decodeWaysWithWorkspace;
-import osm.wire.cursor :
-    WireCursor;
+import osm :
+    PbfReadStatus,
+    PbfReadSummary,
+    PbfReader,
+    PbfReaderWorkspace;
 
 import std.datetime.stopwatch : AutoStart, StopWatch;
 import std.file : read;
 import std.stdio : stderr, writefln;
 
-private struct Counts
+private struct NullHandler
 {
-    ulong nodes;
-    ulong ways;
-    ulong relations;
-    ulong tags;
-    ulong headerBlocks;
-    ulong dataBlocks;
-    ulong primitiveGroups;
-}
-
-private struct Scratch
-{
-    ubyte[] decompressionBuffer;
-    StringRef[] stringRefs;
-    WayDecodePlan[] wayPlans;
-}
-
-private struct NullSink
-{
-    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc
-    {
-    }
-
-    void put(DenseNodeView) @safe nothrow @nogc
-    {
-    }
-
-    void put(NodeView) @safe nothrow @nogc
-    {
-    }
-
-    void put(WayView) @safe nothrow @nogc
-    {
-    }
-
-    void put(RelationView) @safe nothrow @nogc
-    {
-    }
-}
-
-private bool reportFailure(string stage, PbfStatus status)
-{
-    stderr.writefln(
-        "%s failed: error=%s offset=%s field=%s",
-        stage,
-        status.error,
-        status.offset,
-        status.fieldNumber);
-    return false;
-}
-
-private bool decodeDataBlock(
-    const(ubyte)[] payloadBytes,
-    ref Scratch scratch,
-    ref Counts counts)
-{
-    PbfStatus status;
-
-    PrimitiveBlockLayout block;
-    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
-        return reportFailure("PrimitiveBlock", status);
-
-    if (scratch.stringRefs.length < block.stringCount)
-        scratch.stringRefs.length = block.stringCount;
-
-    StringTableView table;
-    if (!buildStringTableView(
-        block,
-        scratch.stringRefs[0 .. block.stringCount],
-        table,
-        status))
-    {
-        return reportFailure("StringTable", status);
-    }
-
-    auto groups = block.primitiveGroups;
-    while (!groups.empty)
-    {
-        const groupRef = groups.front;
-        groups.popFront();
-
-        PrimitiveGroupLayout group;
-        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
-            return reportFailure("PrimitiveGroup", status);
-
-        if (group.changeSetOccurrences != 0)
-        {
-            stderr.writefln(
-                "PrimitiveGroup contains unsupported ChangeSet occurrences: %s",
-                group.changeSetOccurrences);
-            return false;
-        }
-
-        NullSink sink;
-
-        DenseNodeDecodeSummary denseSummary;
-        if (!decodeDenseNodes(
-            block,
-            group,
-            table,
-            sink,
-            denseSummary,
-            status))
-        {
-            return reportFailure("DenseNodes", status);
-        }
-
-        NodeDecodeSummary nodeSummary;
-        if (!decodeNodes(
-            block,
-            group,
-            table,
-            sink,
-            nodeSummary,
-            status))
-        {
-            return reportFailure("Node", status);
-        }
-
-        if (scratch.wayPlans.length < group.wayOccurrences)
-            scratch.wayPlans.length = group.wayOccurrences;
-
-        WayDecodeSummary waySummary;
-        if (!decodeWaysWithWorkspace(
-            block,
-            group,
-            table,
-            scratch.wayPlans[0 .. group.wayOccurrences],
-            sink,
-            waySummary,
-            status))
-        {
-            return reportFailure("Way", status);
-        }
-
-        RelationDecodeSummary relationSummary;
-        if (!decodeRelations(
-            block,
-            group,
-            table,
-            sink,
-            relationSummary,
-            status))
-        {
-            return reportFailure("Relation", status);
-        }
-
-        counts.nodes += denseSummary.nodeCount;
-        counts.nodes += nodeSummary.nodeCount;
-        counts.ways += waySummary.wayCount;
-        counts.relations += relationSummary.relationCount;
-
-        counts.tags += denseSummary.tagCount;
-        counts.tags += nodeSummary.tagCount;
-        counts.tags += waySummary.tagCount;
-        counts.tags += relationSummary.tagCount;
-
-        ++counts.primitiveGroups;
-    }
-
-    ++counts.dataBlocks;
-    return true;
 }
 
 private bool decodeBuffer(
     const(ubyte)[] input,
-    ref Scratch scratch,
-    out Counts counts)
+    ref PbfReaderWorkspace workspace,
+    out PbfReadSummary summary)
 {
-    counts = Counts.init;
+    PbfReader reader;
+    NullHandler handler;
+    PbfReadStatus status;
 
-    auto cursor = WireCursor(input);
-    bool sawHeader;
-    bool sawData;
-    ulong sequence;
+    if (reader.read(input, workspace, handler, summary, status))
+        return true;
 
-    while (true)
-    {
-        FileBlockView fileBlock;
-        PbfStatus status;
-
-        const frameResult =
-            readFileBlock(cursor, sequence, fileBlock, status);
-
-        final switch (frameResult)
-        {
-            case FrameReadResult.endOfInput:
-                break;
-
-            case FrameReadResult.error:
-                return reportFailure("framing", status);
-
-            case FrameReadResult.block:
-                BlobView blob;
-                if (!decodeBlob(fileBlock.blob, blob, status))
-                    return reportFailure("Blob", status);
-
-                const outputSize = requiredOutputSize(blob);
-                if (scratch.decompressionBuffer.length < outputSize)
-                    scratch.decompressionBuffer.length = outputSize;
-
-                BlobPayloadView payload;
-                if (!decodeBlobPayloadInto(
-                    blob,
-                    scratch.decompressionBuffer,
-                    payload,
-                    status))
-                {
-                    return reportFailure("Blob payload", status);
-                }
-
-                final switch (fileBlock.header.kind)
-                {
-                    case BlobKind.osmHeader:
-                        if (sawHeader || sawData)
-                        {
-                            stderr.writefln(
-                                "invalid file-level block order: OSMHeader at sequence %s",
-                                sequence);
-                            return false;
-                        }
-
-                        HeaderBlockView header;
-                        if (!decodeHeaderBlock(payload.bytes, header, status))
-                            return reportFailure("HeaderBlock", status);
-
-                        HeaderFeatureAssessment assessment;
-                        if (!validateRequiredFeatures(
-                            header,
-                            HeaderFeatureSupport.allKnown(),
-                            assessment,
-                            status))
-                        {
-                            return reportFailure("HeaderBlock features", status);
-                        }
-
-                        sawHeader = true;
-                        ++counts.headerBlocks;
-                        break;
-
-                    case BlobKind.osmData:
-                        if (!sawHeader)
-                        {
-                            stderr.writefln(
-                                "OSMData encountered before OSMHeader at sequence %s",
-                                sequence);
-                            return false;
-                        }
-
-                        sawData = true;
-                        if (!decodeDataBlock(
-                            payload.bytes,
-                            scratch,
-                            counts))
-                        {
-                            return false;
-                        }
-                        break;
-
-                    case BlobKind.unknown:
-                        stderr.writefln(
-                            "unsupported file block type at sequence %s",
-                            sequence);
-                        return false;
-                }
-
-                ++sequence;
-                continue;
-        }
-
-        break;
-    }
-
-    if (!sawHeader)
-    {
-        stderr.writeln("missing OSMHeader block");
-        return false;
-    }
-
-    return true;
+    stderr.writefln(
+        "PBF read failed: error=%s block=%s block_offset=%s",
+        status.error,
+        status.blockSequence,
+        status.blockOffset);
+    return false;
 }
 
-private void printCounts(size_t byteCount, ref const Counts counts)
+private void printCounts(size_t byteCount, ref const PbfReadSummary counts)
 {
     writefln("bytes=%s", byteCount);
     writefln("header_blocks=%s", counts.headerBlocks);
@@ -391,26 +81,25 @@ int main(string[] args)
     auto storage = cast(ubyte[])read(filename);
     const input = cast(const(ubyte)[])storage;
 
-    Scratch scratch;
-    Counts counts;
+    PbfReaderWorkspace workspace;
+    PbfReadSummary counts;
 
     if (!measure)
     {
-        if (!decodeBuffer(input, scratch, counts))
+        if (!decodeBuffer(input, workspace, counts))
             return 1;
 
         printCounts(storage.length, counts);
         return 0;
     }
 
-    // Untimed warm-up primes reusable decompression/StringTable/Way-plan
-    // scratch storage before the measured decode.
-    Counts warmCounts;
-    if (!decodeBuffer(input, scratch, warmCounts))
+    // Untimed warm-up primes reusable reader workspace before measurement.
+    PbfReadSummary warmCounts;
+    if (!decodeBuffer(input, workspace, warmCounts))
         return 1;
 
     StopWatch stopwatch = StopWatch(AutoStart.yes);
-    if (!decodeBuffer(input, scratch, counts))
+    if (!decodeBuffer(input, workspace, counts))
         return 1;
     stopwatch.stop();
 

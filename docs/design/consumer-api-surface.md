@@ -323,9 +323,9 @@ The primary hot-path API should use statically dispatched semantic callbacks:
 ~~~d
 struct Handler
 {
-    void node(scope ref const NodeView node) @safe nothrow @nogc;
-    void way(scope ref const WayView way) @safe nothrow @nogc;
-    void relation(scope ref const RelationView relation) @safe nothrow @nogc;
+    void node(scope ref NodeView node) @safe nothrow @nogc;
+    void way(scope ref WayView way) @safe nothrow @nogc;
+    void relation(scope ref RelationView relation) @safe nothrow @nogc;
 }
 
 PbfReader reader = ...;
@@ -351,6 +351,14 @@ not define the performance-critical core API. The core must not force:
 
 Borrowed views remain callback-scoped unless a later ownership API explicitly
 provides durable values.
+
+Implementation note (2026-11-01): the first production PbfReader slice keeps
+callbacks mutable `scope ref` because current borrowed tag/member/location
+ranges advance internal cursor state while being consumed. Until regular and
+DenseNodes-backed nodes share one concrete public `NodeView`, a consumer can
+use one templated `node(T)(scope ref T node)` callback to accept both current
+representations without naming the PBF encoding at the call site. This is a
+transition detail, not a reversal of the target semantic unification.
 
 ## Internal-only candidates
 

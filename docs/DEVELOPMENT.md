@@ -22,6 +22,7 @@ The canonical local correctness checks are:
 dub test --compiler=dmd --force
 dub test --compiler=ldc2 --force
 dub build --compiler=ldc2 --build=release --force
+bash tests/run-consumer-compile.sh
 tests/run-dip1000-negative.sh
 ```
 
@@ -29,7 +30,8 @@ GitHub Actions separates checks by branch trust level.
 
 For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
 supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
-DIP1000 lifetime-negative checks, and a release build.
+an external-consumer compile probe through the curated package root, DIP1000
+lifetime-negative checks, and a release build.
 
 For pull requests targeting `main`, pushes to `main`, and release/hotfix
 branches, the Release Gate reruns the supported compiler matrix and additionally
@@ -44,15 +46,20 @@ module part of a compatibility promise.
 
 The current pre-1.0 surface is classified as follows:
 
-- `osm` is the curated package root. It intentionally does not re-export the
-  evolving implementation surface yet.
+- `osm` is the curated package root. It now re-exports the consumer-facing
+  whole-buffer PBF reader boundary: `PbfReader`, `PbfReaderWorkspace`,
+  `PbfReadSummary`, `PbfReadStatus`, and `PbfReadError`.
+  It does not re-export the evolving low-level PBF or wire implementation
+  surface.
 - `osm.view.element` is a supported semantic direct-import API. Its
   `ElementType`, `OsmId`, and structural `isElementView` contract form the
   format-independent borrowed element identity boundary described by ADR 0016.
-- `osm.io.pbf.*` is an evolving codec-development surface. Its documented
-  decoding APIs may be used directly during pre-1.0 development, but their
-  module organization and callable signatures are not frozen until the public
-  PBF reader/range boundary is established.
+- `osm.io.pbf.reader` is the supported direct-import module for the same
+  consumer-facing PBF reader boundary exported by `osm`.
+- Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
+  Their documented decoding APIs may be used directly during pre-1.0
+  development, but their module organization and callable signatures are not
+  part of the high-level reader compatibility promise.
 - `osm.wire.*` and `osm.util.*` are implementation-oriented modules. They are
   technically importable because D source modules are visible to consumers, but
   no source-compatibility promise is made for direct external use.

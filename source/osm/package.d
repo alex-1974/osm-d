@@ -11,3 +11,10 @@
  * License: MIT
  */
 module osm;
+
+public import osm.io.pbf.reader :
+    PbfReadError,
+    PbfReadStatus,
+    PbfReadSummary,
+    PbfReaderWorkspace,
+    PbfReader;
