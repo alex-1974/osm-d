@@ -302,10 +302,10 @@ private ulong mix(ulong state, ulong value) @safe pure nothrow @nogc
 }
 
 pragma(inline, true)
-private void consumeInfo(
+private void consumeInfo(T)(
     ref ulong checksum,
     ref size_t infoCount,
-    scope ref InfoView info)
+    scope ref T info)
     @safe nothrow @nogc
 {
     const present = info.hasVersion || info.hasTimestamp || info.hasChangeset ||
@@ -1556,9 +1556,7 @@ version (RegularNodeStageBenchmark)
             latNano,
             lonNano,
             tags,
-            info,
-            nodeRef.bytes,
-            nodeRef.rawOffset);
+            info);
         status = PbfStatus.init;
         return true;
     }
