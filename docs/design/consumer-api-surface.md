@@ -72,30 +72,42 @@ Target vocabulary:
 struct MetadataView
 {
     bool hasVersion;
-    int version;
+    int versionNumber;
 
     bool hasTimestamp;
-    long timestampMillis;
+    long timestampMilliseconds;
 
     bool hasChangeset;
-    OsmId changeset;
+    long changesetId;
 
-    bool hasUser;
+    bool hasUserId;
     int userId;
-    // Borrowed username representation; exact character type remains
-    // subject to UTF-8/lifetime validation.
-    ...
+
+    bool hasUsername;
+    const(ubyte)[] username;
 
     bool hasVisibility;
     bool visible;
 }
 ~~~
 
+Changeset identifiers are not `OsmId` values because they do not identify a
+node, way, or relation. Numeric user ID and username are independently optional
+in the source schema and therefore retain independent presence flags. `version`
+is a D keyword, so the semantic property is `versionNumber`.
+
 Internal decoding may continue to use separate regular and dense structures,
 delta accumulators, raw timestamp values, and StringTable IDs.
 
 Those details should be converted into `MetadataView` before crossing the
 consumer boundary.
+
+Implementation note (2026-11-01): the first metadata slice now exposes
+`metadata` from regular Node, DenseNodes-backed Node, Way, and Relation views.
+It constructs a compact semantic value only when requested. Existing codec
+`info` fields remain available during the pre-1.0 transition; the semantic
+view does not expose raw PBF timestamp values or StringTable IDs, and username
+bytes retain their borrowed representation without inventing a UTF-8 policy.
 
 ### Locations
 

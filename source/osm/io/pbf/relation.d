@@ -21,6 +21,7 @@
 module osm.io.pbf.relation;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.metadata : MetadataView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -173,6 +174,20 @@ struct RelationView
     RelationMemberRange members;
     /// Optional merged Info metadata.
     InfoView info;
+
+    /** Format-independent OSM metadata without PBF encoding vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const return scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
 
     /// Complete original serialized Relation payload, excluding group key/length.
     const(ubyte)[] raw;
