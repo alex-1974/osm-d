@@ -266,8 +266,3 @@ unittest
     assert(!metadata.hasUsername);
     assert(!metadata.hasVisibility);
 }
-
-version (unittest)
-{
-    pragma(msg, "LAYOUT source/osm/view/metadata.d: MetadataView.sizeof=", MetadataView.sizeof);
-}
