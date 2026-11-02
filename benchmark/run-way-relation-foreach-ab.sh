@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${OSM_D_ROOT:-$HOME/Programmiersprachen/dlang/d-geospatial-workspace/libs/osm-d}"
 BRANCH="feat/pbf-way-relation-foreach"
-CAND="bc37345630a08807ca3506ac9b25db7858f35a2f"
+CAND="fa596f88b4b3caf7692a0b9a4dc933198d6744a3"
 DATASET_ID="${D_OSM_BENCH_DATASET:-bremen-260901}"
 CPU="${D_OSM_BENCH_CPU:-5}"
 BLOCKS="${D_OSM_BENCH_BLOCKS:-5}"
