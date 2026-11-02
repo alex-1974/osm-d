@@ -2204,14 +2204,14 @@ unittest
     assert(count == 1);
     assert(idSum == 7);
 
-    ubyte[] suffixGroup;
-    appendLengthDelimited(suffixGroup, 3, way);
-    appendLengthDelimited(suffixGroup, 4, null); // malformed Relation
+    ubyte[] malformedGroup;
+    appendLengthDelimited(malformedGroup, 4, null); // malformed Relation
 
     ubyte[] suffixInput;
     appendFileBlock(suffixInput, "OSMHeader", null);
-    const suffixData = makePrimitiveBlock(suffixGroup);
-    appendFileBlock(suffixInput, "OSMData", suffixData);
+    appendFileBlock(suffixInput, "OSMData", data);
+    const malformedData = makePrimitiveBlock(malformedGroup);
+    appendFileBlock(suffixInput, "OSMData", malformedData);
 
     auto complete = reader.ways(suffixInput);
     count = 0;
