@@ -7,6 +7,18 @@ stable release.
 
 ## Unreleased
 
+- Added a node-only semantic `foreach` adapter through `PbfReader.nodes`.
+  The adapter uses D `opApply` over the existing synchronous push decoder,
+  yields the same borrowed `NodeView` for regular and DenseNodes encoding,
+  propagates real foreach early-stop control, and performs no per-node
+  materialization. Complete traversal preserves whole-file validation; early
+  exit explicitly leaves the unvisited suffix unvalidated. DMD 2.111.0 and
+  LDC 1.41.0 compile/lifetime gates reject iterable and `NodeView` escapes.
+  Controlled Bremen LDC 1.41.0 comparison with the direct sink measured median
+  deltas of +0.77% for core access and -0.21% for tag traversal, treated as
+  performance parity.
+
+
 - Unified regular Node and DenseNodes delivery at the high-level `PbfReader`
   boundary behind one concrete semantic `NodeView`. The callback-scoped view
   is a small non-copyable borrow over unchanged codec-specific representations;

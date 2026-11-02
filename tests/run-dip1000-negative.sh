@@ -73,6 +73,16 @@ for compiler in "${compilers[@]}"; do
         "$compiler" \
         "$CASES/string_table_escape.d" \
         'returning scope variable|return table'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/node_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/node_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
 done
 
 if (( failures != 0 )); then

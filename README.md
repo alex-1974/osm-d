@@ -81,9 +81,10 @@ dub test
 ```
 
 The reference compiler for release-performance benchmarks is LDC. DMD remains
-the fast development/correctness compiler. The current pre-1.0 supported and
-tested matrix is DMD 2.111.0 and LDC 1.41.0 with DMD frontend 2.111.0; see
-`docs/DEVELOPMENT.md` for the compiler-support policy and canonical checks.
+the fast development/correctness compiler. Fast CI uses DMD 2.111.0 and
+LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
+LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
+and canonical checks.
 
 The package is still pre-1.0. `import osm;` is the curated package root and
 now exposes the whole-buffer PBF reader boundary without re-exporting the
@@ -168,6 +169,45 @@ the input provides `LocationsOnWays`, an optional `LocationView`. Consumers
 therefore do not need to zip PBF reference and coordinate columns themselves.
 The remaining semantic-view unification is tracked separately from the reader
 orchestration.
+
+### Iterating nodes with `foreach`
+
+For node-only traversal, `PbfReader.nodes` provides an idiomatic D
+`foreach` adapter without materializing an owned node collection:
+
+```d
+PbfReader reader;
+auto nodes = reader.nodes(pbfBytes);
+
+foreach (scope ref NodeView node; nodes)
+{
+    // The view is borrowed for this iteration body.
+    if (node.id == wantedId)
+        break;
+}
+
+if (!nodes.status.ok)
+{
+    // A decode or validation failure occurred.
+}
+else if (!nodes.completed)
+{
+    // The consumer stopped traversal early with break/return/goto.
+}
+```
+
+The adapter uses D's `opApply` protocol rather than pretending the
+synchronous push decoder is a resumable Phobos InputRange. A natural traversal
+to end-of-file retains whole-file validation, including Ways and Relations even
+though only nodes are yielded. An early `break` stops parsing immediately;
+the unvisited suffix is then intentionally not validated.
+
+The direct sink API remains the performance-critical core. The node foreach
+adapter has no per-node materialization and was qualified against the direct
+sink on the pinned Bremen workload with LDC 1.41.0: median deltas were
+`+0.77%` for core node access and `-0.21%` for tag traversal. Given normal
+run-to-run variation, these results are treated as performance parity rather
+than a speedup.
 
 ## Status
 

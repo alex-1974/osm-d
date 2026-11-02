@@ -423,6 +423,43 @@ advancing them does not mutate the codec-owned range. The measured reader
 boundary remains performance-neutral on the pinned Bremen qualification
 workload while preserving the specialized decoder hot paths.
 
+### Foreach convenience boundary
+
+Implementation note (2026-11-02): the first public iteration convenience layer
+is node-only:
+
+```d
+auto nodes = reader.nodes(input);
+foreach (scope ref NodeView node; nodes)
+{
+    ...
+}
+```
+
+This uses D `opApply` rather than `empty/front/popFront`. The existing PBF
+decoder is synchronous and push-based; a true InputRange would require
+resumable parser state or buffering/materialization that is not justified by
+the current consumer need. The direct sink remains the primary hot-path API.
+
+The foreach adapter propagates D's exact non-zero delegate control value, so
+ordinary `break` really stops parsing. A natural traversal to EOF retains
+whole-file validation, including non-yielded Ways and Relations. An early exit
+is explicitly a partial read: `status.ok` remains true for the visited prefix,
+`completed` is false, and the unvisited suffix is not claimed to have been
+validated.
+
+Separate `@safe` and `@system` `opApply` overloads preserve the safety
+context of the foreach body. DIP1000 negative probes reject both an iterable
+escaping stack-local input storage and a `NodeView` pointer escaping the
+iteration body.
+
+Controlled Bremen LDC 1.41.0 direct-sink/foreach qualification showed semantic
+parity and median deltas of +0.77% for core access and -0.21% for tag traversal.
+The tag series was noisy, so the result is classified as performance parity,
+not an adapter speedup. Way and Relation foreach adapters remain a separate
+follow-up so this first mechanism does not force duplicated stop-aware decoder
+code into one oversized change.
+
 ## Internal-only candidates
 
 The following names describe implementation mechanisms and should not form part
