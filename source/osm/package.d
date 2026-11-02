@@ -18,12 +18,16 @@ public import osm.view.element :
 public import osm.view.location : LocationView;
 public import osm.view.metadata : MetadataView;
 public import osm.io.pbf.node_view : NodeView;
+public import osm.io.pbf.way : WayView;
+public import osm.io.pbf.relation : RelationView;
 public import osm.view.relation_member : RelationMemberView;
 public import osm.view.tag : TagView;
 public import osm.view.way_node : WayNodeView;
 
 public import osm.io.pbf.reader :
     PbfNodeIterable,
+    PbfWayIterable,
+    PbfRelationIterable,
     PbfReadError,
     PbfReadStatus,
     PbfReadSummary,
