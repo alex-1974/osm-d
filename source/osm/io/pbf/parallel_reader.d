@@ -40,8 +40,10 @@ import osm.io.pbf.relation : RelationView;
 import osm.io.pbf.way : WayView;
 import osm.wire.cursor : WireCursor;
 
-import std.parallelism : TaskPool, totalCPUs;
-import std.range : iota;
+import core.sync.condition : Condition;
+import core.sync.mutex : Mutex;
+import core.thread : ThreadGroup;
+import std.parallelism : totalCPUs;
 
 /** Resource choices for PbfParallelReader. */
 struct PbfParallelReadOptions
@@ -107,127 +109,118 @@ struct PbfParallelReader
                 workerCount = 1;
         }
 
-        size_t batchCapacity = options.queueCapacity;
-        if (batchCapacity == 0)
-            batchCapacity = workerCount;
+        size_t queueCapacity = options.queueCapacity;
+        if (queueCapacity == 0)
+            queueCapacity = workerCount;
 
-        auto jobs = new PbfSummaryJob[batchCapacity];
-        auto results = new PbfSummaryResult[batchCapacity];
-        auto workspaces = new PbfReaderWorkspace[workerCount];
+        auto queue = new PbfSummaryQueue(queueCapacity);
+        auto workers = new PbfSummaryWorker[workerCount];
+        auto group = new ThreadGroup;
 
-        TaskPool pool;
-        if (workerCount > 1)
-            pool = new TaskPool(workerCount - 1);
-        scope(exit)
+        scope(failure)
         {
-            if (pool !is null)
-                pool.finish(true);
+            queue.close();
+            group.joinAll(false);
         }
 
-        while (true)
+        foreach (workerIndex; 0 .. workerCount)
         {
-            size_t jobCount;
-            bool reachedEnd;
-            bool hasProducerFailure;
-            PbfReadStatus producerFailure;
+            auto worker = new PbfSummaryWorker(queue);
+            workers[workerIndex] = worker;
+            group.create(&worker.run);
+        }
 
-            while (jobCount < batchCapacity)
+        bool reachedEnd;
+        bool hasProducerFailure;
+        PbfReadStatus producerFailure;
+
+        while (!reachedEnd && !hasProducerFailure)
+        {
+            const blockOffset = cursor.offset;
+            FileBlockView fileBlock;
+            PbfStatus pbfStatus;
+
+            const frameResult =
+                readFileBlock(cursor, sequence, fileBlock, pbfStatus);
+
+            final switch (frameResult)
             {
-                const blockOffset = cursor.offset;
-                FileBlockView fileBlock;
-                PbfStatus pbfStatus;
+                case FrameReadResult.endOfInput:
+                    reachedEnd = true;
+                    break;
 
-                const frameResult =
-                    readFileBlock(cursor, sequence, fileBlock, pbfStatus);
+                case FrameReadResult.error:
+                    producerFailure = fromPbfFailure(
+                        sequence,
+                        blockOffset,
+                        pbfStatus);
+                    hasProducerFailure = true;
+                    break;
 
-                final switch (frameResult)
-                {
-                    case FrameReadResult.endOfInput:
-                        reachedEnd = true;
-                        break;
-
-                    case FrameReadResult.error:
-                        producerFailure = fromPbfFailure(
-                            sequence,
-                            blockOffset,
-                            pbfStatus);
-                        hasProducerFailure = true;
-                        break;
-
-                    case FrameReadResult.block:
-                        final switch (fileBlock.header.kind)
-                        {
-                            case BlobKind.osmData:
-                                jobs[jobCount++] = PbfSummaryJob(
+                case FrameReadResult.block:
+                    final switch (fileBlock.header.kind)
+                    {
+                        case BlobKind.osmData:
+                            if (!queue.push(PbfSummaryJob(
                                     fileBlock.sequence,
                                     fileBlock.offset,
-                                    fileBlock.blob);
-                                ++sequence;
-                                continue;
-
-                            case BlobKind.osmHeader:
-                                producerFailure = readerFailure(
-                                    PbfReadError.duplicateHeader,
-                                    sequence,
-                                    fileBlock.offset);
-                                hasProducerFailure = true;
+                                    fileBlock.blob)))
+                            {
+                                reachedEnd = true;
                                 break;
+                            }
 
-                            case BlobKind.unknown:
-                                producerFailure = readerFailure(
-                                    PbfReadError.unsupportedBlockType,
-                                    sequence,
-                                    fileBlock.offset);
-                                hasProducerFailure = true;
-                                break;
-                        }
-                        break;
-                }
-                break;
-            }
+                            ++sequence;
+                            break;
 
-            if (jobCount != 0)
-            {
-                if (pool is null)
-                {
-                    foreach (i; 0 .. jobCount)
-                        results[i] = decodeJob(jobs[i], workspaces[0]);
-                }
-                else
-                {
-                    foreach (i; pool.parallel(iota(jobCount), 1))
-                    {
-                        results[i] = decodeJob(
-                            jobs[i],
-                            workspaces[pool.workerIndex]);
+                        case BlobKind.osmHeader:
+                            producerFailure = readerFailure(
+                                PbfReadError.duplicateHeader,
+                                sequence,
+                                fileBlock.offset);
+                            hasProducerFailure = true;
+                            break;
+
+                        case BlobKind.unknown:
+                            producerFailure = readerFailure(
+                                PbfReadError.unsupportedBlockType,
+                                sequence,
+                                fileBlock.offset);
+                            hasProducerFailure = true;
+                            break;
                     }
-                }
-
-                foreach (i; 0 .. jobCount)
-                {
-                    if (!results[i].status.ok)
-                    {
-                        summary = PbfReadSummary.init;
-                        status = results[i].status;
-                        return false;
-                    }
-
-                    addSummary(summary, results[i].summary);
-                    jobs[i] = PbfSummaryJob.init;
-                    results[i] = PbfSummaryResult.init;
-                }
+                    break;
             }
-
-            if (hasProducerFailure)
-            {
-                summary = PbfReadSummary.init;
-                status = producerFailure;
-                return false;
-            }
-
-            if (reachedEnd)
-                break;
         }
+
+        queue.close();
+        group.joinAll();
+
+        bool hasFailure = hasProducerFailure;
+        PbfReadStatus earliestFailure;
+        if (hasProducerFailure)
+            earliestFailure = producerFailure;
+
+        foreach (worker; workers)
+        {
+            if (worker.hasFailure &&
+                (!hasFailure ||
+                 isEarlier(worker.failure, earliestFailure)))
+            {
+                earliestFailure = worker.failure;
+                hasFailure = true;
+            }
+        }
+
+        if (hasFailure)
+        {
+            summary = PbfReadSummary.init;
+            status = earliestFailure;
+            return false;
+        }
+
+        foreach (worker; workers)
+            addSummary(summary, worker.summary);
 
         status = PbfReadStatus.init;
         return true;
@@ -239,6 +232,148 @@ private struct PbfSummaryJob
     ulong sequence;
     size_t fileBlockOffset;
     const(ubyte)[] blob;
+}
+
+private final class PbfSummaryQueue
+{
+private:
+    PbfSummaryJob[] slots;
+    size_t head;
+    size_t tail;
+    size_t count;
+    bool closed;
+
+    Mutex mutex;
+    Condition notEmpty;
+    Condition notFull;
+
+public:
+    this(size_t capacity)
+    {
+        assert(capacity != 0);
+        slots.length = capacity;
+        mutex = new Mutex;
+        notEmpty = new Condition(mutex);
+        notFull = new Condition(mutex);
+    }
+
+    bool push(PbfSummaryJob job)
+    {
+        synchronized (mutex)
+        {
+            while (count == slots.length && !closed)
+                notFull.wait();
+
+            if (closed)
+                return false;
+
+            slots[tail] = job;
+            tail = (tail + 1) % slots.length;
+            ++count;
+            notEmpty.notify();
+            return true;
+        }
+    }
+
+    bool pop(out PbfSummaryJob job)
+    {
+        synchronized (mutex)
+        {
+            while (count == 0 && !closed)
+                notEmpty.wait();
+
+            if (count == 0)
+            {
+                job = PbfSummaryJob.init;
+                return false;
+            }
+
+            job = slots[head];
+            slots[head] = PbfSummaryJob.init;
+            head = (head + 1) % slots.length;
+            --count;
+            notFull.notify();
+            return true;
+        }
+    }
+
+    void close()
+    {
+        synchronized (mutex)
+        {
+            if (closed)
+                return;
+
+            closed = true;
+            notEmpty.notifyAll();
+            notFull.notifyAll();
+        }
+    }
+}
+
+private final class PbfSummaryWorker
+{
+private:
+    PbfSummaryQueue queue;
+    PbfReaderWorkspace workspace;
+    PbfReadSummary _summary;
+    PbfReadStatus _failure;
+    bool _hasFailure;
+
+public:
+    this(PbfSummaryQueue value)
+    {
+        queue = value;
+    }
+
+    @property ref const(PbfReadSummary) summary() const
+    {
+        return _summary;
+    }
+
+    @property PbfReadStatus failure() const
+    {
+        return _failure;
+    }
+
+    @property bool hasFailure() const
+    {
+        return _hasFailure;
+    }
+
+    void run()
+    {
+        scope(failure) queue.close();
+
+        PbfSummaryJob job;
+        while (queue.pop(job))
+        {
+            const result = decodeJob(job, workspace);
+
+            if (!result.status.ok)
+            {
+                if (!_hasFailure || isEarlier(result.status, _failure))
+                {
+                    _failure = result.status;
+                    _hasFailure = true;
+                }
+                continue;
+            }
+
+            addSummary(_summary, result.summary);
+        }
+    }
+}
+
+private bool isEarlier(
+    PbfReadStatus candidate,
+    PbfReadStatus current)
+    @safe pure nothrow @nogc
+{
+    if (candidate.blockSequence != current.blockSequence)
+        return candidate.blockSequence < current.blockSequence;
+
+    return candidate.blockOffset < current.blockOffset;
 }
 
 private struct PbfSummaryResult
