@@ -91,4 +91,8 @@ jobs:
           D_OSM_SCALING_SAMPLES: "3"
           D_OSM_SCALING_MAX_WORKERS: "4"
           D_OSM_SCALING_QUEUE_FACTOR: "2"
-        run: bash benchmark/run-parallel-summary-scaling.sh
+        run: |
+          bash benchmark/run-parallel-summary-scaling.sh
+          D_OSM_MEMORY_DATASETS="bremen-260901" \
+            D_OSM_MEMORY_PASSES="3" \
+            bash benchmark/run-memory-baseline.sh
