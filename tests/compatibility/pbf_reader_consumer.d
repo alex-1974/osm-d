@@ -196,3 +196,21 @@ void compileConsumer()
     assert(!nodeStatus.ok);
     assert(!nodeCompleted);
 }
+
+
+@safe void compileSafeNodeForeach(const(ubyte)[] input)
+{
+    PbfReader reader;
+    auto nodes = reader.nodes(input);
+
+    foreach (scope ref NodeView node; nodes)
+    {
+        OsmId id = node.id;
+        assert(id == node.id);
+        break;
+    }
+
+    PbfReadStatus status = nodes.status;
+    const completed = nodes.completed;
+    assert(status.ok || !completed);
+}
