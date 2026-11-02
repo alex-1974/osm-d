@@ -106,7 +106,7 @@ struct Consumer
         inspectTags(value);
     }
 
-    void way(T)(scope ref T value) @safe nothrow @nogc
+    void way(scope ref WayView value) @safe nothrow @nogc
     {
         static assert(!__traits(compiles, value.refs));
         static assert(!__traits(compiles, value.locations));
@@ -141,7 +141,7 @@ struct Consumer
         }
     }
 
-    void relation(T)(scope ref T value) @safe nothrow @nogc
+    void relation(scope ref RelationView value) @safe nothrow @nogc
     {
         static assert(!__traits(compiles, value.info));
         static assert(!__traits(compiles, value.raw));
@@ -213,4 +213,28 @@ void compileConsumer()
     PbfReadStatus status = nodes.status;
     const completed = nodes.completed;
     assert(status.ok || !completed);
+}
+
+
+@safe void compileSafeWayRelationForeach(const(ubyte)[] input)
+{
+    PbfReader reader;
+
+    auto ways = reader.ways(input);
+    foreach (scope ref WayView way; ways)
+    {
+        OsmId id = way.id;
+        assert(id == way.id);
+        break;
+    }
+    assert(ways.status.ok || !ways.completed);
+
+    auto relations = reader.relations(input);
+    foreach (scope ref RelationView relation; relations)
+    {
+        OsmId id = relation.id;
+        assert(id == relation.id);
+        break;
+    }
+    assert(relations.status.ok || !relations.completed);
 }

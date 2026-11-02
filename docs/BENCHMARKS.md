@@ -112,6 +112,61 @@ delta is not interpreted as a speedup. The architectural conclusion is
 performance parity: the convenience adapter does not impose a material
 whole-reader regression on the measured city workload.
 
+## Way and Relation foreach adapter qualification — 2026-11-02
+
+Question: what whole-reader cost do the element-specific
+`PbfReader.ways` and `PbfReader.relations` convenience adapters add while
+preserving the direct reader's semantic and validation contracts?
+
+The final qualification used the clean implementation candidate
+`fa596f88b4b3caf7692a0b9a4dc933198d6744a3` with:
+
+- pinned dataset: `bremen-260901`;
+- compiler: LDC 1.41.0 release build;
+- one pinned logical CPU;
+- five balanced four-position blocks per mode;
+- 30-second post-build and inter-mode cooldowns;
+- identical complete-file semantic outputs between direct sink and foreach.
+
+The four workloads separated callback overhead from traversal of borrowed
+semantic subranges:
+
+- `way-core`: Way ID and metadata;
+- `way-full`: core plus all semantic tags and ordered `way.nodes`;
+- `relation-core`: Relation ID and metadata;
+- `relation-full`: core plus all semantic tags and relation members.
+
+Semantic parity passed exactly:
+
+| Mode | Elements | Tags | Children | Metadata elements | Checksum |
+| --- | ---: | ---: | ---: | ---: | --- |
+| way-core | 328,626 | 0 | 0 | 328,626 | `334b17850d539666` |
+| way-full | 328,626 | 1,598,076 | 2,381,867 | 328,626 | `1e287f51aa587cb4` |
+| relation-core | 5,985 | 0 | 0 | 5,985 | `83cdcd3068e35332` |
+| relation-full | 5,985 | 36,880 | 309,645 | 5,985 | `cda1efa4ab0a7cbe` |
+
+Median results:
+
+| Mode | Direct sink p50 | Foreach p50 | Foreach/direct |
+| --- | ---: | ---: | ---: |
+| way-core | 663.739 ms | 698.460 ms | +5.23% |
+| way-full | 715.853 ms | 749.011 ms | +4.63% |
+| relation-core | 643.219 ms | 674.320 ms | +4.84% |
+| relation-full | 653.335 ms | 687.349 ms | +5.21% |
+
+The result is accepted as a bounded convenience trade-off rather than a
+regression in the primary hot path. `PbfReader.read` remains the
+maximum-throughput statically dispatched API; Way and Relation foreach provide
+the idiomatic element-specific surface at about five percent whole-file cost
+on this workload.
+
+Focused diagnostics tested stop-aware decoder overhead, ordinary delegate
+forwarding, explicit `opApply` versus foreach lowering, attribute-specialized
+delegates, forced inline/noinline boundaries, and stateless sinks for
+non-selected validation. None produced a robust improvement without changing
+the measured question. No speculative tuning from those experiments was
+retained in production code.
+
 
 ## First executable microbenchmark: varint
 

@@ -378,6 +378,136 @@ bool decodeRelations(Sink)(
 }
 
 
+/**
+ * Decode Relations until the sink requests foreach termination.
+ *
+ * The complete Relation sequence is semantically preflighted before the first
+ * callback exactly as in decodeRelations. A non-zero sink result stops the
+ * already-validated emission pass and is returned unchanged through
+ * `control`.
+ */
+package(osm)
+bool decodeRelationsUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref Sink sink,
+    out int control,
+    out RelationDecodeSummary summary,
+    out PbfStatus status)
+{
+    control = 0;
+    summary = RelationDecodeSummary.init;
+
+    if (group.relationOccurrences == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    size_t preflightCount;
+    size_t preflightTagCount;
+    size_t preflightMemberCount;
+    auto preflight = RelationMessageCursor(group.raw);
+
+    while (true)
+    {
+        RelationMessageRef relationRef;
+        bool hasRelation;
+        if (!preflight.next(relationRef, hasRelation, status))
+            return false;
+        if (!hasRelation)
+            break;
+
+        ParsedRelation parsed;
+        if (!parseRelation(block, relationRef, table, parsed, status))
+            return false;
+
+        ++preflightCount;
+        preflightTagCount += parsed.tags.tagCount;
+        preflightMemberCount += parsed.members.memberCount;
+    }
+
+    if (preflightCount != group.relationOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.relationCountMismatch,
+            0,
+            4);
+        return false;
+    }
+
+    auto relations = RelationMessageCursor(group.raw);
+
+    while (true)
+    {
+        RelationMessageRef relationRef;
+        bool hasRelation;
+        if (!relations.next(relationRef, hasRelation, status))
+            return false;
+        if (!hasRelation)
+            break;
+
+        ParsedRelation parsed;
+        if (!parseRelation(block, relationRef, table, parsed, status))
+            return false;
+
+        TagRange tags;
+        if (!buildTagRange(
+                relationRef.bytes,
+                relationRef.rawOffset,
+                table,
+                parsed.tags,
+                tags,
+                status))
+            return false;
+
+        RelationMemberRange members;
+        if (!buildRelationMemberRange(
+                relationRef.bytes,
+                relationRef.rawOffset,
+                table,
+                parsed.members,
+                members,
+                status))
+            return false;
+
+        RelationView relation = RelationView(
+            parsed.id,
+            tags,
+            members,
+            parsed.info,
+            relationRef.bytes,
+            relationRef.rawOffset);
+
+        control = sink.put(relation);
+        ++summary.relationCount;
+        summary.tagCount += parsed.tags.tagCount;
+        summary.memberCount += parsed.members.memberCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
+    }
+
+    if (summary.relationCount != preflightCount ||
+        summary.tagCount != preflightTagCount ||
+        summary.memberCount != preflightMemberCount)
+    {
+        status = PbfStatus.failure(
+            PbfError.relationCountMismatch,
+            0,
+            4);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+
 private bool parseRelation(
     ref const PrimitiveBlockLayout block,
     RelationMessageRef relationRef,

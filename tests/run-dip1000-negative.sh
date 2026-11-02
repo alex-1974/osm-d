@@ -83,6 +83,26 @@ for compiler in "${compilers[@]}"; do
         "$compiler" \
         "$CASES/node_foreach_view_escape.d" \
         'scope|escape|local variable|lifetime|address'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/way_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/relation_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/way_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/relation_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
 done
 
 if (( failures != 0 )); then

@@ -1546,6 +1546,82 @@ bool decodeWaysWithWorkspace(Sink)(
 }
 
 /**
+ * Decode preflighted Ways until the sink requests foreach termination.
+ *
+ * This package-internal variant reuses the same caller-owned WayDecodePlan
+ * preflight as decodeWaysWithWorkspace. The complete Way sequence is therefore
+ * validated before the first callback. A non-zero sink result stops only the
+ * emission pass and is returned unchanged through `control`.
+ */
+package(osm)
+bool decodeWaysWithWorkspaceUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    WayDecodePlan[] workspace,
+    ref Sink sink,
+    out int control,
+    out WayDecodeSummary summary,
+    out PbfStatus status)
+{
+    control = 0;
+    summary = WayDecodeSummary.init;
+
+    size_t planCount;
+    if (!buildWayDecodePlans(
+            block,
+            group,
+            table,
+            workspace,
+            planCount,
+            status))
+    {
+        return false;
+    }
+
+    foreach (ref const plan; workspace[0 .. planCount])
+    {
+        WayView way;
+        if (!buildWayFromDecodePlan(
+                block,
+                group,
+                table,
+                plan,
+                way,
+                status))
+        {
+            return false;
+        }
+
+        control = sink.put(way);
+
+        ++summary.wayCount;
+        summary.tagCount += plan.tagCount;
+        summary.refCount += plan.refCount;
+        summary.locationCount += plan.locationCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
+    }
+
+    if (summary.wayCount != planCount ||
+        summary.wayCount != group.wayOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.wayCountMismatch,
+            0,
+            3);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
  * Decode every regular Way in one validated PrimitiveGroup.
  *
  * The complete group is semantically preflighted before the first sink call.

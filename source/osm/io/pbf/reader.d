@@ -51,7 +51,8 @@ import osm.io.pbf.primitive_group :
 import osm.io.pbf.relation :
     RelationDecodeSummary,
     RelationView,
-    decodeRelations;
+    decodeRelations,
+    decodeRelationsUntilStop;
 import osm.io.pbf.string_table :
     StringRef,
     StringTableView,
@@ -60,7 +61,8 @@ import osm.io.pbf.way :
     WayDecodePlan,
     WayDecodeSummary,
     WayView,
-    decodeWaysWithWorkspace;
+    decodeWaysWithWorkspace,
+    decodeWaysWithWorkspaceUntilStop;
 import osm.wire.cursor : WireCursor;
 
 /** High-level category of a complete-file PBF read failure. */
@@ -260,6 +262,168 @@ private:
 }
 
 /**
+ * Foreach adapter over semantic OSM Ways in one already-loaded PBF file.
+ *
+ * Natural traversal retains whole-file validation. An early foreach exit stops
+ * parsing immediately after the Way that produced the control value and leaves
+ * the unvisited suffix deliberately unvalidated.
+ */
+struct PbfWayIterable
+{
+private:
+    const(ubyte)[] input;
+    PbfReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(return scope const(ubyte)[] value)
+        @safe pure nothrow @nogc
+    {
+        input = value;
+    }
+
+public:
+    /** Status from the most recent foreach traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    /** True only when the most recent traversal reached the end of the file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    /** Iterate semantic Ways from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref WayView) @safe dg)
+        @safe
+    {
+        SafeWayForeachSink sink = SafeWayForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate semantic Ways from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref WayView) @system dg)
+        @system
+    {
+        SystemWayForeachSink sink = SystemWayForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+
+        if (!iterateSelected!decodeWayDataBlock(
+                input,
+                workspace,
+                sink,
+                control,
+                _status))
+        {
+            return 0;
+        }
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
+ * Foreach adapter over semantic OSM Relations in one already-loaded PBF file.
+ *
+ * Natural traversal retains whole-file validation. An early foreach exit stops
+ * parsing immediately after the Relation that produced the control value and
+ * leaves the unvisited suffix deliberately unvalidated.
+ */
+struct PbfRelationIterable
+{
+private:
+    const(ubyte)[] input;
+    PbfReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(return scope const(ubyte)[] value)
+        @safe pure nothrow @nogc
+    {
+        input = value;
+    }
+
+public:
+    /** Status from the most recent foreach traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    /** True only when the most recent traversal reached the end of the file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    /** Iterate semantic Relations from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref RelationView) @safe dg)
+        @safe
+    {
+        SafeRelationForeachSink sink = SafeRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate semantic Relations from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref RelationView) @system dg)
+        @system
+    {
+        SystemRelationForeachSink sink = SystemRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+
+        if (!iterateSelected!decodeRelationDataBlock(
+                input,
+                workspace,
+                sink,
+                control,
+                _status))
+        {
+            return 0;
+        }
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
@@ -284,6 +448,20 @@ struct PbfReader
         @safe pure nothrow @nogc
     {
         return PbfNodeIterable(input);
+    }
+
+    /** Return a foreach adapter over semantic Ways in `input`. */
+    PbfWayIterable ways(return scope const(ubyte)[] input)
+        @safe pure nothrow @nogc
+    {
+        return PbfWayIterable(input);
+    }
+
+    /** Return a foreach adapter over semantic Relations in `input`. */
+    PbfRelationIterable relations(return scope const(ubyte)[] input)
+        @safe pure nothrow @nogc
+    {
+        return PbfRelationIterable(input);
     }
 
     /**
@@ -853,6 +1031,547 @@ public:
 
     void put(scope ref WayView) @safe nothrow @nogc {}
     void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private bool iterateSelected(alias decodeSelectedDataBlock, Sink)(
+    const(ubyte)[] input,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    out int control,
+    out PbfReadStatus status)
+{
+    control = 0;
+    status = PbfReadStatus.init;
+
+    auto cursor = WireCursor(input);
+    bool sawHeader;
+    bool sawData;
+    ulong sequence;
+
+    while (true)
+    {
+        const blockOffset = cursor.offset;
+        FileBlockView fileBlock;
+        PbfStatus pbfStatus;
+        const frameResult =
+            readFileBlock(cursor, sequence, fileBlock, pbfStatus);
+
+        final switch (frameResult)
+        {
+            case FrameReadResult.endOfInput:
+                break;
+
+            case FrameReadResult.error:
+                status = fromPbfFailure(
+                    sequence,
+                    blockOffset,
+                    pbfStatus);
+                return false;
+
+            case FrameReadResult.block:
+                BlobView blob;
+                if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                const outputSize = requiredOutputSize(blob);
+                if (workspace.decompressionBuffer.length < outputSize)
+                    workspace.decompressionBuffer.length = outputSize;
+
+                BlobPayloadView payload;
+                if (!decodeBlobPayloadInto(
+                        blob,
+                        workspace.decompressionBuffer,
+                        payload,
+                        pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                final switch (fileBlock.header.kind)
+                {
+                    case BlobKind.osmHeader:
+                        if (sawHeader || sawData)
+                        {
+                            status = readerFailure(
+                                PbfReadError.duplicateHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        HeaderBlockView header;
+                        if (!decodeHeaderBlock(
+                                payload.bytes,
+                                header,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        HeaderFeatureAssessment assessment;
+                        if (!validateRequiredFeatures(
+                                header,
+                                HeaderFeatureSupport.allKnown(),
+                                assessment,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        sawHeader = true;
+                        break;
+
+                    case BlobKind.osmData:
+                        if (!sawHeader)
+                        {
+                            status = readerFailure(
+                                PbfReadError.dataBeforeHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        sawData = true;
+                        if (!decodeSelectedDataBlock(
+                                payload.bytes,
+                                workspace,
+                                sink,
+                                control,
+                                sequence,
+                                fileBlock.offset,
+                                status))
+                        {
+                            return false;
+                        }
+
+                        if (control != 0)
+                            return true;
+                        break;
+
+                    case BlobKind.unknown:
+                        status = readerFailure(
+                            PbfReadError.unsupportedBlockType,
+                            sequence,
+                            fileBlock.offset);
+                        return false;
+                }
+
+                ++sequence;
+                continue;
+        }
+
+        break;
+    }
+
+    if (!sawHeader)
+    {
+        status = readerFailure(
+            PbfReadError.missingHeader,
+            sequence,
+            input.length);
+        return false;
+    }
+
+    status = PbfReadStatus.init;
+    return true;
+}
+
+private bool decodeWayDataBlock(Sink)(
+    const(ubyte)[] payloadBytes,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref int control,
+    ulong sequence,
+    size_t fileBlockOffset,
+    out PbfReadStatus readStatus)
+{
+    PbfStatus status;
+
+    PrimitiveBlockLayout block;
+    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    if (workspace.stringRefs.length < block.stringCount)
+        workspace.stringRefs.length = block.stringCount;
+
+    StringTableView table;
+    if (!buildStringTableView(
+            block,
+            workspace.stringRefs[0 .. block.stringCount],
+            table,
+            status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    auto groups = block.primitiveGroups;
+    while (!groups.empty)
+    {
+        const groupRef = groups.front;
+        groups.popFront();
+
+        PrimitiveGroupLayout group;
+        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (group.changeSetOccurrences != 0)
+        {
+            readStatus = readerFailure(
+                PbfReadError.unsupportedChangeSet,
+                sequence,
+                fileBlockOffset);
+            return false;
+        }
+
+        DenseNodeDecodeSummary denseSummary;
+        if (!decodeDenseNodes(
+                block,
+                group,
+                table,
+                sink,
+                denseSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
+                block,
+                group,
+                table,
+                sink,
+                nodeSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (workspace.wayPlans.length < group.wayOccurrences)
+            workspace.wayPlans.length = group.wayOccurrences;
+
+        WayDecodeSummary waySummary;
+        if (!decodeWaysWithWorkspaceUntilStop(
+                block,
+                group,
+                table,
+                workspace.wayPlans[0 .. group.wayOccurrences],
+                sink,
+                control,
+                waySummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+
+        RelationDecodeSummary relationSummary;
+        if (!decodeRelations(
+                block,
+                group,
+                table,
+                sink,
+                relationSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+    }
+
+    readStatus = PbfReadStatus.init;
+    return true;
+}
+
+private bool decodeRelationDataBlock(Sink)(
+    const(ubyte)[] payloadBytes,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref int control,
+    ulong sequence,
+    size_t fileBlockOffset,
+    out PbfReadStatus readStatus)
+{
+    PbfStatus status;
+
+    PrimitiveBlockLayout block;
+    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    if (workspace.stringRefs.length < block.stringCount)
+        workspace.stringRefs.length = block.stringCount;
+
+    StringTableView table;
+    if (!buildStringTableView(
+            block,
+            workspace.stringRefs[0 .. block.stringCount],
+            table,
+            status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    auto groups = block.primitiveGroups;
+    while (!groups.empty)
+    {
+        const groupRef = groups.front;
+        groups.popFront();
+
+        PrimitiveGroupLayout group;
+        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (group.changeSetOccurrences != 0)
+        {
+            readStatus = readerFailure(
+                PbfReadError.unsupportedChangeSet,
+                sequence,
+                fileBlockOffset);
+            return false;
+        }
+
+        DenseNodeDecodeSummary denseSummary;
+        if (!decodeDenseNodes(
+                block,
+                group,
+                table,
+                sink,
+                denseSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
+                block,
+                group,
+                table,
+                sink,
+                nodeSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (workspace.wayPlans.length < group.wayOccurrences)
+            workspace.wayPlans.length = group.wayOccurrences;
+
+        WayDecodeSummary waySummary;
+        if (!decodeWaysWithWorkspace(
+                block,
+                group,
+                table,
+                workspace.wayPlans[0 .. group.wayOccurrences],
+                sink,
+                waySummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        RelationDecodeSummary relationSummary;
+        if (!decodeRelationsUntilStop(
+                block,
+                group,
+                table,
+                sink,
+                control,
+                relationSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+    }
+
+    readStatus = PbfReadStatus.init;
+    return true;
+}
+
+private struct SafeWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @safe dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @safe value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @safe
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SystemWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @system dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @system value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @system
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SafeRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @safe dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @safe value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @safe
+    {
+        return dg(relation);
+    }
+}
+
+private struct SystemRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @system dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @system value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @system
+    {
+        return dg(relation);
+    }
 }
 
 private bool decodeDataBlock(Sink)(
@@ -1450,6 +2169,138 @@ unittest
     }
 
     assert(prefixCount == 1);
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+}
+
+
+// PbfWayIterable natural completion and early stop.
+unittest
+{
+    ubyte[] way;
+    appendVarintField(way, 1, 7);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 3, way);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+    auto ways = reader.ways(input);
+
+    size_t count;
+    long idSum;
+    foreach (scope ref WayView value; ways)
+    {
+        ++count;
+        idSum += value.id;
+    }
+
+    assert(ways.status.ok);
+    assert(ways.completed);
+    assert(count == 1);
+    assert(idSum == 7);
+
+    ubyte[] malformedGroup;
+    appendLengthDelimited(malformedGroup, 4, null); // malformed Relation
+
+    ubyte[] suffixInput;
+    appendFileBlock(suffixInput, "OSMHeader", null);
+    appendFileBlock(suffixInput, "OSMData", data);
+    const malformedData = makePrimitiveBlock(malformedGroup);
+    appendFileBlock(suffixInput, "OSMData", malformedData);
+
+    auto complete = reader.ways(suffixInput);
+    count = 0;
+    foreach (scope ref WayView value; complete)
+    {
+        ++count;
+        assert(value.id == 7);
+    }
+
+    assert(count == 1);
+    assert(!complete.completed);
+    assert(complete.status.error == PbfReadError.malformedInput);
+
+    auto prefix = reader.ways(suffixInput);
+    count = 0;
+    foreach (scope ref WayView value; prefix)
+    {
+        ++count;
+        assert(value.id == 7);
+        break;
+    }
+
+    assert(count == 1);
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+}
+
+
+// PbfRelationIterable natural completion and early stop.
+unittest
+{
+    ubyte[] relation;
+    appendVarintField(relation, 1, 9);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 4, relation);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+    auto relations = reader.relations(input);
+
+    size_t count;
+    long idSum;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++count;
+        idSum += value.id;
+    }
+
+    assert(relations.status.ok);
+    assert(relations.completed);
+    assert(count == 1);
+    assert(idSum == 9);
+
+    ubyte[] malformedGroup;
+    appendLengthDelimited(malformedGroup, 4, null);
+
+    ubyte[] suffixInput;
+    appendFileBlock(suffixInput, "OSMHeader", null);
+    appendFileBlock(suffixInput, "OSMData", data);
+    const malformedData = makePrimitiveBlock(malformedGroup);
+    appendFileBlock(suffixInput, "OSMData", malformedData);
+
+    auto complete = reader.relations(suffixInput);
+    count = 0;
+    foreach (scope ref RelationView value; complete)
+    {
+        ++count;
+        assert(value.id == 9);
+    }
+
+    assert(count == 1);
+    assert(!complete.completed);
+    assert(complete.status.error == PbfReadError.malformedInput);
+
+    auto prefix = reader.relations(suffixInput);
+    count = 0;
+    foreach (scope ref RelationView value; prefix)
+    {
+        ++count;
+        assert(value.id == 9);
+        break;
+    }
+
+    assert(count == 1);
     assert(prefix.status.ok);
     assert(!prefix.completed);
 }
