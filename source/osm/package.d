@@ -33,3 +33,6 @@ public import osm.io.pbf.reader :
     PbfReadSummary,
     PbfReaderWorkspace,
     PbfReader;
+public import osm.io.pbf.parallel_reader :
+    PbfParallelReadOptions,
+    PbfParallelReader;
