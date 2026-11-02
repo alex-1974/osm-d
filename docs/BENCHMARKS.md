@@ -150,9 +150,19 @@ RSS. This qualifies the intended steady-state contract: after workspace
 warm-up, repeated serial decode of an equal-or-smaller workload performs no
 D-GC allocation in the measured reader path.
 
-Country-scale Austria remains available as the stress/peak-memory workload and
-should be run on the controlled workstation before publishing hardware-specific
-memory or throughput claims.
+Country-scale Austria was additionally exercised on the pinned
+`austria-260901` dataset against production code at
+`d7519dbf218de4eeec9ad13f0b27469697f11de3` with LDC 1.41.0 on a
+GitHub-hosted Ubuntu 24.04 runner. The input was 808,820,532 bytes. Two
+complete serial reads reused the same `PbfReaderWorkspace`: the first pass
+measured 11,067,568 D-GC allocated bytes and 0 collections; the second measured
+**0 D-GC bytes** and **0 collections**. The process peak RSS was 807,020 KiB.
+
+This is retained as country-scale CI stress and steady-state allocation
+evidence. The runner is ephemeral and the whole-buffer API keeps the complete
+input resident, so the number is not a controlled-workstation throughput or
+hardware-specific memory claim. A controlled workstation run remains required
+before publishing such claims.
 
 ## Node foreach adapter qualification — 2026-11-02
 
