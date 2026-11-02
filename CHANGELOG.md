@@ -7,6 +7,18 @@ stable release.
 
 ## Unreleased
 
+- Added semantic Way and Relation `foreach` adapters through
+  `PbfReader.ways` and `PbfReader.relations`. Both use D `opApply` over
+  the synchronous push decoder, preserve exact early-stop control, retain
+  whole-file validation on natural completion, and expose borrowed
+  `WayView`/`RelationView` values without per-element materialization.
+  External `@safe` consumer probes and DIP1000 compile-negative tests cover
+  iterable/input and callback-view lifetime escapes. Final Bremen LDC 1.41.0
+  qualification matched direct-sink semantics exactly and measured median
+  convenience overheads of +5.23% (Way core), +4.63% (Way full), +4.84%
+  (Relation core), and +5.21% (Relation full). The direct sink remains the
+  primary maximum-throughput API.
+
 - Added a node-only semantic `foreach` adapter through `PbfReader.nodes`.
   The adapter uses D `opApply` over the existing synchronous push decoder,
   yields the same borrowed `NodeView` for regular and DenseNodes encoding,
