@@ -88,3 +88,13 @@ configuration "parser-decode-count" {
     importPaths "parser"
     mainSourceFile "parser/decode_count.d"
 }
+
+
+configuration "parser-memory-baseline" {
+    targetType "executable"
+    targetName "osm-d-bench-memory-baseline"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/memory_baseline.d"
+}

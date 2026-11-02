@@ -60,3 +60,14 @@ jobs:
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
+
+      - name: Build memory baseline benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=parser-memory-baseline \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
