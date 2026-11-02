@@ -7,6 +7,18 @@ stable release.
 
 ## Unreleased
 
+- Added `PbfParallelReader.readSummary`, a bounded producer/worker whole-buffer
+  PBF path for parallel OSMData decompression, complete semantic validation, and
+  aggregate counting. Queued jobs borrow immutable Blob slices from the input;
+  each worker owns and reuses one `PbfReaderWorkspace`; the queue has fixed
+  capacity; worker failures are reduced to the deterministic earliest file
+  block; and no borrowed semantic element crosses a worker boundary.
+  `PbfReader.read` remains the ordered consumer-sink API.
+- Added durable PBF memory/allocation and thread-scaling benchmarks. Fast CI
+  compiles both benchmark targets on DMD 2.111.0 and LDC 1.41.0; the scaling
+  runner verifies serial/parallel summary parity before reporting elapsed time,
+  speedup, and peak RSS.
+
 - Added semantic Way and Relation `foreach` adapters through
   `PbfReader.ways` and `PbfReader.relations`. Both use D `opApply` over
   the synchronous push decoder, preserve exact early-stop control, retain
