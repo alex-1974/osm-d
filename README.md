@@ -170,15 +170,16 @@ therefore do not need to zip PBF reference and coordinate columns themselves.
 The remaining semantic-view unification is tracked separately from the reader
 orchestration.
 
-### Iterating nodes with `foreach`
+### Iterating semantic elements with `foreach`
 
-For node-only traversal, `PbfReader.nodes` provides an idiomatic D
-`foreach` adapter without materializing an owned node collection:
+`PbfReader.nodes`, `PbfReader.ways`, and `PbfReader.relations` provide
+idiomatic D `foreach` adapters without materializing owned element
+collections:
 
 ```d
 PbfReader reader;
-auto nodes = reader.nodes(pbfBytes);
 
+auto nodes = reader.nodes(pbfBytes);
 foreach (scope ref NodeView node; nodes)
 {
     // The view is borrowed for this iteration body.
@@ -186,28 +187,44 @@ foreach (scope ref NodeView node; nodes)
         break;
 }
 
-if (!nodes.status.ok)
+auto ways = reader.ways(pbfBytes);
+foreach (scope ref WayView way; ways)
 {
-    // A decode or validation failure occurred.
+    // Semantic tags, metadata, and ordered way.nodes remain borrowed.
 }
-else if (!nodes.completed)
+
+auto relations = reader.relations(pbfBytes);
+foreach (scope ref RelationView relation; relations)
 {
-    // The consumer stopped traversal early with break/return/goto.
+    // Semantic tags, metadata, and relation.members remain borrowed.
 }
 ```
 
-The adapter uses D's `opApply` protocol rather than pretending the
-synchronous push decoder is a resumable Phobos InputRange. A natural traversal
-to end-of-file retains whole-file validation, including Ways and Relations even
-though only nodes are yielded. An early `break` stops parsing immediately;
-the unvisited suffix is then intentionally not validated.
+After traversal, inspect the adapter's `status` and `completed` properties.
+A natural traversal to end-of-file has `status.ok == true` and
+`completed == true`. A consumer `break`, enclosing `return`, or outer
+`goto` stops parsing immediately and leaves `completed == false`; the
+unvisited file suffix is then deliberately not validated. Decode failures also
+leave `completed == false`, with the failure reported through `status`.
+
+These adapters use D's `opApply` protocol rather than pretending the
+synchronous push decoder is a resumable Phobos InputRange. Complete traversal
+retains the same whole-file validation scope as `PbfReader.read`, including
+validation of element kinds that are not yielded by the selected adapter.
 
 The direct sink API remains the performance-critical core. The node foreach
 adapter has no per-node materialization and was qualified against the direct
 sink on the pinned Bremen workload with LDC 1.41.0: median deltas were
-`+0.77%` for core node access and `-0.21%` for tag traversal. Given normal
-run-to-run variation, these results are treated as performance parity rather
-than a speedup.
+`+0.77%` for core node access and `-0.21%` for tag traversal, treated as
+performance parity.
+
+Way and Relation foreach adapters preserve the same semantic results but carry
+a measured convenience cost on the same city workload. Final clean-candidate
+medians were `+5.23%` for Way core access, `+4.63%` for full Way traversal,
+`+4.84%` for Relation core access, and `+5.21%` for full Relation
+traversal. Consumers that need maximum whole-file throughput should therefore
+prefer the direct sink API; the foreach adapters trade about five percent on
+this workload for idiomatic element-specific traversal.
 
 ## Status
 
