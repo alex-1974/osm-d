@@ -423,3 +423,220 @@ private void addSummary(
     target.relations += source.relations;
     target.tags += source.tags;
 }
+
+
+version(unittest)
+{
+    import osm.io.pbf.node_view : NodeView;
+    import osm.io.pbf.reader : PbfReader;
+
+    private void appendVarint(ref ubyte[] target, ulong value)
+    {
+        do
+        {
+            ubyte byteValue = cast(ubyte)(value & 0x7f);
+            value >>= 7;
+            if (value != 0)
+                byteValue |= 0x80;
+            target ~= byteValue;
+        }
+        while (value != 0);
+    }
+
+    private void appendVarintField(
+        ref ubyte[] target,
+        uint fieldNumber,
+        ulong value)
+    {
+        appendVarint(target, cast(ulong)(fieldNumber << 3));
+        appendVarint(target, value);
+    }
+
+    private void appendLengthDelimited(
+        ref ubyte[] target,
+        uint fieldNumber,
+        const(ubyte)[] value)
+    {
+        appendVarint(target, cast(ulong)((fieldNumber << 3) | 2));
+        appendVarint(target, value.length);
+        target ~= value;
+    }
+
+    private void appendAsciiLengthDelimited(
+        ref ubyte[] target,
+        uint fieldNumber,
+        string value)
+    {
+        appendVarint(target, cast(ulong)((fieldNumber << 3) | 2));
+        appendVarint(target, value.length);
+        foreach (char ch; value)
+            target ~= cast(ubyte)ch;
+    }
+
+    private void appendFileBlock(
+        ref ubyte[] target,
+        string blockType,
+        const(ubyte)[] payload)
+    {
+        ubyte[] blob;
+        appendLengthDelimited(blob, 1, payload);
+
+        ubyte[] header;
+        appendAsciiLengthDelimited(header, 1, blockType);
+        appendVarintField(header, 3, blob.length);
+
+        const length = cast(uint)header.length;
+        target ~= cast(ubyte)(length >> 24);
+        target ~= cast(ubyte)(length >> 16);
+        target ~= cast(ubyte)(length >> 8);
+        target ~= cast(ubyte)length;
+        target ~= header;
+        target ~= blob;
+    }
+
+    private ubyte[] makePrimitiveBlock(const(ubyte)[] group = null)
+    {
+        ubyte[] table;
+        appendLengthDelimited(table, 1, null);
+
+        ubyte[] block;
+        appendLengthDelimited(block, 1, table);
+        if (group.length != 0)
+            appendLengthDelimited(block, 2, group);
+        return block;
+    }
+
+    private ubyte[] makeNodeData(long encodedId)
+    {
+        ubyte[] node;
+        appendVarintField(node, 1, cast(ulong)encodedId);
+        appendVarintField(node, 8, 0);
+        appendVarintField(node, 9, 0);
+
+        ubyte[] group;
+        appendLengthDelimited(group, 1, node);
+        return makePrimitiveBlock(group);
+    }
+
+    private struct NullHandler
+    {
+    }
+
+    private PbfReadSummary serialSummary(const(ubyte)[] input)
+    {
+        PbfReader reader;
+        PbfReaderWorkspace workspace;
+        NullHandler handler;
+        PbfReadSummary summary;
+        PbfReadStatus status;
+        assert(reader.read(input, workspace, handler, summary, status));
+        assert(status.ok);
+        return summary;
+    }
+}
+
+unittest
+{
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+
+    foreach (encodedId; [2L, 4L, 6L, 8L, 10L])
+    {
+        const data = makeNodeData(encodedId);
+        appendFileBlock(input, "OSMData", data);
+    }
+
+    const expected = serialSummary(input);
+
+    foreach (workerCount; [1UL, 2UL, 3UL, 6UL])
+    {
+        foreach (queueCapacity; [1UL, 2UL, 4UL])
+        {
+            PbfParallelReadOptions options;
+            options.workerCount = workerCount;
+            options.queueCapacity = queueCapacity;
+
+            PbfParallelReader reader;
+            PbfReadSummary summary;
+            PbfReadStatus status;
+
+            assert(reader.readSummary(input, options, summary, status));
+            assert(status.ok);
+            assert(summary == expected);
+        }
+    }
+
+    PbfParallelReader defaultReader;
+    PbfReadSummary defaultSummary;
+    PbfReadStatus defaultStatus;
+    assert(defaultReader.readSummary(
+        input,
+        PbfParallelReadOptions.init,
+        defaultSummary,
+        defaultStatus));
+    assert(defaultStatus.ok);
+    assert(defaultSummary == expected);
+}
+
+unittest
+{
+    const good = makeNodeData(2);
+    const(ubyte)[] malformed = [0x80];
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    appendFileBlock(input, "OSMData", good);
+    appendFileBlock(input, "OSMData", malformed);
+    appendFileBlock(input, "OSMData", malformed);
+
+    PbfParallelReadOptions options;
+    options.workerCount = 3;
+    options.queueCapacity = 4;
+
+    PbfParallelReader reader;
+    PbfReadSummary summary;
+    PbfReadStatus status;
+
+    assert(!reader.readSummary(input, options, summary, status));
+    assert(status.error == PbfReadError.malformedInput);
+    assert(status.blockSequence == 2);
+    assert(summary == PbfReadSummary.init);
+}
+
+unittest
+{
+    const good = makeNodeData(2);
+
+    ubyte[] duplicateHeader;
+    appendFileBlock(duplicateHeader, "OSMHeader", null);
+    appendFileBlock(duplicateHeader, "OSMData", good);
+    appendFileBlock(duplicateHeader, "OSMHeader", null);
+
+    PbfParallelReadOptions options;
+    options.workerCount = 2;
+    options.queueCapacity = 4;
+
+    PbfParallelReader reader;
+    PbfReadSummary summary;
+    PbfReadStatus status;
+
+    assert(!reader.readSummary(
+        duplicateHeader,
+        options,
+        summary,
+        status));
+    assert(status.error == PbfReadError.duplicateHeader);
+    assert(status.blockSequence == 2);
+    assert(summary == PbfReadSummary.init);
+
+    assert(!reader.readSummary(null, options, summary, status));
+    assert(status.error == PbfReadError.missingHeader);
+    assert(summary == PbfReadSummary.init);
+
+    ubyte[] headerOnly;
+    appendFileBlock(headerOnly, "OSMHeader", null);
+    assert(reader.readSummary(headerOnly, options, summary, status));
+    assert(status.ok);
+    assert(summary.headerBlocks == 1);
+    assert(summary.dataBlocks == 0);
+}
