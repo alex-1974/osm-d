@@ -262,6 +262,168 @@ private:
 }
 
 /**
+ * Foreach adapter over semantic OSM Ways in one already-loaded PBF file.
+ *
+ * Natural traversal retains whole-file validation. An early foreach exit stops
+ * parsing immediately after the Way that produced the control value and leaves
+ * the unvisited suffix deliberately unvalidated.
+ */
+struct PbfWayIterable
+{
+private:
+    const(ubyte)[] input;
+    PbfReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(return scope const(ubyte)[] value)
+        @safe pure nothrow @nogc
+    {
+        input = value;
+    }
+
+public:
+    /** Status from the most recent foreach traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    /** True only when the most recent traversal reached the end of the file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    /** Iterate semantic Ways from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref WayView) @safe dg)
+        @safe
+    {
+        SafeWayForeachSink sink = SafeWayForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate semantic Ways from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref WayView) @system dg)
+        @system
+    {
+        SystemWayForeachSink sink = SystemWayForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+
+        if (!iterateSelected!decodeWayDataBlock(
+                input,
+                workspace,
+                sink,
+                control,
+                _status))
+        {
+            return 0;
+        }
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
+ * Foreach adapter over semantic OSM Relations in one already-loaded PBF file.
+ *
+ * Natural traversal retains whole-file validation. An early foreach exit stops
+ * parsing immediately after the Relation that produced the control value and
+ * leaves the unvisited suffix deliberately unvalidated.
+ */
+struct PbfRelationIterable
+{
+private:
+    const(ubyte)[] input;
+    PbfReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(return scope const(ubyte)[] value)
+        @safe pure nothrow @nogc
+    {
+        input = value;
+    }
+
+public:
+    /** Status from the most recent foreach traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    /** True only when the most recent traversal reached the end of the file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    /** Iterate semantic Relations from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref RelationView) @safe dg)
+        @safe
+    {
+        SafeRelationForeachSink sink = SafeRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate semantic Relations from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref RelationView) @system dg)
+        @system
+    {
+        SystemRelationForeachSink sink = SystemRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+
+        if (!iterateSelected!decodeRelationDataBlock(
+                input,
+                workspace,
+                sink,
+                control,
+                _status))
+        {
+            return 0;
+        }
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
