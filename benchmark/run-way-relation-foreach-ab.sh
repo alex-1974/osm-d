@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${OSM_D_ROOT:-$HOME/Programmiersprachen/dlang/d-geospatial-workspace/libs/osm-d}"
 BRANCH="feat/pbf-way-relation-foreach"
-CAND="a5ef33028686351077a6a6397c281c5772753a1b"
+CAND="bc37345630a08807ca3506ac9b25db7858f35a2f"
 DATASET_ID="${D_OSM_BENCH_DATASET:-bremen-260901}"
 CPU="${D_OSM_BENCH_CPU:-5}"
 BLOCKS="${D_OSM_BENCH_BLOCKS:-5}"
@@ -449,7 +449,7 @@ run_pinned() { taskset -c "$CPU" "$@"; }
 extract_semantics() { grep -E '^(elements|tags_seen|children_seen|metadata_elements|checksum)='; }
 elapsed_ns() { awk -F= '/^elapsed_ns=/ {print $2; exit}'; }
 
-modes=(way-core way-full relation-core relation-full)
+read -r -a modes <<< "${D_OSM_BENCH_MODES:-way-core way-full relation-core relation-full}"
 
 echo
 echo '=== SEMANTIC PARITY ==='
@@ -538,7 +538,7 @@ with open(path, newline="") as f:
             int(row["elapsed_ns"]) / 1e6
         )
 
-for mode in ("way-core", "way-full", "relation-core", "relation-full"):
+for mode in dict.fromkeys(row["mode"] for row in csv.DictReader(open(path, newline=""))):
     print(f"[{mode}]")
     med = {}
     for impl in ("direct", "foreach"):
