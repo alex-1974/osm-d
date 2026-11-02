@@ -39,13 +39,23 @@ framing -> bounded jobs -> parallel decompress/decode -> optional ordered merge 
 Blocks receive monotonically increasing sequence numbers. Workers may finish
 out of order. APIs that promise input order reassemble output by sequence.
 
-## Arena policy
+## Scratch-storage policy
 
-Each worker owns a reusable block arena. Typical temporary allocations include
-StringTable indices, unusual protobuf segment lists and other block-scoped
-metadata. Resetting an arena is O(1).
+The single-thread reader reuses one caller-owned `PbfReaderWorkspace`.
+Its decompression buffer, StringTable index storage, and Way decode-plan
+storage may grow when a larger block requires more capacity. The inner
+validated element decoders remain `@nogc`; workspace growth is the deliberate
+allocation boundary.
 
-The arena is not a substitute for the long-lived dataset store.
+The parallel summary reader applies the same rule per worker: each worker owns
+one reusable `PbfReaderWorkspace` and processes multiple queued OSMData jobs
+with that scratch. Whole-buffer jobs borrow immutable Blob slices instead of
+copying compressed payloads. The queue is fixed-capacity, so producer memory
+cannot grow with the number of file blocks.
+
+A separate worker-local linear arena is added only if measured temporary
+allocation pressure requires one. Scratch storage is not a substitute for the
+long-lived dataset store.
 
 ## Fast and slow paths
 
