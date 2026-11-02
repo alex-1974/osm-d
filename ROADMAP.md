@@ -48,7 +48,7 @@
   - [x] Way `foreach` adapter.
   - [x] Relation `foreach` adapter.
 - [x] Direct sink API.
-- [ ] `@nogc` hot-path audit.
+- [x] `@nogc` hot-path audit.
 - [ ] Peak-memory benchmark.
 - [ ] Thread-scaling benchmark.
 - [ ] Profile-guided optimization only after baseline stability.
