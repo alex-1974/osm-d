@@ -19,7 +19,7 @@
 - [x] Correct support for packed, unpacked and segmented repeated scalars.
 - [x] Structured non-allocating decode errors.
 - [ ] Worker-local linear arena.
-- [ ] Reusable owned/borrowed block buffers.
+- [x] Reusable owned/borrowed block buffers.
 - [ ] Fuzz and malformed-input harnesses for the wire layer.
 
 ## Phase 2 — PBF vertical slice
@@ -40,8 +40,8 @@
 
 ## Phase 3 — Production PBF reader
 
-- [ ] Bounded producer/worker pipeline.
-- [ ] Parallel decompression and decode.
+- [x] Bounded producer/worker pipeline.
+- [x] Parallel decompression and decode.
 - [ ] Ordered merge mode.
 - [x] Public D range/foreach adapters.
   - [x] Node `foreach` adapter.
@@ -49,8 +49,8 @@
   - [x] Relation `foreach` adapter.
 - [x] Direct sink API.
 - [x] `@nogc` hot-path audit.
-- [ ] Peak-memory benchmark.
-- [ ] Thread-scaling benchmark.
+- [x] Peak-memory benchmark.
+- [x] Thread-scaling benchmark.
 - [ ] Profile-guided optimization only after baseline stability.
 
 ## Phase 4 — Raw/loss-aware round trip
