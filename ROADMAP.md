@@ -43,7 +43,10 @@
 - [ ] Bounded producer/worker pipeline.
 - [ ] Parallel decompression and decode.
 - [ ] Ordered merge mode.
-- [ ] Public D range adapter.
+- [ ] Public D range/foreach adapters.
+  - [x] Node `foreach` adapter.
+  - [ ] Way `foreach` adapter.
+  - [ ] Relation `foreach` adapter.
 - [x] Direct sink API.
 - [ ] `@nogc` hot-path audit.
 - [ ] Peak-memory benchmark.
