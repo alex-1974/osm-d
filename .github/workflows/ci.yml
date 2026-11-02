@@ -82,3 +82,14 @@ jobs:
             --build=release \
             --build-mode=allAtOnce \
             --force
+
+      - name: Temporary Bremen parallel qualification
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        env:
+          D_OSM_BENCH_COMPILER: "$DC"
+          D_OSM_SCALING_DATASET: bremen-260901
+          D_OSM_SCALING_SAMPLES: "3"
+          D_OSM_SCALING_MAX_WORKERS: "4"
+          D_OSM_SCALING_QUEUE_FACTOR: "2"
+        run: bash benchmark/run-parallel-summary-scaling.sh
