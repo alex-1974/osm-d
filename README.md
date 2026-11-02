@@ -170,6 +170,42 @@ therefore do not need to zip PBF reference and coordinate columns themselves.
 The remaining semantic-view unification is tracked separately from the reader
 orchestration.
 
+### Parallel validated summary decoding
+
+When only complete-file validation and aggregate counts are required,
+`PbfParallelReader` can decode independent OSMData blocks concurrently
+without exposing borrowed element views across worker threads:
+
+```d
+PbfParallelReader reader;
+PbfParallelReadOptions options;
+options.workerCount = 4;
+options.queueCapacity = 8;
+
+PbfReadSummary summary;
+PbfReadStatus status;
+
+if (!reader.readSummary(pbfBytes, options, summary, status))
+{
+    // status identifies the earliest failing file block.
+}
+```
+
+Framing and HeaderBlock validation remain serial. OSMData jobs then enter a
+fixed-capacity producer/worker queue. Jobs borrow immutable Blob slices from
+the already-loaded input, while each worker owns and reuses one
+`PbfReaderWorkspace` for decompression and block decode. All workers join
+before `readSummary` returns.
+
+This first parallel API is intentionally summary-only. It does not invoke one
+arbitrary consumer handler concurrently and does not materialize semantic
+elements merely to extend worker-buffer lifetimes. `PbfReader.read` remains
+the ordered direct-sink API; ordered parallel element delivery is a separate
+future step.
+
+Zero-valued options select practical defaults: available CPU count for workers
+and one queued job slot per worker.
+
 ### Iterating semantic elements with `foreach`
 
 `PbfReader.nodes`, `PbfReader.ways`, and `PbfReader.relations` provide
