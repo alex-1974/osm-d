@@ -49,6 +49,8 @@ DATA="$DATA_DIR/$DATASET_FILE"
 
 cat >> "$WT/source/osm/io/pbf/reader.d" <<'D'
 
+import osm.view.metadata : MetadataView;
+
 /*
  * TEMPORARY BENCHMARK HOOK.
  *
