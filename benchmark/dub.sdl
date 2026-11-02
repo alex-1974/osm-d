@@ -98,3 +98,13 @@ configuration "parser-memory-baseline" {
     importPaths "parser"
     mainSourceFile "parser/memory_baseline.d"
 }
+
+
+configuration "parser-parallel-summary" {
+    targetType "executable"
+    targetName "osm-d-bench-parallel-summary"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/parallel_summary.d"
+}
