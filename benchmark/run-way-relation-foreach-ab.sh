@@ -25,8 +25,10 @@ cd "$ROOT"
 echo '=== FETCH / VERIFY ==='
 git fetch origin develop "$BRANCH"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
-echo "candidate: $REMOTE"
-[[ "$REMOTE" = "$CAND" ]] || fail "candidate moved: expected $CAND, got $REMOTE"
+echo "branch head: $REMOTE"
+echo "candidate:   $CAND"
+git merge-base --is-ancestor "$CAND" "origin/$BRANCH" ||
+    fail "candidate $CAND is not an ancestor of origin/$BRANCH"
 
 WT="$(mktemp -d /tmp/osm-d-way-relation-foreach-wt.XXXXXX)"
 TMP="$(mktemp -d /tmp/osm-d-way-relation-foreach-src.XXXXXX)"
