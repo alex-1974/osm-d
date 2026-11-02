@@ -68,17 +68,19 @@ The current pre-1.0 surface is classified as follows:
 
 - `osm` is the curated package root. It re-exports the consumer-facing
   whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
-  `PbfNodeIterable`, `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`)
-  plus the
-  format-independent semantic node/identity/location/metadata/tag/member/way-node
-  vocabulary (`NodeView`, `OsmId`, `ElementType`, `LocationView`,
-  `MetadataView`, `TagView`, `RelationMemberView`, `WayNodeView`).
-  `NodeView` is the one concrete callback/foreach value type used for regular
-  Node and DenseNodes encoding. `PbfNodeIterable` is the node-only convenience
-  adapter returned by `PbfReader.nodes`; it is an `opApply` foreach adapter,
-  not a resumable Phobos InputRange. It does not re-export
-  the evolving low-level
-  PBF or wire implementation surface.
+  `PbfNodeIterable`, `PbfWayIterable`, `PbfRelationIterable`,
+  `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
+  format-independent semantic node/way/relation/identity/location/metadata/tag/
+  member/way-node vocabulary (`NodeView`, `WayView`, `RelationView`,
+  `OsmId`, `ElementType`, `LocationView`, `MetadataView`, `TagView`,
+  `RelationMemberView`, `WayNodeView`). `NodeView` is the one concrete
+  callback/foreach value type used for regular Node and DenseNodes encoding.
+  `PbfNodeIterable`, `PbfWayIterable`, and `PbfRelationIterable` are the
+  element-specific convenience adapters returned by `PbfReader.nodes`,
+  `PbfReader.ways`, and `PbfReader.relations`; they use `opApply` rather
+  than pretending the synchronous decoder is a resumable Phobos InputRange.
+  The package root does not re-export the evolving low-level PBF or wire
+  implementation surface.
 - `osm.view.element`, `osm.view.location`, `osm.view.metadata`,
   `osm.view.tag`, `osm.view.relation_member`, and `osm.view.way_node` are
   supported semantic direct-import APIs. The `ElementType`, `OsmId`,
@@ -108,11 +110,12 @@ consumers. Stable direct imports, callable parameter names, template
 instantiability, and representative named-argument forms must then be protected
 by external-consumer compile tests across the supported compiler matrix.
 
-The node foreach boundary has additional executable lifetime checks. External
-`@safe` consumer compilation verifies normal foreach use. DIP1000
-compile-negative tests verify that an iterable borrowing stack-local input
-bytes cannot escape and that a pointer to the callback-scoped `NodeView`
-cannot escape the foreach body. A complete traversal has the same whole-file
+The element-specific foreach boundaries have additional executable lifetime
+checks. External `@safe` consumer compilation verifies normal Node, Way, and
+Relation foreach use. DIP1000 compile-negative tests verify that iterables
+borrowing stack-local input bytes cannot escape and that pointers to
+callback-scoped `NodeView`, `WayView`, or `RelationView` values cannot
+escape their foreach bodies. A complete traversal has the same whole-file
 validation scope as `PbfReader.read`; an explicit early foreach exit is an
 intentional partial traversal and leaves the unvisited suffix unvalidated.
 
