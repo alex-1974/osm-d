@@ -450,6 +450,20 @@ struct PbfReader
         return PbfNodeIterable(input);
     }
 
+    /** Return a foreach adapter over semantic Ways in `input`. */
+    PbfWayIterable ways(return scope const(ubyte)[] input)
+        @safe pure nothrow @nogc
+    {
+        return PbfWayIterable(input);
+    }
+
+    /** Return a foreach adapter over semantic Relations in `input`. */
+    PbfRelationIterable relations(return scope const(ubyte)[] input)
+        @safe pure nothrow @nogc
+    {
+        return PbfRelationIterable(input);
+    }
+
     /**
      * Decode one complete already-loaded .osm.pbf byte sequence.
      *
