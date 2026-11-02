@@ -2172,3 +2172,135 @@ unittest
     assert(prefix.status.ok);
     assert(!prefix.completed);
 }
+
+
+// PbfWayIterable natural completion and early stop.
+unittest
+{
+    ubyte[] way;
+    appendVarintField(way, 1, 7);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 3, way);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+    auto ways = reader.ways(input);
+
+    size_t count;
+    long idSum;
+    foreach (scope ref WayView value; ways)
+    {
+        ++count;
+        idSum += value.id;
+    }
+
+    assert(ways.status.ok);
+    assert(ways.completed);
+    assert(count == 1);
+    assert(idSum == 7);
+
+    ubyte[] suffixGroup;
+    appendLengthDelimited(suffixGroup, 3, way);
+    appendLengthDelimited(suffixGroup, 4, null); // malformed Relation
+
+    ubyte[] suffixInput;
+    appendFileBlock(suffixInput, "OSMHeader", null);
+    const suffixData = makePrimitiveBlock(suffixGroup);
+    appendFileBlock(suffixInput, "OSMData", suffixData);
+
+    auto complete = reader.ways(suffixInput);
+    count = 0;
+    foreach (scope ref WayView value; complete)
+    {
+        ++count;
+        assert(value.id == 7);
+    }
+
+    assert(count == 1);
+    assert(!complete.completed);
+    assert(complete.status.error == PbfReadError.malformedInput);
+
+    auto prefix = reader.ways(suffixInput);
+    count = 0;
+    foreach (scope ref WayView value; prefix)
+    {
+        ++count;
+        assert(value.id == 7);
+        break;
+    }
+
+    assert(count == 1);
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+}
+
+
+// PbfRelationIterable natural completion and early stop.
+unittest
+{
+    ubyte[] relation;
+    appendVarintField(relation, 1, 9);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 4, relation);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    PbfReader reader;
+    auto relations = reader.relations(input);
+
+    size_t count;
+    long idSum;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++count;
+        idSum += value.id;
+    }
+
+    assert(relations.status.ok);
+    assert(relations.completed);
+    assert(count == 1);
+    assert(idSum == 9);
+
+    ubyte[] malformedGroup;
+    appendLengthDelimited(malformedGroup, 4, null);
+
+    ubyte[] suffixInput;
+    appendFileBlock(suffixInput, "OSMHeader", null);
+    appendFileBlock(suffixInput, "OSMData", data);
+    const malformedData = makePrimitiveBlock(malformedGroup);
+    appendFileBlock(suffixInput, "OSMData", malformedData);
+
+    auto complete = reader.relations(suffixInput);
+    count = 0;
+    foreach (scope ref RelationView value; complete)
+    {
+        ++count;
+        assert(value.id == 9);
+    }
+
+    assert(count == 1);
+    assert(!complete.completed);
+    assert(complete.status.error == PbfReadError.malformedInput);
+
+    auto prefix = reader.relations(suffixInput);
+    count = 0;
+    foreach (scope ref RelationView value; prefix)
+    {
+        ++count;
+        assert(value.id == 9);
+        break;
+    }
+
+    assert(count == 1);
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+}
