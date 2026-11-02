@@ -1033,6 +1033,10 @@ public:
     void put(scope ref RelationView) @safe nothrow @nogc {}
 }
 
+// Keep the compile-time-selected data-block target visible to the caller so
+// LDC can specialize the convenience traversal as aggressively as the
+// dedicated node foreach path.
+pragma(inline, true)
 private bool iterateSelected(alias decodeSelectedDataBlock, Sink)(
     const(ubyte)[] input,
     ref PbfReaderWorkspace workspace,
