@@ -51,7 +51,8 @@ import osm.io.pbf.primitive_group :
 import osm.io.pbf.relation :
     RelationDecodeSummary,
     RelationView,
-    decodeRelations;
+    decodeRelations,
+    decodeRelationsUntilStop;
 import osm.io.pbf.string_table :
     StringRef,
     StringTableView,
@@ -60,7 +61,8 @@ import osm.io.pbf.way :
     WayDecodePlan,
     WayDecodeSummary,
     WayView,
-    decodeWaysWithWorkspace;
+    decodeWaysWithWorkspace,
+    decodeWaysWithWorkspaceUntilStop;
 import osm.wire.cursor : WireCursor;
 
 /** High-level category of a complete-file PBF read failure. */
