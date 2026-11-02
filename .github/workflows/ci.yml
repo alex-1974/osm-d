@@ -71,3 +71,14 @@ jobs:
             --build=release \
             --build-mode=allAtOnce \
             --force
+
+      - name: Build parallel summary benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=parser-parallel-summary \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
