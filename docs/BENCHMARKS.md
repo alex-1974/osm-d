@@ -111,6 +111,49 @@ their `@nogc` inner contracts. The deliberate allocation boundary is reusable
 workspace growth plus the fixed parallel queue/worker setup, not per-element
 allocation.
 
+### Bremen parallel-reader qualification — 2026-11-02
+
+The final pipeline candidate `d34dd81ad9de1e631b2f9165428379ac869b5ffa`
+was exercised on the pinned `bremen-260901` dataset with LDC 1.41.0 on a
+GitHub-hosted Ubuntu runner exposing four logical CPUs. This run is retained as
+functional/scaling evidence for the architecture, not as a substitute for the
+controlled workstation performance baseline.
+
+Serial and parallel summaries matched exactly for one, two, and four workers:
+
+- nodes: 1,662,874;
+- ways: 328,626;
+- relations: 5,985;
+- tags: 2,073,595.
+
+The bounded queue used two slots per worker. Three measured samples per mode
+produced:
+
+| Mode | p50 elapsed | Speedup vs serial | p50 peak RSS |
+| --- | ---: | ---: | ---: |
+| serial `PbfReader` | 700.879 ms | 1.00x | 28,580 KiB |
+| parallel, 1 worker | 728.658 ms | 0.96x | 33,188 KiB |
+| parallel, 2 workers | 387.254 ms | 1.81x | 34,104 KiB |
+| parallel, 4 workers | 330.516 ms | 2.12x | 46,456 KiB |
+
+One worker is intentionally not a faster serial implementation: it pays the
+bounded queue/thread orchestration cost while doing the same block work.
+Two workers nearly halve the measured wall time; four workers improve further,
+with diminishing scaling as serial framing, synchronization, memory bandwidth,
+and other non-parallel work become material.
+
+The reusable-workspace allocation baseline on the same Bremen input measured
+4,694,192 D-GC bytes on the first complete read while scratch buffers grew.
+The second and third complete reads each measured **0 D-GC bytes** and
+**0 collections**. The dedicated baseline process recorded 28,512 KiB peak
+RSS. This qualifies the intended steady-state contract: after workspace
+warm-up, repeated serial decode of an equal-or-smaller workload performs no
+D-GC allocation in the measured reader path.
+
+Country-scale Austria remains available as the stress/peak-memory workload and
+should be run on the controlled workstation before publishing hardware-specific
+memory or throughput claims.
+
 ## Node foreach adapter qualification — 2026-11-02
 
 Question: does the first public `PbfReader.nodes` / `opApply` convenience
