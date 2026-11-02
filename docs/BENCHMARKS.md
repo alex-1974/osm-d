@@ -72,6 +72,47 @@ PBF -> model/raw representation -> PBF
 
 Measure both throughput and semantic equality.
 
+## Node foreach adapter qualification — 2026-11-02
+
+Question: does the first public `PbfReader.nodes` / `opApply` convenience
+adapter add material overhead compared with the existing direct semantic sink?
+
+The controlled comparison used the same candidate commit for both paths so the
+measurement isolates adapter cost rather than unrelated parser changes:
+
+- candidate: `af6e112d5120a38aa5b45a8af708d438d159d16c`;
+- pinned dataset: `bremen-260901`;
+- compiler: LDC 1.41.0 release build;
+- one pinned logical CPU;
+- five balanced four-position blocks per mode;
+- 30-second post-build and inter-mode cooldowns;
+- identical whole-file validation scope for complete traversal.
+
+Two consumer workloads were measured:
+
+- `core`: node ID, location, and metadata;
+- `tags`: the same work plus full semantic node-tag traversal.
+
+Semantic outputs matched exactly:
+
+- nodes: 1,662,874;
+- tag values traversed in `tags`: 438,639;
+- metadata nodes: 1,662,874;
+- checksums identical between direct sink and foreach in both modes.
+
+Median results:
+
+| Mode | Direct sink p50 | Foreach p50 | Foreach/direct |
+| --- | ---: | ---: | ---: |
+| core | 738.976 ms | 744.649 ms | +0.77% |
+| tags | 829.832 ms | 828.084 ms | -0.21% |
+
+The tag series showed substantial run-to-run spread, so the small negative
+delta is not interpreted as a speedup. The architectural conclusion is
+performance parity: the convenience adapter does not impose a material
+whole-reader regression on the measured city workload.
+
+
 ## First executable microbenchmark: varint
 
 `benchmark/micro/varint.d` establishes the first hot-path baseline. After the
