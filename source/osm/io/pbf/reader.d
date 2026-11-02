@@ -1033,6 +1033,547 @@ public:
     void put(scope ref RelationView) @safe nothrow @nogc {}
 }
 
+private bool iterateSelected(alias decodeSelectedDataBlock, Sink)(
+    const(ubyte)[] input,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    out int control,
+    out PbfReadStatus status)
+{
+    control = 0;
+    status = PbfReadStatus.init;
+
+    auto cursor = WireCursor(input);
+    bool sawHeader;
+    bool sawData;
+    ulong sequence;
+
+    while (true)
+    {
+        const blockOffset = cursor.offset;
+        FileBlockView fileBlock;
+        PbfStatus pbfStatus;
+        const frameResult =
+            readFileBlock(cursor, sequence, fileBlock, pbfStatus);
+
+        final switch (frameResult)
+        {
+            case FrameReadResult.endOfInput:
+                break;
+
+            case FrameReadResult.error:
+                status = fromPbfFailure(
+                    sequence,
+                    blockOffset,
+                    pbfStatus);
+                return false;
+
+            case FrameReadResult.block:
+                BlobView blob;
+                if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                const outputSize = requiredOutputSize(blob);
+                if (workspace.decompressionBuffer.length < outputSize)
+                    workspace.decompressionBuffer.length = outputSize;
+
+                BlobPayloadView payload;
+                if (!decodeBlobPayloadInto(
+                        blob,
+                        workspace.decompressionBuffer,
+                        payload,
+                        pbfStatus))
+                {
+                    status = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                final switch (fileBlock.header.kind)
+                {
+                    case BlobKind.osmHeader:
+                        if (sawHeader || sawData)
+                        {
+                            status = readerFailure(
+                                PbfReadError.duplicateHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        HeaderBlockView header;
+                        if (!decodeHeaderBlock(
+                                payload.bytes,
+                                header,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        HeaderFeatureAssessment assessment;
+                        if (!validateRequiredFeatures(
+                                header,
+                                HeaderFeatureSupport.allKnown(),
+                                assessment,
+                                pbfStatus))
+                        {
+                            status = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        sawHeader = true;
+                        break;
+
+                    case BlobKind.osmData:
+                        if (!sawHeader)
+                        {
+                            status = readerFailure(
+                                PbfReadError.dataBeforeHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        sawData = true;
+                        if (!decodeSelectedDataBlock(
+                                payload.bytes,
+                                workspace,
+                                sink,
+                                control,
+                                sequence,
+                                fileBlock.offset,
+                                status))
+                        {
+                            return false;
+                        }
+
+                        if (control != 0)
+                            return true;
+                        break;
+
+                    case BlobKind.unknown:
+                        status = readerFailure(
+                            PbfReadError.unsupportedBlockType,
+                            sequence,
+                            fileBlock.offset);
+                        return false;
+                }
+
+                ++sequence;
+                continue;
+        }
+
+        break;
+    }
+
+    if (!sawHeader)
+    {
+        status = readerFailure(
+            PbfReadError.missingHeader,
+            sequence,
+            input.length);
+        return false;
+    }
+
+    status = PbfReadStatus.init;
+    return true;
+}
+
+private bool decodeWayDataBlock(Sink)(
+    const(ubyte)[] payloadBytes,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref int control,
+    ulong sequence,
+    size_t fileBlockOffset,
+    out PbfReadStatus readStatus)
+{
+    PbfStatus status;
+
+    PrimitiveBlockLayout block;
+    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    if (workspace.stringRefs.length < block.stringCount)
+        workspace.stringRefs.length = block.stringCount;
+
+    StringTableView table;
+    if (!buildStringTableView(
+            block,
+            workspace.stringRefs[0 .. block.stringCount],
+            table,
+            status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    auto groups = block.primitiveGroups;
+    while (!groups.empty)
+    {
+        const groupRef = groups.front;
+        groups.popFront();
+
+        PrimitiveGroupLayout group;
+        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (group.changeSetOccurrences != 0)
+        {
+            readStatus = readerFailure(
+                PbfReadError.unsupportedChangeSet,
+                sequence,
+                fileBlockOffset);
+            return false;
+        }
+
+        DenseNodeDecodeSummary denseSummary;
+        if (!decodeDenseNodes(
+                block,
+                group,
+                table,
+                sink,
+                denseSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
+                block,
+                group,
+                table,
+                sink,
+                nodeSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (workspace.wayPlans.length < group.wayOccurrences)
+            workspace.wayPlans.length = group.wayOccurrences;
+
+        WayDecodeSummary waySummary;
+        if (!decodeWaysWithWorkspaceUntilStop(
+                block,
+                group,
+                table,
+                workspace.wayPlans[0 .. group.wayOccurrences],
+                sink,
+                control,
+                waySummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+
+        RelationDecodeSummary relationSummary;
+        if (!decodeRelations(
+                block,
+                group,
+                table,
+                sink,
+                relationSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+    }
+
+    readStatus = PbfReadStatus.init;
+    return true;
+}
+
+private bool decodeRelationDataBlock(Sink)(
+    const(ubyte)[] payloadBytes,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref int control,
+    ulong sequence,
+    size_t fileBlockOffset,
+    out PbfReadStatus readStatus)
+{
+    PbfStatus status;
+
+    PrimitiveBlockLayout block;
+    if (!decodePrimitiveBlockLayout(payloadBytes, block, status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    if (workspace.stringRefs.length < block.stringCount)
+        workspace.stringRefs.length = block.stringCount;
+
+    StringTableView table;
+    if (!buildStringTableView(
+            block,
+            workspace.stringRefs[0 .. block.stringCount],
+            table,
+            status))
+    {
+        readStatus = fromPbfFailure(
+            sequence,
+            fileBlockOffset,
+            status);
+        return false;
+    }
+
+    auto groups = block.primitiveGroups;
+    while (!groups.empty)
+    {
+        const groupRef = groups.front;
+        groups.popFront();
+
+        PrimitiveGroupLayout group;
+        if (!decodePrimitiveGroupLayout(groupRef.bytes, group, status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (group.changeSetOccurrences != 0)
+        {
+            readStatus = readerFailure(
+                PbfReadError.unsupportedChangeSet,
+                sequence,
+                fileBlockOffset);
+            return false;
+        }
+
+        DenseNodeDecodeSummary denseSummary;
+        if (!decodeDenseNodes(
+                block,
+                group,
+                table,
+                sink,
+                denseSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        pbfNode.NodeDecodeSummary nodeSummary;
+        if (!pbfNode.decodeNodes(
+                block,
+                group,
+                table,
+                sink,
+                nodeSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (workspace.wayPlans.length < group.wayOccurrences)
+            workspace.wayPlans.length = group.wayOccurrences;
+
+        WayDecodeSummary waySummary;
+        if (!decodeWaysWithWorkspace(
+                block,
+                group,
+                table,
+                workspace.wayPlans[0 .. group.wayOccurrences],
+                sink,
+                waySummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        RelationDecodeSummary relationSummary;
+        if (!decodeRelationsUntilStop(
+                block,
+                group,
+                table,
+                sink,
+                control,
+                relationSummary,
+                status))
+        {
+            readStatus = fromPbfFailure(
+                sequence,
+                fileBlockOffset,
+                status);
+            return false;
+        }
+
+        if (control != 0)
+        {
+            readStatus = PbfReadStatus.init;
+            return true;
+        }
+    }
+
+    readStatus = PbfReadStatus.init;
+    return true;
+}
+
+private struct SafeWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @safe dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @safe value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @safe
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SystemWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @system dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @system value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @system
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SafeRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @safe dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @safe value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @safe
+    {
+        return dg(relation);
+    }
+}
+
+private struct SystemRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @system dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @system value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @system
+    {
+        return dg(relation);
+    }
+}
+
 private bool decodeDataBlock(Sink)(
     const(ubyte)[] payloadBytes,
     ref PbfReaderWorkspace workspace,
