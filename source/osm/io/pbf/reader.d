@@ -297,12 +297,36 @@ public:
         return _completed;
     }
 
+    /**
+     * Iterate Ways from an @safe nothrow @nogc foreach body.
+     *
+     * This stronger overload preserves the callback attributes through the
+     * stop-aware Way emission pass so optimized consumers do not lose the
+     * direct sink's nothrow/@nogc code-generation contract.
+     */
+    int opApply(
+        scope int delegate(scope ref WayView) @safe nothrow @nogc dg)
+        @safe
+    {
+        SafeNoGcWayForeachSink sink = SafeNoGcWayForeachSink(dg);
+        return apply(sink);
+    }
+
     /** Iterate semantic Ways from an @safe foreach body. */
     int opApply(
         scope int delegate(scope ref WayView) @safe dg)
         @safe
     {
         SafeWayForeachSink sink = SafeWayForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate Ways from an @system nothrow @nogc foreach body. */
+    int opApply(
+        scope int delegate(scope ref WayView) @system nothrow @nogc dg)
+        @system
+    {
+        SystemNoGcWayForeachSink sink = SystemNoGcWayForeachSink(dg);
         return apply(sink);
     }
 
@@ -378,12 +402,35 @@ public:
         return _completed;
     }
 
+    /**
+     * Iterate Relations from an @safe nothrow @nogc foreach body.
+     *
+     * This keeps the complete stop-aware Relation emission pass eligible for
+     * the same nothrow/@nogc optimization assumptions as the direct sink.
+     */
+    int opApply(
+        scope int delegate(scope ref RelationView) @safe nothrow @nogc dg)
+        @safe
+    {
+        SafeNoGcRelationForeachSink sink = SafeNoGcRelationForeachSink(dg);
+        return apply(sink);
+    }
+
     /** Iterate semantic Relations from an @safe foreach body. */
     int opApply(
         scope int delegate(scope ref RelationView) @safe dg)
         @safe
     {
         SafeRelationForeachSink sink = SafeRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+    /** Iterate Relations from an @system nothrow @nogc foreach body. */
+    int opApply(
+        scope int delegate(scope ref RelationView) @system nothrow @nogc dg)
+        @system
+    {
+        SystemNoGcRelationForeachSink sink = SystemNoGcRelationForeachSink(dg);
         return apply(sink);
     }
 
@@ -1482,6 +1529,100 @@ private bool decodeRelationDataBlock(Sink)(
 
     readStatus = PbfReadStatus.init;
     return true;
+}
+
+private struct SafeNoGcWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @safe nothrow @nogc dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @safe nothrow @nogc value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @safe nothrow @nogc
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SystemNoGcWayForeachSink
+{
+private:
+    int delegate(scope ref WayView) @system nothrow @nogc dg;
+
+public:
+    this(scope int delegate(scope ref WayView) @system nothrow @nogc value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+
+    int put(scope ref WayView way) @system nothrow @nogc
+    {
+        return dg(way);
+    }
+
+    void put(scope ref RelationView) @safe nothrow @nogc {}
+}
+
+private struct SafeNoGcRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @safe nothrow @nogc dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @safe nothrow @nogc value)
+        @trusted nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @safe nothrow @nogc
+    {
+        return dg(relation);
+    }
+}
+
+private struct SystemNoGcRelationForeachSink
+{
+private:
+    int delegate(scope ref RelationView) @system nothrow @nogc dg;
+
+public:
+    this(scope int delegate(scope ref RelationView) @system nothrow @nogc value)
+        @system nothrow @nogc
+    {
+        dg = value;
+    }
+
+    void putDenseNodeScalars(long, long, long) @safe nothrow @nogc {}
+    void put(scope ref DenseNodeView) @safe nothrow @nogc {}
+    void put(scope ref pbfNode.NodeView) @safe nothrow @nogc {}
+    void put(scope ref WayView) @safe nothrow @nogc {}
+
+    int put(scope ref RelationView relation) @system nothrow @nogc
+    {
+        return dg(relation);
+    }
 }
 
 private struct SafeWayForeachSink
