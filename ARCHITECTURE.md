@@ -40,14 +40,15 @@ file / stream
     |
     v
 framing reader
-    | BlockJob(sequence, kind, owned compressed buffer)
+    | whole-buffer API: borrowed immutable Blob slice
+    | future streaming API: owned/pool-backed bytes when required
     v
 bounded work queue
     |
     +---------------- worker N ----------------+
     | decompress into reusable worker buffer   |
     | scan protobuf -> block layout             |
-    | index StringTable in worker arena         |
+    | index StringTable in worker workspace     |
     | decode PrimitiveGroups                    |
     | decode varints / zigzag / deltas          |
     | structural validation                     |
@@ -98,7 +99,10 @@ the codec retains its own cursor and backing-state representation.
 ## Borrowed and owned data
 
 A borrowed view may reference the current decompressed block, StringTable or
-worker arena. It must not outlive that block.
+worker workspace. It must not outlive that block. Whole-buffer parallel jobs
+may borrow immutable Blob slices directly from the caller's complete input
+because every worker is joined before the read returns. Worker decompression
+and decode scratch remains worker-owned and reusable.
 
 Long-lived data is created explicitly:
 

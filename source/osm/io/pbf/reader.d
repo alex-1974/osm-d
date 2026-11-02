@@ -154,6 +154,32 @@ private:
 }
 
 /**
+ * Materialize one validated Blob payload using reusable reader scratch.
+ *
+ * This package-internal boundary lets block-level reader implementations share
+ * the existing decompression-buffer ownership without exposing workspace
+ * representation to consumers.
+ */
+package(osm)
+bool decodeReaderBlobPayload(
+    const BlobView blob,
+    ref PbfReaderWorkspace workspace,
+    out BlobPayloadView payload,
+    out PbfStatus status)
+    @safe
+{
+    const outputSize = requiredOutputSize(blob);
+    if (workspace.decompressionBuffer.length < outputSize)
+        workspace.decompressionBuffer.length = outputSize;
+
+    return decodeBlobPayloadInto(
+        blob,
+        workspace.decompressionBuffer,
+        payload,
+        status);
+}
+
+/**
  * Foreach adapter over semantic OSM nodes in one already-loaded PBF file.
  *
  * This is deliberately a foreach/opApply adapter rather than a Phobos
@@ -1574,7 +1600,8 @@ public:
     }
 }
 
-private bool decodeDataBlock(Sink)(
+package(osm)
+bool decodeDataBlock(Sink)(
     const(ubyte)[] payloadBytes,
     ref PbfReaderWorkspace workspace,
     ref Sink sink,
@@ -1798,7 +1825,8 @@ private void callRelation(Handler)(
     handler.relation(relation);
 }
 
-private PbfReadStatus readerFailure(
+package(osm)
+PbfReadStatus readerFailure(
     PbfReadError error,
     ulong sequence,
     size_t blockOffset)
@@ -1811,7 +1839,8 @@ private PbfReadStatus readerFailure(
     return result;
 }
 
-private PbfReadStatus fromPbfFailure(
+package(osm)
+PbfReadStatus fromPbfFailure(
     ulong sequence,
     size_t blockOffset,
     PbfStatus detail)

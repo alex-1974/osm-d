@@ -69,7 +69,8 @@ The current pre-1.0 surface is classified as follows:
 - `osm` is the curated package root. It re-exports the consumer-facing
   whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
   `PbfNodeIterable`, `PbfWayIterable`, `PbfRelationIterable`,
-  `PbfReadSummary`, `PbfReadStatus`, `PbfReadError`) plus the
+  `PbfParallelReader`, `PbfParallelReadOptions`, `PbfReadSummary`,
+  `PbfReadStatus`, `PbfReadError`) plus the
   format-independent semantic node/way/relation/identity/location/metadata/tag/
   member/way-node vocabulary (`NodeView`, `WayView`, `RelationView`,
   `OsmId`, `ElementType`, `LocationView`, `MetadataView`, `TagView`,
@@ -90,8 +91,11 @@ The current pre-1.0 surface is classified as follows:
   consumer API design. The package-root `NodeView` is callback-scoped and
   deliberately non-copyable; semantic subviews and tag-range copies remain
   ordinary values.
-- `osm.io.pbf.reader` is the supported direct-import module for the same
-  consumer-facing PBF reader boundary exported by `osm`.
+- `osm.io.pbf.reader` is the supported direct-import module for the ordered
+  consumer-facing PBF reader boundary exported by `osm`. The curated root also
+  exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
+  module `osm.io.pbf.parallel_reader` is supported for the same summary-only
+  API.
 - Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
   Their documented decoding APIs may be used directly during pre-1.0
   development, but their module organization and callable signatures are not
@@ -153,6 +157,18 @@ provenance boundary. A separate source module can deliberately declare itself
 inside the same package namespace. Library correctness therefore does not treat
 `package(osm)` as protection against hostile code; it prevents ordinary external
 imports from depending on unsupported validation internals.
+
+## Parallel reader safety boundary
+
+`PbfParallelReader.readSummary` is intentionally a small `@trusted` boundary.
+The complete input remains alive for the call, queued jobs borrow immutable
+Blob slices from it, the queue has fixed capacity, each worker owns one
+`PbfReaderWorkspace`, and every worker is joined before return. No semantic
+element view crosses a worker boundary.
+
+The parallel API publishes only value-type summary/status results. Consumer
+callbacks remain the responsibility of the ordered `PbfReader.read` API until
+an explicit lifetime-preserving ordered-merge design is implemented.
 
 ## Build profiles
 
