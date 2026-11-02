@@ -238,3 +238,18 @@ void compileConsumer()
     }
     assert(relations.status.ok || !relations.completed);
 }
+
+
+@safe void compileSafeParallelSummary(const(ubyte)[] input)
+{
+    PbfParallelReader reader;
+    PbfParallelReadOptions options;
+    options.workerCount = 1;
+    options.queueCapacity = 1;
+
+    PbfReadSummary summary;
+    PbfReadStatus status;
+    const ok = reader.readSummary(input, options, summary, status);
+
+    assert(ok || !status.ok);
+}
