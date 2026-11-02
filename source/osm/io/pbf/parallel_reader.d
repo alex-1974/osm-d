@@ -116,11 +116,13 @@ struct PbfParallelReader
         auto queue = new PbfSummaryQueue(queueCapacity);
         auto workers = new PbfSummaryWorker[workerCount];
         auto group = new ThreadGroup;
+        bool joinAttempted;
 
         scope(failure)
         {
             queue.close();
-            group.joinAll(false);
+            if (!joinAttempted)
+                group.joinAll(false);
         }
 
         foreach (workerIndex; 0 .. workerCount)
@@ -194,6 +196,7 @@ struct PbfParallelReader
         }
 
         queue.close();
+        joinAttempted = true;
         group.joinAll();
 
         bool hasFailure = hasProducerFailure;
