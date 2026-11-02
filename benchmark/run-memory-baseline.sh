@@ -39,7 +39,7 @@ manifest="$repo/benchmark/datasets/geofabrik-2026-09-01.tsv"
 
 echo
 echo '=== ENVIRONMENT ==='
-"$compiler" --version | head -n 3
+"$compiler" --version
 uname -sr
 if command -v lscpu >/dev/null 2>&1; then
     lscpu | grep -E 'Model name|Socket|Core|Thread' || true
