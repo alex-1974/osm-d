@@ -78,7 +78,7 @@ elapsed_ns() {
 
 echo
 echo '=== ENVIRONMENT ==='
-"$compiler" --version | head -n 3
+"$compiler" --version
 uname -sr
 printf 'logical_cpus=%s\n' "$logical_cpus"
 printf 'worker_series=%s\n' "${workers[*]}"
