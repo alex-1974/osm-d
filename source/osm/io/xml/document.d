@@ -39,7 +39,7 @@ struct OsmXmlBounds
 struct OsmXmlDocumentInfo
 {
     bool hasVersion;
-    OwnedBytes version;
+    OwnedBytes versionText;
 
     bool hasGenerator;
     OwnedBytes generator;
@@ -90,7 +90,7 @@ unittest
 {
     OsmXmlDocument document;
     document.info.hasVersion = true;
-    document.info.version = cast(immutable(ubyte)[])"0.6";
+    document.info.versionText = cast(immutable(ubyte)[])"0.6";
     document.info.bounds ~= OsmXmlBounds(
         LocationView(48_000_000_000L, 16_000_000_000L),
         LocationView(49_000_000_000L, 17_000_000_000L));
