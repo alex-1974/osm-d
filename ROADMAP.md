@@ -60,7 +60,7 @@ Tracked by M3: #43.
 
 - [x] Bounded producer/worker pipeline.
 - [x] Parallel decompression and decode.
-- [ ] Ordered merge mode — architecture decision in #48.
+- [x] Ordered parallel element-delivery decision — borrowed merge deferred by ADR 0017; direct owned/store construction tracked in #64.
 - [x] Public D range/foreach adapters.
   - [x] Node `foreach` adapter.
   - [x] Way `foreach` adapter.
