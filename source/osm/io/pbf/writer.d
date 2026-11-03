@@ -13,6 +13,10 @@
  * compression remain representation optimizations rather than semantic
  * requirements.
  *
+ * This module serializes PBF bytes; it does not own filesystem, HTTP, range or
+ * stream transport. Workspace consumers use `transport-d` for those I/O
+ * concerns once its released package contract is available. See ADR 0019.
+ *
  * Authors: Alexander Bernardi
  * Date: 2026-11-03
  * Copyright: Copyright © 2026 Alexander Bernardi
