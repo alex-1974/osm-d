@@ -1904,22 +1904,25 @@ int main(string[] args)
     const inputBytes = storage.length;
     const(ubyte)[] input = cast(const(ubyte)[])storage;
 
-    PbfDocument document;
-    const sourceDecodeNs = measureSourceDecode(input, document);
-    const expectedChecksum = traverseReference(document.data);
-    const editSelection = makeEditSelection(document.data);
+    long sourceDecodeNs;
+    long layoutBuildNs;
+    long parentBuildNs;
+    size_t ownedBytes;
+    ulong expectedChecksum;
 
     ParentIndexes parents;
-    const parentBuildNs =
-        elapsedNs(() { parents.build(document.data); });
-
-    long layoutBuildNs;
-    size_t ownedBytes;
     ReferenceStore reference;
     OsmStore compact;
 
     if (variant == "reference")
     {
+        PbfDocument document;
+        sourceDecodeNs = measureSourceDecode(input, document);
+        expectedChecksum = traverseReference(document.data);
+
+        parentBuildNs =
+            elapsedNs(() { parents.build(document.data); });
+
         OwnedDataset moved = document.data;
         document.data = OwnedDataset.init;
         layoutBuildNs =
@@ -1931,26 +1934,31 @@ int main(string[] args)
     }
     else
     {
-        StoreStatus status;
-        layoutBuildNs = elapsedNs(() {
-            if (!OsmStore.build(document.data, compact, status))
-            {
-                stderr.writefln(
-                    "compact store build failed: %s type=%s id=%s",
-                    status.error,
-                    status.type,
-                    status.id);
-                assert(0, "compact store build failed");
-            }
-        });
+        StoreStatus storeStatus;
+        PbfReadSummary summary;
+        sourceDecodeNs = 0;
+        layoutBuildNs = measureDirectStoreBuild(
+            input,
+            compact,
+            summary,
+            storeStatus);
+
+        const counts = compact.counts;
+        require(summary.nodes == counts.liveNodes,
+            "direct node count mismatch");
+        require(summary.ways == counts.liveWays,
+            "direct way count mismatch");
+        require(summary.relations == counts.liveRelations,
+            "direct relation count mismatch");
+
+        expectedChecksum = traverseCompact(compact);
+        parentBuildNs =
+            elapsedNs(() { parents.build(compact); });
         ownedBytes =
             compact.memoryUsage.totalOwnedBytes + parents.logicalBytes;
-
-        releaseDocument(document);
     }
 
-    // #62 measures the retained store, not the common PBF/materialization
-    // source. These buffers are uniquely owned by this benchmark process.
+    // The file bytes and reader scratch are not retained by either store.
     input = null;
     freeGcArray(storage);
     minimizeGc();
@@ -1963,21 +1971,24 @@ int main(string[] args)
         buildPeakRss > processStartRss ?
             buildPeakRss - processStartRss : 0;
 
-    // Query arrays and edit plans are deliberately allocated only after the
-    // retained-store RSS sample above.
+    // Query arrays and edit plans are allocated after the retained-store RSS
+    // sample so benchmark infrastructure is not charged to either layout.
     OsmId[] nodeIds;
     OsmId[] wayIds;
     OsmId[] relationIds;
+    EditSelection editSelection;
 
     if (variant == "reference")
     {
         nodeIds = idsOf(reference.data.nodes);
         wayIds = idsOf(reference.data.ways);
         relationIds = idsOf(reference.data.relations);
+        editSelection = makeEditSelection(reference.data);
     }
     else
     {
         collectCompactIds(compact, nodeIds, wayIds, relationIds);
+        editSelection = makeEditSelection(compact);
     }
 
     auto nodeQueries = makeQueries(nodeIds, 1_000_000);
