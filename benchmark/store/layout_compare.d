@@ -29,11 +29,17 @@ import osm :
     PbfDocument,
     PbfReadStatus,
     StoreMetadataView,
+    StoreElementState,
     StoreNodeView,
     StoreRelationView,
     StoreStatus,
     StoreWayView,
+    ownBytes,
     readPbfDocument;
+
+import osm.store.compact.store :
+    KnownRelationMemberRewrite,
+    KnownWayRefRewrite;
 
 import std.algorithm.sorting : sort;
 import std.datetime.stopwatch : AutoStart, StopWatch;
