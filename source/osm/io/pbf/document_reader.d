@@ -348,3 +348,152 @@ private OwnedTag[] ownTags(Range)(return scope Range source) @safe
 
     return result;
 }
+
+
+version(unittest)
+{
+    private void appendTestVarint(ref ubyte[] target, ulong value)
+    {
+        do
+        {
+            ubyte byteValue = cast(ubyte)(value & 0x7f);
+            value >>= 7;
+            if (value != 0)
+                byteValue |= 0x80;
+            target ~= byteValue;
+        }
+        while (value != 0);
+    }
+
+    private void appendTestVarintField(
+        ref ubyte[] target,
+        uint fieldNumber,
+        ulong value)
+    {
+        appendTestVarint(target, cast(ulong)(fieldNumber << 3));
+        appendTestVarint(target, value);
+    }
+
+    private void appendTestLengthField(
+        ref ubyte[] target,
+        uint fieldNumber,
+        const(ubyte)[] value)
+    {
+        appendTestVarint(
+            target,
+            cast(ulong)((fieldNumber << 3) | 2));
+        appendTestVarint(target, value.length);
+        target ~= value;
+    }
+
+    private void appendTestFileBlock(
+        ref ubyte[] target,
+        string blockType,
+        const(ubyte)[] payload)
+    {
+        ubyte[] blob;
+        appendTestLengthField(blob, 1, payload);
+
+        ubyte[] typeBytes;
+        foreach (char c; blockType)
+            typeBytes ~= cast(ubyte)c;
+
+        ubyte[] header;
+        appendTestLengthField(header, 1, typeBytes);
+        appendTestVarintField(header, 3, blob.length);
+
+        const length = cast(uint)header.length;
+        target ~= cast(ubyte)(length >> 24);
+        target ~= cast(ubyte)(length >> 16);
+        target ~= cast(ubyte)(length >> 8);
+        target ~= cast(ubyte)length;
+        target ~= header;
+        target ~= blob;
+    }
+
+    private ubyte[] makeTestPrimitiveBlock(
+        const(ubyte)[] group = null)
+    {
+        ubyte[] table;
+        appendTestLengthField(table, 1, null);
+
+        ubyte[] block;
+        appendTestLengthField(block, 1, table);
+        if (group.length != 0)
+            appendTestLengthField(block, 2, group);
+        return block;
+    }
+}
+
+unittest
+{
+    import osm.raw.pbf : PbfPreservationReason;
+
+    // Unknown fixed32 Node field 15 is interleaved between known id/coordinates.
+    // The semantic reader can still understand the node, but rewrite must be
+    // blocked because the owned model cannot represent field 15.
+    ubyte[] node;
+    appendTestVarintField(node, 1, 2);
+    node ~= 0x7d;
+    node ~= [0xde, 0xad, 0xbe, 0xef];
+    appendTestVarintField(node, 8, 0);
+    appendTestVarintField(node, 9, 0);
+
+    ubyte[] group;
+    appendTestLengthField(group, 1, node);
+
+    ubyte[] input;
+    appendTestFileBlock(input, "OSMHeader", null);
+    const data = makeTestPrimitiveBlock(group);
+    appendTestFileBlock(input, "OSMData", data);
+
+    PbfDocument document;
+    PbfReadStatus status;
+    assert(readPbfDocument(input, document, status));
+    assert(status.ok);
+    assert(document.data.nodes.length == 1);
+    assert(document.data.nodes[0].id == 1);
+    assert(document.preservation.reason ==
+        PbfPreservationReason.unknownField);
+    assert(!document.preservation.semanticRewriteSafe);
+    assert(document.preservation.source.bytes == input);
+}
+
+unittest
+{
+    import osm.raw.pbf : PbfPreservationReason;
+
+    ubyte[] feature;
+    foreach (char c; "Vendor-Optional-X")
+        feature ~= cast(ubyte)c;
+
+    ubyte[] headerPayload;
+    appendTestLengthField(headerPayload, 5, feature);
+
+    ubyte[] input;
+    appendTestFileBlock(input, "OSMHeader", headerPayload);
+
+    PbfDocument document;
+    PbfReadStatus status;
+    assert(readPbfDocument(input, document, status));
+    assert(document.data.empty);
+    assert(document.header.optionalFeatures.length == 1);
+    assert(document.header.optionalFeatures[0] == feature);
+    assert(document.preservation.reason ==
+        PbfPreservationReason.unknownOptionalFeature);
+    assert(document.preservation.source.bytes == input);
+}
+
+unittest
+{
+    ubyte[] input;
+    appendTestFileBlock(input, "OSMHeader", null);
+
+    PbfDocument document;
+    PbfReadStatus status;
+    assert(readPbfDocument(input, document, status));
+    assert(status.ok);
+    assert(document.data.empty);
+    assert(document.preservation.semanticRewriteSafe);
+    assert(document.preservation.source.bytes == input);
+}
