@@ -531,7 +531,7 @@ bool parseRootAttributes(Entity)(
                 return false;
             }
             info.hasVersion = true;
-            info.version = ownBytes(cast(const(ubyte)[]) value);
+            info.versionText = ownBytes(cast(const(ubyte)[]) value);
         }
         else if (equal(attr.name.save, "generator"))
         {
@@ -1102,7 +1102,7 @@ bool parseMetadataAttribute(Attr, Entity)(
         if (!parseInt(value, parsed))
             goto invalid;
         metadata.hasVersion = true;
-        metadata.versionNumber = parsed;
+        metadata.versionTextNumber = parsed;
         return true;
     }
 
