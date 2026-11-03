@@ -48,18 +48,19 @@ GitHub Actions separates checks by branch trust level.
 
 For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
 supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
-an external-consumer compile probe through the curated package root, DIP1000
-lifetime-negative checks, the deterministic wire malformed-input seed corpus,
-and a release build.
+external DUB consumer probes, DIP1000 lifetime-negative checks, the deterministic
+wire malformed-input seed corpus, PBF round-trip smoke tests, and release/
+benchmark builds. The DMD baseline additionally generates osmChange output with
+`osm-d` and requires Ubuntu's `osmium-tool`/libosmium to parse it successfully.
 
 For pull requests targeting `main`, pushes to `main`, and release/hotfix
-branches, the Release Gate runs the full six-compiler qualification matrix and
-reruns the deterministic wire malformed-input seed corpus across the full
-compiler matrix and additionally builds the parser decode-count benchmark as a
-consumer-facing parser smoke test. This deliberately keeps expensive cross-generation
-qualification out of ordinary `develop` commits while requiring it before
-release promotion. `main` remains the release line; normal development targets
-`develop`.
+branches, the Release Gate runs the full six-compiler qualification matrix,
+reruns the deterministic malformed-input and round-trip gates, compiles the
+external consumers, and builds the parser decode-count benchmark. The baseline
+DMD job also repeats the osmChange `osmium-tool` interoperability check. This
+keeps expensive cross-generation qualification out of ordinary `develop`
+commits while requiring it before release promotion. `main` remains the
+release line; normal development targets `develop`.
 
 ## Public module surface during pre-1.0
 
