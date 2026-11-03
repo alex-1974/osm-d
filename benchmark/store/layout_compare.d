@@ -1553,6 +1553,65 @@ private RemapMetrics runCompactRemap() @safe
     return result;
 }
 
+
+private void collectCompactIds(
+    OsmStore store,
+    out OsmId[] nodeIds,
+    out OsmId[] wayIds,
+    out OsmId[] relationIds) @safe nothrow @nogc
+{
+    auto nodes = store.nodes;
+    while (!nodes.empty)
+    {
+        nodeIds ~= nodes.front.id;
+        nodes.popFront();
+    }
+
+    auto ways = store.ways;
+    while (!ways.empty)
+    {
+        wayIds ~= ways.front.id;
+        ways.popFront();
+    }
+
+    auto relations = store.relations;
+    while (!relations.empty)
+    {
+        relationIds ~= relations.front.id;
+        relations.popFront();
+    }
+}
+
+private ParentKey[] makeRelationParentQueries(
+    scope const(OsmId)[] nodeIds,
+    scope const(OsmId)[] wayIds,
+    scope const(OsmId)[] relationIds,
+    size_t count) @safe
+{
+    ParentKey[] population;
+    population.length = nodeIds.length + wayIds.length + relationIds.length;
+
+    size_t at;
+    foreach (id; nodeIds)
+        population[at++] = ParentKey(ElementType.node, id);
+    foreach (id; wayIds)
+        population[at++] = ParentKey(ElementType.way, id);
+    foreach (id; relationIds)
+        population[at++] = ParentKey(ElementType.relation, id);
+
+    ParentKey[] result;
+    result.length = count;
+    foreach (i; 0 .. count)
+    {
+        if (i % 10 == 9 || population.length == 0)
+            result[i] = ParentKey(
+                ElementType.node, long.min + cast(long)i + 11);
+        else
+            result[i] = population[(i * 65537UL) % population.length];
+    }
+    return result;
+}
+
 int main(string[] args)
 {
     string variant;
