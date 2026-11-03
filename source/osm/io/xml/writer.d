@@ -496,3 +496,85 @@ unittest
     assert(formatTimestampMilliseconds(123) ==
         "1970-01-01T00:00:00.123Z");
 }
+
+
+unittest // semantic XML round trip
+{
+    import osm.io.xml.reader :
+        OsmXmlReadStatus,
+        readOsmXmlDocument;
+    import osm.model.owned : OwnedWay, OwnedWayNode;
+    import osm.view.location : LocationView;
+    import transport.source : MemorySink, MemorySource;
+
+    enum fixture = import("xml/osm-api-style.osm");
+    auto input = new MemorySource(cast(const(ubyte)[]) fixture);
+
+    OsmXmlDocument original;
+    OsmXmlReadStatus readStatus;
+    assert(readOsmXmlDocument(input, original, readStatus));
+
+    auto sink = new MemorySink();
+    OsmXmlWriter writer;
+    OsmXmlWriteStatus writeStatus;
+    assert(writer.write(original, sink, writeStatus));
+    assert(writeStatus.ok);
+    assert(sink.data.length > 0);
+
+    auto rewritten = new MemorySource(sink.data);
+    OsmXmlDocument roundTrip;
+    assert(readOsmXmlDocument(rewritten, roundTrip, readStatus));
+
+    assert(roundTrip.data.nodes.length == original.data.nodes.length);
+    assert(roundTrip.data.ways.length == original.data.ways.length);
+    assert(roundTrip.data.relations.length == original.data.relations.length);
+
+    assert(roundTrip.data.nodes[0].id == original.data.nodes[0].id);
+    assert(roundTrip.data.nodes[0].location.latitudeNanodegrees ==
+        original.data.nodes[0].location.latitudeNanodegrees);
+    assert(roundTrip.data.nodes[0].location.longitudeNanodegrees ==
+        original.data.nodes[0].location.longitudeNanodegrees);
+    assert(roundTrip.data.nodes[0].metadata.timestampMilliseconds ==
+        original.data.nodes[0].metadata.timestampMilliseconds);
+    assert(roundTrip.data.nodes[0].metadata.username ==
+        original.data.nodes[0].metadata.username);
+    assert(roundTrip.data.nodes[0].tags == original.data.nodes[0].tags);
+
+    assert(roundTrip.data.ways[0].id == original.data.ways[0].id);
+    assert(roundTrip.data.ways[0].nodes == original.data.ways[0].nodes);
+    assert(roundTrip.data.ways[0].tags == original.data.ways[0].tags);
+
+    assert(roundTrip.data.relations[0].id == original.data.relations[0].id);
+    assert(roundTrip.data.relations[0].members ==
+        original.data.relations[0].members);
+    assert(roundTrip.data.relations[0].tags ==
+        original.data.relations[0].tags);
+}
+
+unittest // refuse semantics ordinary OSM XML cannot represent
+{
+    import osm.model.owned : OwnedWay, OwnedWayNode;
+    import osm.view.location : LocationView;
+    import transport.source : MemorySink;
+
+    OwnedDataset dataset;
+    OwnedWay way;
+    way.id = 10;
+
+    OwnedWayNode nodeRef;
+    nodeRef.id = 1;
+    nodeRef.hasLocation = true;
+    nodeRef.location = LocationView(1, 2);
+    way.nodes ~= nodeRef;
+    dataset.ways ~= way;
+
+    auto sink = new MemorySink();
+    OsmXmlWriter writer;
+    OsmXmlWriteStatus status;
+    assert(!writer.writeDataset(dataset, sink, status));
+    assert(status.error == OsmXmlWriteError.unrepresentableContent);
+    assert(status.hasElementIdentity);
+    assert(status.elementType == ElementType.way);
+    assert(status.elementId == 10);
+    assert(sink.data.length == 0);
+}
