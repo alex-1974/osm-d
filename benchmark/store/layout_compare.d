@@ -37,6 +37,8 @@ import osm :
     ownBytes,
     readPbfDocument;
 
+import osm.io.pbf.reader : PbfReadSummary;
+
 import osm.store.compact.store :
     KnownRelationMemberRewrite,
     KnownWayRefRewrite,
