@@ -179,10 +179,18 @@ struct OsmXmlReader
 
             while (!xml.empty)
             {
+                if (isWhitespaceText(xml.front))
+                {
+                    xml.popFront();
+                    continue;
+                }
+
                 if (xml.front.type == XmlEntityType.elementEnd &&
                     equal(xml.front.name.save, "osm"))
                 {
                     xml.popFront();
+                    while (!xml.empty && isWhitespaceText(xml.front))
+                        xml.popFront();
                     if (!xml.empty)
                     {
                         setPosition(status, xml.front);
@@ -354,6 +362,29 @@ void setPosition(Entity)(ref OsmXmlReadStatus status, Entity entity)
 {
     status.line = entity.pos.line;
     status.column = entity.pos.col;
+}
+
+bool isWhitespaceText(Entity)(Entity entity)
+{
+    if (entity.type != XmlEntityType.text)
+        return false;
+
+    auto text = entity.text;
+    while (!text.empty)
+    {
+        switch (text.front)
+        {
+            case ' ':
+            case '\t':
+            case '\r':
+            case '\n':
+                text.popFront();
+                break;
+            default:
+                return false;
+        }
+    }
+    return true;
 }
 
 void setIdentity(
@@ -732,6 +763,12 @@ bool parseNode(R)(
 
     while (!xml.empty)
     {
+        if (isWhitespaceText(xml.front))
+        {
+            xml.popFront();
+            continue;
+        }
+
         if (xml.front.type == XmlEntityType.elementEnd &&
             equal(xml.front.name.save, "node"))
         {
@@ -811,6 +848,12 @@ bool parseWay(R)(
 
     while (!xml.empty)
     {
+        if (isWhitespaceText(xml.front))
+        {
+            xml.popFront();
+            continue;
+        }
+
         if (xml.front.type == XmlEntityType.elementEnd &&
             equal(xml.front.name.save, "way"))
         {
@@ -905,6 +948,12 @@ bool parseRelation(R)(
 
     while (!xml.empty)
     {
+        if (isWhitespaceText(xml.front))
+        {
+            xml.popFront();
+            continue;
+        }
+
         if (xml.front.type == XmlEntityType.elementEnd &&
             equal(xml.front.name.save, "relation"))
         {
