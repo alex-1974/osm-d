@@ -356,6 +356,102 @@ private final class ReferenceStore
         return false;
     }
 
+    OwnedNode[uint] nodeBaselines;
+    OwnedWay[uint] wayBaselines;
+    OwnedRelation[uint] relationBaselines;
+
+    void replaceNode(uint slot, scope ref const OwnedNode value) @safe
+    {
+        if (slot !in nodeBaselines)
+            nodeBaselines[slot] = data.nodes[slot].deepCopy();
+        data.nodes[slot] = value.deepCopy();
+    }
+
+    void replaceWay(uint slot, scope ref const OwnedWay value) @safe
+    {
+        if (slot !in wayBaselines)
+            wayBaselines[slot] = data.ways[slot].deepCopy();
+        data.ways[slot] = value.deepCopy();
+    }
+
+    void replaceRelation(uint slot, scope ref const OwnedRelation value) @safe
+    {
+        if (slot !in relationBaselines)
+            relationBaselines[slot] = data.relations[slot].deepCopy();
+        data.relations[slot] = value.deepCopy();
+    }
+
+    void deleteRestoreNode(uint slot) @safe
+    {
+        auto baseline = data.nodes[slot].deepCopy();
+        const id = data.nodes[slot].id;
+        require(nodeIndex.remove(id), "reference node delete failed");
+        nodeIndex[id] = slot;
+    }
+
+    void deleteRestoreWay(uint slot) @safe
+    {
+        auto baseline = data.ways[slot].deepCopy();
+        const id = data.ways[slot].id;
+        require(wayIndex.remove(id), "reference way delete failed");
+        wayIndex[id] = slot;
+    }
+
+    void deleteRestoreRelation(uint slot) @safe
+    {
+        auto baseline = data.relations[slot].deepCopy();
+        const id = data.relations[slot].id;
+        require(relationIndex.remove(id), "reference relation delete failed");
+        relationIndex[id] = slot;
+    }
+
+    void addCreated(scope ref const OwnedNode value) @safe
+    {
+        const slot = cast(uint)data.nodes.length;
+        data.nodes ~= value.deepCopy();
+        nodeIndex[value.id] = slot;
+    }
+
+    void addCreated(scope ref const OwnedWay value) @safe
+    {
+        const slot = cast(uint)data.ways.length;
+        data.ways ~= value.deepCopy();
+        wayIndex[value.id] = slot;
+    }
+
+    void addCreated(scope ref const OwnedRelation value) @safe
+    {
+        const slot = cast(uint)data.relations.length;
+        data.relations ~= value.deepCopy();
+        relationIndex[value.id] = slot;
+    }
+
+    void revertBaselines() @safe
+    {
+        foreach (slot, ref baseline; nodeBaselines)
+            data.nodes[slot] = baseline;
+        foreach (slot, ref baseline; wayBaselines)
+            data.ways[slot] = baseline;
+        foreach (slot, ref baseline; relationBaselines)
+            data.relations[slot] = baseline;
+
+        nodeBaselines = null;
+        wayBaselines = null;
+        relationBaselines = null;
+    }
+
+    @property size_t baselineOwnedBytes() const @safe pure nothrow @nogc
+    {
+        size_t result;
+        foreach (slot, ref const value; nodeBaselines)
+            result += ownedNodeBytes(value);
+        foreach (slot, ref const value; wayBaselines)
+            result += ownedWayBytes(value);
+        foreach (slot, ref const value; relationBaselines)
+            result += ownedRelationBytes(value);
+        return result;
+    }
+
     @property size_t estimatedOwnedBytes() const @safe pure nothrow @nogc
     {
         return ownedDatasetBytes(data) +
@@ -1070,6 +1166,7 @@ private struct EditMetrics
 {
     long editNs;
     long revertNs;
+    long parentUpdateNs;
     ulong editChecksum;
     ulong revertChecksum;
     size_t postEditOwnedBytes;
@@ -1432,75 +1529,44 @@ private EditMetrics runReferenceEdits(
     EditMetrics metrics;
     metrics.editNs = elapsedNs(() {
         foreach (ref op; nodeTagOps)
-            store.data.nodes[op.slot] = op.value;
+            store.replaceNode(op.slot, op.value);
         foreach (ref op; wayTagOps)
-            store.data.ways[op.slot] = op.value;
+            store.replaceWay(op.slot, op.value);
         foreach (ref op; relationTagOps)
-            store.data.relations[op.slot] = op.value;
+            store.replaceRelation(op.slot, op.value);
 
         foreach (ref op; coordinateOps)
-            store.data.nodes[op.slot] = op.value;
+            store.replaceNode(op.slot, op.value);
         foreach (ref op; referenceOps)
-            store.data.ways[op.slot] = op.value;
+            store.replaceWay(op.slot, op.value);
         foreach (ref op; memberOps)
-            store.data.relations[op.slot] = op.value;
+            store.replaceRelation(op.slot, op.value);
 
         foreach (ref created; createdNodes)
-        {
-            const slot = cast(uint)store.data.nodes.length;
-            store.data.nodes ~= created;
-            store.nodeIndex[created.id] = slot;
-        }
+            store.addCreated(created);
         foreach (ref created; createdWays)
-        {
-            const slot = cast(uint)store.data.ways.length;
-            store.data.ways ~= created;
-            store.wayIndex[created.id] = slot;
-        }
+            store.addCreated(created);
         foreach (ref created; createdRelations)
-        {
-            const slot = cast(uint)store.data.relations.length;
-            store.data.relations ~= created;
-            store.relationIndex[created.id] = slot;
-        }
+            store.addCreated(created);
 
         foreach (slot; deleteNodeSlots)
-        {
-            const id = store.data.nodes[slot].id;
-            require(store.nodeIndex.remove(id), "reference node delete failed");
-            store.nodeIndex[id] = slot;
-        }
+            store.deleteRestoreNode(slot);
         foreach (slot; deleteWaySlots)
-        {
-            const id = store.data.ways[slot].id;
-            require(store.wayIndex.remove(id), "reference way delete failed");
-            store.wayIndex[id] = slot;
-        }
+            store.deleteRestoreWay(slot);
         foreach (slot; deleteRelationSlots)
-        {
-            const id = store.data.relations[slot].id;
-            require(store.relationIndex.remove(id), "reference relation delete failed");
-            store.relationIndex[id] = slot;
-        }
+            store.deleteRestoreRelation(slot);
     });
 
     metrics.editChecksum = traverseReference(store.data);
     metrics.postEditOwnedBytes =
-        store.estimatedOwnedBytes + parentBytes;
+        store.estimatedOwnedBytes + store.baselineOwnedBytes + parentBytes;
+
+    ParentIndexes editedParents;
+    metrics.parentUpdateNs =
+        elapsedNs(() { editedParents.build(store.data); });
 
     metrics.revertNs = elapsedNs(() {
-        foreach (ref op; nodeTagOps)
-            store.data.nodes[op.slot] = op.original;
-        foreach (ref op; coordinateOps)
-            store.data.nodes[op.slot] = op.original;
-        foreach (ref op; wayTagOps)
-            store.data.ways[op.slot] = op.original;
-        foreach (ref op; referenceOps)
-            store.data.ways[op.slot] = op.original;
-        foreach (ref op; relationTagOps)
-            store.data.relations[op.slot] = op.original;
-        foreach (ref op; memberOps)
-            store.data.relations[op.slot] = op.original;
+        store.revertBaselines();
 
         foreach (ref created; createdRelations)
             require(store.relationIndex.remove(created.id), "reference created relation revert failed");
@@ -1670,6 +1736,10 @@ private EditMetrics runCompactEdits(
     metrics.editChecksum = traverseCompact(store);
     metrics.postEditOwnedBytes =
         store.memoryUsage.totalOwnedBytes + parentBytes;
+
+    ParentIndexes editedParents;
+    metrics.parentUpdateNs =
+        elapsedNs(() { editedParents.build(store); });
 
     metrics.revertNs = elapsedNs(() {
         foreach (ref op; relationTagOps)
@@ -2081,6 +2151,7 @@ int main(string[] args)
     printTiming("traversal", traversal);
 
     writefln("edit_ns=%s", edits.editNs);
+    writefln("edit_parent_rebuild_ns=%s", edits.parentUpdateNs);
     writefln("edit_checksum=%s", edits.editChecksum);
     writefln("post_edit_owned_bytes=%s", edits.postEditOwnedBytes);
     writefln("revert_ns=%s", edits.revertNs);
