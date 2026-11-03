@@ -294,9 +294,11 @@ PBF vertical slice performs fail-closed structural validation and complete
 per-group element preflight before observable sink emission. Dataset/reference
 and operation-specific validation remain separate higher layers. The
 consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
-behind one concrete semantic `NodeView`. Parallel PBF execution, further
-semantic range cleanup, XML/osmChange support, and the compact editable store
-remain future work.
+behind one concrete semantic `NodeView`. Bounded block-parallel validation and
+summary decoding are implemented through `PbfParallelReader`; generic ordered
+parallel delivery of worker-borrowed element views is intentionally not part of
+Phase 3 (ADR 0017). Loss-aware writing, XML/osmChange support, and the compact
+editable store remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
