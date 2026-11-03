@@ -1608,6 +1608,18 @@ unittest // XML error and encoding policy
     }
 
     {
+        // JOSM .osm files may carry editor-only action attributes. The
+        // ordinary semantic XML reader must not silently discard them.
+        enum xml =
+            "<osm version=\"0.6\" upload=\"never\" generator=\"JOSM\">" ~
+            "<node id=\"-1\" action=\"modify\" lat=\"1\" lon=\"2\"/>" ~
+            "</osm>";
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.unsupportedContent);
+    }
+
+    {
         const ubyte[] utf16Bom = [0xFF, 0xFE, 0x3C, 0x00];
         auto source = new MemorySource(utf16Bom);
         assert(!readOsmXmlDocument(source, document, status));
