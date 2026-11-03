@@ -1558,7 +1558,7 @@ private void collectCompactIds(
     OsmStore store,
     out OsmId[] nodeIds,
     out OsmId[] wayIds,
-    out OsmId[] relationIds) @safe nothrow @nogc
+    out OsmId[] relationIds) @safe
 {
     auto nodes = store.nodes;
     while (!nodes.empty)
@@ -1646,30 +1646,15 @@ int main(string[] args)
 
     PbfDocument document;
     const sourceDecodeNs = measureSourceDecode(input, document);
-
     const expectedChecksum = traverseReference(document.data);
-
-    auto nodeIds = idsOf(document.data.nodes);
-    auto wayIds = idsOf(document.data.ways);
-    auto relationIds = idsOf(document.data.relations);
-
-    auto nodeQueries = makeQueries(nodeIds, 1_000_000);
-    auto wayQueries = makeQueries(wayIds, 250_000);
-    auto relationQueries = makeQueries(relationIds, 50_000);
-    auto parentNodeQueries = makeQueries(nodeIds, 250_000);
-    auto parentRelationQueries =
-        makeRelationParentQueries(document.data, 100_000);
+    const editSelection = makeEditSelection(document.data);
 
     ParentIndexes parents;
-    long parentBuildNs = elapsedNs(() { parents.build(document.data); });
+    const parentBuildNs =
+        elapsedNs(() { parents.build(document.data); });
 
     long layoutBuildNs;
     size_t ownedBytes;
-    Timing nodeLookup;
-    Timing wayLookup;
-    Timing relationLookup;
-    Timing traversal;
-
     ReferenceStore reference;
     OsmStore compact;
 
@@ -1677,21 +1662,10 @@ int main(string[] args)
     {
         OwnedDataset moved = document.data;
         document.data = OwnedDataset.init;
-
-        layoutBuildNs = elapsedNs(() { reference = new ReferenceStore(moved); });
-        ownedBytes = reference.estimatedOwnedBytes + parents.logicalBytes;
-
-        document = PbfDocument.init;
-        storage = null;
-        minimizeGc();
-
-        nodeLookup = measureLookupReference(
-            reference, ElementType.node, nodeQueries);
-        wayLookup = measureLookupReference(
-            reference, ElementType.way, wayQueries);
-        relationLookup = measureLookupReference(
-            reference, ElementType.relation, relationQueries);
-        traversal = measureTraversalReference(reference.data);
+        layoutBuildNs =
+            elapsedNs(() { reference = new ReferenceStore(moved); });
+        ownedBytes =
+            reference.estimatedOwnedBytes + parents.logicalBytes;
     }
     else
     {
@@ -1707,14 +1681,65 @@ int main(string[] args)
                 assert(0, "compact store build failed");
             }
         });
+        ownedBytes =
+            compact.memoryUsage.totalOwnedBytes + parents.logicalBytes;
+    }
 
-        ownedBytes = compact.memoryUsage.totalOwnedBytes +
-                     parents.logicalBytes;
+    // #62 measures the retained store, not the common materialization source.
+    document = PbfDocument.init;
+    input = null;
+    storage = null;
+    minimizeGc();
 
-        document = PbfDocument.init;
-        storage = null;
-        minimizeGc();
+    const finalRss = currentRssKiB();
+    const buildPeakRss = peakRssKiB();
+    const finalIncremental =
+        finalRss > processStartRss ? finalRss - processStartRss : 0;
+    const peakIncremental =
+        buildPeakRss > processStartRss ?
+            buildPeakRss - processStartRss : 0;
 
+    // Query arrays and edit plans are deliberately allocated only after the
+    // retained-store RSS sample above.
+    OsmId[] nodeIds;
+    OsmId[] wayIds;
+    OsmId[] relationIds;
+
+    if (variant == "reference")
+    {
+        nodeIds = idsOf(reference.data.nodes);
+        wayIds = idsOf(reference.data.ways);
+        relationIds = idsOf(reference.data.relations);
+    }
+    else
+    {
+        collectCompactIds(compact, nodeIds, wayIds, relationIds);
+    }
+
+    auto nodeQueries = makeQueries(nodeIds, 1_000_000);
+    auto wayQueries = makeQueries(wayIds, 250_000);
+    auto relationQueries = makeQueries(relationIds, 50_000);
+    auto parentNodeQueries = makeQueries(nodeIds, 250_000);
+    auto parentRelationQueries = makeRelationParentQueries(
+        nodeIds, wayIds, relationIds, 100_000);
+
+    Timing nodeLookup;
+    Timing wayLookup;
+    Timing relationLookup;
+    Timing traversal;
+
+    if (variant == "reference")
+    {
+        nodeLookup = measureLookupReference(
+            reference, ElementType.node, nodeQueries);
+        wayLookup = measureLookupReference(
+            reference, ElementType.way, wayQueries);
+        relationLookup = measureLookupReference(
+            reference, ElementType.relation, relationQueries);
+        traversal = measureTraversalReference(reference.data);
+    }
+    else
+    {
         nodeLookup = measureLookupCompact(
             compact, ElementType.node, nodeQueries);
         wayLookup = measureLookupCompact(
@@ -1738,14 +1763,21 @@ int main(string[] args)
         return 1;
     }
 
-    minimizeGc();
-    const finalRss = currentRssKiB();
-    const peakRss = peakRssKiB();
+    EditMetrics edits;
+    RemapMetrics remap;
 
-    const finalIncremental =
-        finalRss > processStartRss ? finalRss - processStartRss : 0;
-    const peakIncremental =
-        peakRss > processStartRss ? peakRss - processStartRss : 0;
+    if (variant == "reference")
+    {
+        edits = runReferenceEdits(
+            reference, editSelection, expectedChecksum, parents.logicalBytes);
+        remap = runReferenceRemap();
+    }
+    else
+    {
+        edits = runCompactEdits(
+            compact, editSelection, expectedChecksum, parents.logicalBytes);
+        remap = runCompactRemap();
+    }
 
     writefln("variant=%s", variant);
     writefln("input_bytes=%s", inputBytes);
@@ -1755,7 +1787,7 @@ int main(string[] args)
     writefln("build_ns=%s", sourceDecodeNs + layoutBuildNs + parentBuildNs);
     writefln("process_start_rss_kib=%s", processStartRss);
     writefln("final_rss_kib=%s", finalRss);
-    writefln("peak_rss_kib=%s", peakRss);
+    writefln("peak_rss_kib=%s", buildPeakRss);
     writefln("final_incremental_rss_kib=%s", finalIncremental);
     writefln("peak_incremental_rss_kib=%s", peakIncremental);
     writefln("owned_bytes=%s", ownedBytes);
@@ -1763,14 +1795,24 @@ int main(string[] args)
     writefln("nodes=%s", nodeIds.length);
     writefln("ways=%s", wayIds.length);
     writefln("relations=%s", relationIds.length);
+
     printTiming("node_lookup", nodeLookup);
     printTiming("way_lookup", wayLookup);
     printTiming("relation_lookup", relationLookup);
     printTiming("node_parent_lookup", nodeParents);
     printTiming("relation_parent_lookup", relationParents);
     printTiming("traversal", traversal);
+
+    writefln("edit_ns=%s", edits.editNs);
+    writefln("edit_checksum=%s", edits.editChecksum);
+    writefln("post_edit_owned_bytes=%s", edits.postEditOwnedBytes);
+    writefln("revert_ns=%s", edits.revertNs);
+    writefln("revert_checksum=%s", edits.revertChecksum);
+    writefln("post_revert_owned_bytes=%s", edits.postRevertOwnedBytes);
+    writefln("remap_ns=%s", remap.elapsedNs);
+    writefln("remap_checksum=%s", remap.checksum);
+
     writefln("semantic_checksum=%s", traversal.checksum);
     writefln("integrity=pass");
-
     return 0;
 }
