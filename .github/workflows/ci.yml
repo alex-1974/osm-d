@@ -119,6 +119,7 @@ jobs:
             --force
 
       - name: Build compact-store layout benchmark
+        if: matrix.compiler == 'ldc-1.41.0'
         shell: bash
         run: |
           dub build \
