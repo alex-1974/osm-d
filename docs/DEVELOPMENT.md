@@ -125,6 +125,10 @@ The current pre-1.0 surface is classified as follows:
   The facade deliberately does not expose dxml parser/writer entities.
   `ByteSource` and `ByteSink` remain transport-d concepts rather than an
   osm-d-specific stream hierarchy.
+- `osm.osmchange` is the supported high-level osmChange facade.
+  It reuses `OwnedChangeSequence` and exports streaming/materializing reader
+  and writer boundaries without exposing XML parser entities. Source entry
+  order and explicit delete `if-unused` policy are semantic contracts.
 - Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
   Their documented decoding APIs may be used directly during pre-1.0
   development, but their module organization and callable signatures are not
