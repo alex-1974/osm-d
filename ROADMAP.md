@@ -78,7 +78,7 @@ Tracked by M4: #44.
 
 - [x] Owned/raw loss-aware representation contract. #53
 - [x] Unknown-field/feature preservation policy implemented. #54
-- [ ] PBF writer. #55
+- [x] PBF writer. #55
 - [ ] Semantic and differential round-trip qualification. #56
 
 ## Phase 5 — XML and osmChange
