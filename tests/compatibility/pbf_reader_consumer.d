@@ -284,3 +284,22 @@ void compileConsumer()
     preservation.reason = PbfPreservationReason.unknownField;
     assert(!preservation.semanticRewriteSafe);
 }
+
+
+@safe void compileLossAwareDocumentRead(const(ubyte)[] input)
+{
+    PbfDocument document;
+    PbfReadStatus status;
+    const ok = readPbfDocument(input, document, status);
+
+    if (ok)
+    {
+        assert(status.ok);
+        const rewriteSafe = document.preservation.semanticRewriteSafe;
+        assert(rewriteSafe || document.preservation.hasSource);
+    }
+    else
+    {
+        assert(document.preservation.hasSource || input.length == 0);
+    }
+}
