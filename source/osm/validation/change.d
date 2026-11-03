@@ -853,3 +853,123 @@ unittest // ID namespaces are typed while placeholders remain unique per type
     assert(issue.error ==
         UploadValidationError.duplicateCreatePlaceholder);
 }
+
+
+unittest // target capability limits are policy inputs, not hardcoded constants
+{
+    import osm.model.owned :
+        OwnedMetadata,
+        OwnedNode,
+        OwnedRelation,
+        OwnedRelationMember,
+        OwnedWay,
+        OwnedWayNode;
+    import osm.view.location : LocationView;
+
+    OwnedMetadata createMeta;
+    createMeta.hasChangeset = true;
+    createMeta.changesetId = 42;
+
+    OwnedChangeSequence changes;
+
+    OwnedNode a;
+    a.id = -1;
+    a.metadata = createMeta;
+    a.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, a);
+
+    OwnedNode b;
+    b.id = -2;
+    b.metadata = createMeta;
+    b.location = LocationView(48_000_000_100L, 16_000_000_100L);
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, b);
+
+    OwnedWay way;
+    way.id = -3;
+    way.metadata = createMeta;
+    way.nodes ~= OwnedWayNode(-1);
+    way.nodes ~= OwnedWayNode(-2);
+    changes.entries ~= OwnedChangeEntry.fromWay(ChangeAction.create, way);
+
+    OwnedRelation relation;
+    relation.id = -4;
+    relation.metadata = createMeta;
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        -3,
+        null);
+    relation.members ~= OwnedRelationMember(
+        ElementType.node,
+        -1,
+        null);
+    changes.entries ~=
+        OwnedChangeEntry.fromRelation(ChangeAction.create, relation);
+
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+
+    CapabilityProfile profile;
+    profile.maximumChangesetElements = 3;
+    assert(!validateUploadChanges(changes, profile, issue));
+    assert(issue.error ==
+        UploadValidationError.changesetElementLimitExceeded);
+
+    profile = CapabilityProfile.init;
+    profile.maximumWayNodes = 1;
+    assert(!validateUploadChanges(changes, profile, issue));
+    assert(issue.error == UploadValidationError.wayNodeLimitExceeded);
+
+    profile = CapabilityProfile.init;
+    profile.maximumRelationMembers = 1;
+    assert(!validateUploadChanges(changes, profile, issue));
+    assert(issue.error ==
+        UploadValidationError.relationMemberLimitExceeded);
+}
+
+unittest // zero references and positive create IDs are rejected explicitly
+{
+    import osm.model.owned :
+        OwnedMetadata,
+        OwnedNode,
+        OwnedWay,
+        OwnedWayNode;
+    import osm.view.location : LocationView;
+
+    OwnedMetadata metadata;
+    metadata.hasChangeset = true;
+    metadata.changesetId = 42;
+
+    OwnedNode node;
+    node.id = 1;
+    node.metadata = metadata;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, node);
+
+    UploadValidationIssue issue;
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error ==
+        UploadValidationError.createIdMustBeNegative);
+
+    changes.entries.length = 0;
+
+    OwnedWay way;
+    way.id = -1;
+    way.metadata = metadata;
+    way.nodes ~= OwnedWayNode(0);
+    changes.entries ~= OwnedChangeEntry.fromWay(ChangeAction.create, way);
+
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error == UploadValidationError.zeroReference);
+    assert(issue.hasReference);
+}
