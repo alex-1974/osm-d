@@ -2017,11 +2017,13 @@ int main(string[] args)
         }
     }
 
-    if ((variant != "reference" && variant != "compact") ||
+    if ((variant != "reference" &&
+         variant != "compact" &&
+         variant != "compact-owned") ||
         filename.length == 0)
     {
         stderr.writefln(
-            "usage: %s --variant=reference|compact FILE.osm.pbf",
+            "usage: %s --variant=reference|compact|compact-owned FILE.osm.pbf",
             args[0]);
         return 2;
     }
@@ -2030,6 +2032,38 @@ int main(string[] args)
     auto storage = cast(ubyte[])read(filename);
     const inputBytes = storage.length;
     const(ubyte)[] input = cast(const(ubyte)[])storage;
+
+    if (variant == "compact-owned")
+    {
+        PbfDocument document;
+        const decodeNs = measureSourceDecode(input, document);
+        const expected = traverseReference(document.data);
+
+        OsmStore materializedStore;
+        StoreStatus status;
+        const compactBuildNs = elapsedNs(() {
+            require(OsmStore.build(document.data, materializedStore, status),
+                "materialized compact build failed");
+        });
+        const actual = traverseCompact(materializedStore);
+
+        if (actual != expected)
+        {
+            stderr.writefln(
+                "materialized compact semantic mismatch expected=%s actual=%s",
+                expected,
+                actual);
+            return 1;
+        }
+
+        writefln("variant=compact-owned");
+        writefln("input_bytes=%s", inputBytes);
+        writefln("source_decode_ns=%s", decodeNs);
+        writefln("layout_build_ns=%s", compactBuildNs);
+        writefln("semantic_checksum=%s", actual);
+        writefln("integrity=pass");
+        return 0;
+    }
 
     long sourceDecodeNs;
     long layoutBuildNs;
