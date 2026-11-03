@@ -39,4 +39,12 @@ for compiler in "${compilers[@]}"; do
         --build=debug \
         --force
     echo "PASS: $compiler osmChange DUB consumer compile"
+
+    echo "=== VALIDATION DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/validate-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler upload validation DUB consumer compile"
 done
