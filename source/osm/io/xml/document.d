@@ -44,6 +44,11 @@ struct OsmXmlDocumentInfo
     bool hasGenerator;
     OwnedBytes generator;
 
+    /// Whether the JOSM/root upload policy attribute is present.
+    bool hasUploadPolicy;
+    /// Exact UTF-8 value of the root `upload` attribute.
+    OwnedBytes uploadPolicy;
+
     bool hasCopyright;
     OwnedBytes copyrightText;
 
@@ -64,6 +69,8 @@ struct OsmXmlDocumentInfo
         result.versionText = versionText;
         result.hasGenerator = hasGenerator;
         result.generator = generator;
+        result.hasUploadPolicy = hasUploadPolicy;
+        result.uploadPolicy = uploadPolicy;
         result.hasCopyright = hasCopyright;
         result.copyrightText = copyrightText;
         result.hasAttribution = hasAttribution;
