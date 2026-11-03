@@ -117,3 +117,14 @@ jobs:
             --build=release \
             --build-mode=allAtOnce \
             --force
+
+      - name: Build compact-store layout benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=store-layout \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
