@@ -38,3 +38,27 @@ plumbing. The public `osm-d` library does not define filesystem or HTTP I/O.
 Production byte-resource access belongs to `transport-d` (ADR 0019). Once its
 v0.1.0 release is tagged and registry-resolvable, source/sink integration can be
 qualified against that released contract without changing PBF semantics.
+
+
+## M4 qualification evidence
+
+The acceptance run on 2026-11-03 used commit
+`0e307818521c4a249e032204a7c45be5001891d4` on GitHub-hosted Ubuntu 24.04,
+LDC 1.41.0, DUB 1.40.0 and `osmium-tool` 1.16.0-1build1.
+
+| dataset | input bytes | rewritten bytes | nodes | ways | relations | osm-d semantic comparator | libosmium OPL differential |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| monaco-260901 | 690,567 | 2,496,211 | 41,703 | 6,249 | 348 | PASS | PASS |
+| liechtenstein-260901 | 3,451,831 | 17,477,466 | 361,543 | 42,051 | 973 | PASS | PASS |
+| bremen-260901 | 21,159,666 | 91,571,257 | 1,662,874 | 328,626 | 5,985 | PASS | PASS |
+
+The larger output is expected for this first semantic writer: it deliberately
+uses regular Nodes and raw/uncompressed Blob payloads rather than DenseNodes and
+compression. M4 qualifies correctness and loss-awareness, not write-side size
+or throughput optimization.
+
+Austria is not part of the M4 round-trip acceptance gate. The current
+`PbfDocument` intentionally owns the complete semantic dataset and an exact raw
+source copy; country-scale write-side memory/performance belongs with the later
+direct-to-store/streaming work rather than being used to force a premature M4
+optimization.
