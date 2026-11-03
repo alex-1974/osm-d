@@ -51,6 +51,15 @@ jobs:
           CONSUMER_COMPILERS="$DC" \
             bash tests/run-consumer-compile.sh
 
+      - name: Qualify osmChange with external toolchain
+        if: matrix.compiler == 'dmd-2.111.0'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          OSMCHANGE_COMPILER="$DC" \
+            bash tests/run-osmchange-toolchain.sh
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
