@@ -831,6 +831,100 @@ private void minimizeGc() @safe
     GC.minimize();
 }
 
+private void freeGcArray(T)(ref T[] value) @trusted
+{
+    if (value.ptr !is null)
+        GC.free(cast(void*)value.ptr);
+    value = null;
+}
+
+private void freeOwnedBytes(ref immutable(ubyte)[] value) @trusted
+{
+    if (value.ptr !is null)
+        GC.free(cast(void*)value.ptr);
+    value = null;
+}
+
+private void releaseMetadataBytes(ref OwnedMetadata metadata) @trusted
+{
+    if (metadata.hasUsername)
+        freeOwnedBytes(metadata.username);
+}
+
+private void releaseDataset(ref OwnedDataset data) @trusted
+{
+    foreach (ref node; data.nodes)
+    {
+        releaseMetadataBytes(node.metadata);
+        foreach (ref tag; node.tags)
+        {
+            freeOwnedBytes(tag.key);
+            freeOwnedBytes(tag.value);
+        }
+        freeGcArray(node.tags);
+    }
+
+    foreach (ref way; data.ways)
+    {
+        releaseMetadataBytes(way.metadata);
+        foreach (ref tag; way.tags)
+        {
+            freeOwnedBytes(tag.key);
+            freeOwnedBytes(tag.value);
+        }
+        freeGcArray(way.tags);
+        freeGcArray(way.nodes);
+    }
+
+    foreach (ref relation; data.relations)
+    {
+        releaseMetadataBytes(relation.metadata);
+        foreach (ref tag; relation.tags)
+        {
+            freeOwnedBytes(tag.key);
+            freeOwnedBytes(tag.value);
+        }
+        freeGcArray(relation.tags);
+
+        foreach (ref member; relation.members)
+            freeOwnedBytes(member.role);
+        freeGcArray(relation.members);
+    }
+
+    freeGcArray(data.nodes);
+    freeGcArray(data.ways);
+    freeGcArray(data.relations);
+}
+
+private void releaseDocumentEnvelope(ref PbfDocument document) @trusted
+{
+    foreach (ref feature; document.header.requiredFeatures)
+        freeOwnedBytes(feature);
+    freeGcArray(document.header.requiredFeatures);
+
+    foreach (ref feature; document.header.optionalFeatures)
+        freeOwnedBytes(feature);
+    freeGcArray(document.header.optionalFeatures);
+
+    if (document.header.hasWritingProgram)
+        freeOwnedBytes(document.header.writingProgram);
+    if (document.header.hasSource)
+        freeOwnedBytes(document.header.source);
+    if (document.header.hasReplicationBaseUrl)
+        freeOwnedBytes(document.header.replicationBaseUrl);
+
+    freeOwnedBytes(document.preservation.source.bytes);
+    document.header = typeof(document.header).init;
+    document.preservation = typeof(document.preservation).init;
+}
+
+private void releaseDocument(ref PbfDocument document) @trusted
+{
+    releaseDataset(document.data);
+    releaseDocumentEnvelope(document);
+    document = PbfDocument.init;
+}
+
 private long measureSourceDecode(
     scope const(ubyte)[] input,
     out PbfDocument document) @safe
@@ -1675,6 +1769,8 @@ int main(string[] args)
             elapsedNs(() { reference = new ReferenceStore(moved); });
         ownedBytes =
             reference.estimatedOwnedBytes + parents.logicalBytes;
+
+        releaseDocumentEnvelope(document);
     }
     else
     {
@@ -1692,12 +1788,14 @@ int main(string[] args)
         });
         ownedBytes =
             compact.memoryUsage.totalOwnedBytes + parents.logicalBytes;
+
+        releaseDocument(document);
     }
 
-    // #62 measures the retained store, not the common materialization source.
-    document = PbfDocument.init;
+    // #62 measures the retained store, not the common PBF/materialization
+    // source. These buffers are uniquely owned by this benchmark process.
     input = null;
-    storage = null;
+    freeGcArray(storage);
     minimizeGc();
 
     const finalRss = currentRssKiB();
