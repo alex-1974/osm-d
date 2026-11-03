@@ -28,7 +28,7 @@ arena or PGO are implemented only when measured evidence justifies them.
 
 ## Phase 1 — Wire and memory foundation
 
-- [ ] Checked endian helpers. #49
+- [x] Checked endian helpers. #49
 - [x] Bounded byte cursor.
 - [x] Protobuf varint and ZigZag decode.
 - [x] Protobuf field scanner.
