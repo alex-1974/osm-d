@@ -22,7 +22,7 @@ files; their sorted OPL element streams must be byte-identical.
 
 ```bash
 sudo apt install osmium-tool
-tests/roundtrip/run-pinned-roundtrip.sh monaco-260901 liechtenstein-260901
+bash tests/roundtrip/run-pinned-roundtrip.sh monaco-260901 liechtenstein-260901
 ```
 
 The default real-data set is Monaco plus Liechtenstein. Larger pinned datasets
