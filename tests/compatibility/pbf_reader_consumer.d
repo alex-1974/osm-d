@@ -253,3 +253,34 @@ void compileConsumer()
 
     assert(ok || !status.ok);
 }
+
+
+@safe void compileOwnedDocumentSurface()
+{
+    OwnedDataset dataset;
+
+    OwnedNode node;
+    node.id = 1;
+    node.location = LocationView(1, 2);
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"key"),
+        ownBytes(cast(const(ubyte)[])"value"));
+    dataset.nodes ~= node;
+
+    PbfDocument document = PbfDocument.create(dataset);
+    assert(document.header.requiredFeatures.length == 1);
+    assert(document.preservation.semanticRewriteSafe);
+
+    PbfDocument copy = document.deepCopy();
+    copy.data.nodes[0].tags.length = 0;
+    assert(document.data.nodes[0].tags.length == 1);
+
+    const(ubyte)[] rawBytes = [1, 2, 3];
+    PbfRawFile raw = PbfRawFile.capture(rawBytes);
+    assert(raw.bytes == rawBytes);
+
+    PbfPreservation preservation;
+    preservation.source = raw;
+    preservation.reason = PbfPreservationReason.unknownField;
+    assert(!preservation.semanticRewriteSafe);
+}

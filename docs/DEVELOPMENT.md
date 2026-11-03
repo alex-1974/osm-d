@@ -94,6 +94,17 @@ The current pre-1.0 surface is classified as follows:
   consumer API design. The package-root `NodeView` is callback-scoped and
   deliberately non-copyable; semantic subviews and tag-range copies remain
   ordinary values.
+- `osm.model.owned` is the format-independent durable semantic model for
+  M4 and later codecs/stores. The curated root exports its owned Node/Way/
+  Relation/tag/metadata/member/reference/dataset values. Immutable byte strings
+  may share backing storage; mutable child arrays follow normal D aliasing
+  semantics and `deepCopy` creates independently mutable arrays.
+- `osm.raw.pbf` and `osm.io.pbf.document` form the PBF read/modify/write
+  preservation boundary. The ordinary owned model contains no protobuf field
+  IDs, StringTable IDs, block offsets or compression state. `PbfDocument`
+  combines known HeaderBlock semantics, an `OwnedDataset`, and explicit raw
+  preservation state. Semantic rewrite and exact-source reproduction are
+  separate contracts.
 - `osm.io.pbf.reader` is the supported direct-import module for the ordered
   consumer-facing PBF reader boundary exported by `osm`. The curated root also
   exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation

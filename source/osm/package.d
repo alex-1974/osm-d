@@ -15,6 +15,25 @@ module osm;
 public import osm.view.element :
     ElementType,
     OsmId;
+public import osm.model.owned :
+    OwnedBytes,
+    OwnedTag,
+    OwnedMetadata,
+    OwnedWayNode,
+    OwnedRelationMember,
+    OwnedNode,
+    OwnedWay,
+    OwnedRelation,
+    OwnedDataset,
+    ownBytes;
+public import osm.raw.pbf :
+    PbfPreservationReason,
+    PbfRawFile,
+    PbfPreservation;
+public import osm.io.pbf.document :
+    PbfHeaderBBox,
+    PbfHeader,
+    PbfDocument;
 public import osm.view.location : LocationView;
 public import osm.view.metadata : MetadataView;
 public import osm.io.pbf.node_view : NodeView;
