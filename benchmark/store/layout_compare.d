@@ -1064,7 +1064,7 @@ private uint referenceSlot(
 }
 
 private OsmHandle compactHandle(OsmStore store, ElementType type, OsmId id)
-    @safe nothrow @nogc
+    @safe
 {
     OsmHandle handle;
     require(store.find(type, id, handle), "compact lookup failed");
