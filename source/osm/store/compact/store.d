@@ -1370,6 +1370,8 @@ public:
                 }
                 _nodes.states[handle._slot] =
                     _nodes.deletedFrom[handle._slot];
+                if (_nodes.states[handle._slot] == StoreElementState.clean)
+                    _nodeBaselines.remove(handle._slot);
                 ++_liveNodes;
                 break;
             case ElementType.way:
@@ -1382,6 +1384,8 @@ public:
                 }
                 _ways.states[handle._slot] =
                     _ways.deletedFrom[handle._slot];
+                if (_ways.states[handle._slot] == StoreElementState.clean)
+                    _wayBaselines.remove(handle._slot);
                 ++_liveWays;
                 break;
             case ElementType.relation:
@@ -1395,6 +1399,8 @@ public:
                 }
                 _relations.states[handle._slot] =
                     _relations.deletedFrom[handle._slot];
+                if (_relations.states[handle._slot] == StoreElementState.clean)
+                    _relationBaselines.remove(handle._slot);
                 ++_liveRelations;
                 break;
         }
