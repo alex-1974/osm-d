@@ -18,6 +18,7 @@ module osm.model.compare;
 
 import osm.io.pbf.document : PbfDocument, PbfHeader;
 import osm.model.change :
+    ChangeObjectState,
     OwnedChangeEntry,
     OwnedChangeSequence;
 import osm.model.owned :
