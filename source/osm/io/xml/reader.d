@@ -321,6 +321,75 @@ bool readOsmXmlDocument(
     return true;
 }
 
+
+package(osm):
+
+bool prepareSemanticXmlEncoding(
+    ByteSource source,
+    OsmXmlReadOptions options,
+    out ulong startOffset,
+    ref OsmXmlReadStatus status) @safe
+{
+    return prepareEncoding(source, options, startOffset, status);
+}
+
+bool semanticXmlWhitespace(Entity)(Entity entity)
+{
+    return isWhitespaceText(entity);
+}
+
+void semanticXmlPosition(Entity)(
+    ref OsmXmlReadStatus status,
+    Entity entity)
+{
+    setPosition(status, entity);
+}
+
+bool parseSemanticXmlNode(R)(
+    ref R xml,
+    out OwnedNode node,
+    out ulong tagCount,
+    ref OsmXmlReadStatus status,
+    OsmXmlReadOptions options)
+{
+    return parseNode(xml, node, tagCount, status, options);
+}
+
+bool parseSemanticXmlWay(R)(
+    ref R xml,
+    out OwnedWay way,
+    out ulong tagCount,
+    ref OsmXmlReadStatus status,
+    OsmXmlReadOptions options)
+{
+    return parseWay(xml, way, tagCount, status, options);
+}
+
+bool parseSemanticXmlRelation(R)(
+    ref R xml,
+    out OwnedRelation relation,
+    out ulong tagCount,
+    ref OsmXmlReadStatus status,
+    OsmXmlReadOptions options)
+{
+    return parseRelation(xml, relation, tagCount, status, options);
+}
+
+bool parseSemanticXmlMetadataAttribute(Attr, Entity)(
+    ref Attr attr,
+    ref OwnedMetadata metadata,
+    ref OsmXmlReadStatus status,
+    ref Entity entity)
+{
+    return parseMetadataAttribute(attr, metadata, status, entity);
+}
+
+bool parseSemanticXmlLong(string text, out long value)
+    @safe pure nothrow @nogc
+{
+    return parseLong(text, value);
+}
+
 private:
 
 void deliverNode(Handler)(ref Handler handler, OwnedNode value) @safe
