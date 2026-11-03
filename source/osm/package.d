@@ -34,6 +34,11 @@ public import osm.model.owned :
     OwnedRelation,
     OwnedDataset,
     ownBytes;
+public import osm.model.change :
+    ChangeAction,
+    ChangeObjectState,
+    OwnedChangeEntry,
+    OwnedChangeSequence;
 public import osm.raw.pbf :
     PbfPreservationReason,
     PbfRawFile,
