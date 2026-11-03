@@ -119,7 +119,7 @@ The current pre-1.0 surface is classified as follows:
   exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
   module `osm.io.pbf.parallel_reader` is supported for the same summary-only
   API.
-- `osm.io.xml` is the supported high-level ordinary OSM XML facade.
+- `osm.xml` is the supported high-level ordinary OSM XML facade.
   It exports document-envelope metadata plus `OsmXmlReader`,
   `readOsmXmlDocument`, and `OsmXmlWriter` with their status/options types.
   The facade deliberately does not expose dxml parser/writer entities.
