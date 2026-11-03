@@ -24,7 +24,7 @@ input and hardware.
 3. Borrow source bytes and StringTable strings rather than copying them.
 4. Decode DenseNodes directly from packed/delta streams.
 5. Use checked integer arithmetic; integrity checks are not benchmark options.
-6. Worker-local scratch arenas avoid allocator contention.
+6. Worker-local reusable workspaces keep decode scratch isolated and reusable; a separate arena requires measured justification.
 7. Queues are bounded to provide backpressure and a predictable memory ceiling.
 8. Per-element global locking or atomic counters are forbidden in the normal hot path.
 9. Statistics are worker-local and reduced later.
@@ -33,11 +33,18 @@ input and hardware.
 ## PBF pipeline
 
 ```text
-framing -> bounded jobs -> parallel decompress/decode -> optional ordered merge -> consumer
+framing -> bounded jobs -> parallel decompress/decode -> summary/status reduction
+
+ordered borrowed traversal -> serial PbfReader
+future parallel decoded elements -> explicit owned destination/store contract
 ```
 
 Blocks receive monotonically increasing sequence numbers. Workers may finish
-out of order. APIs that promise input order reassemble output by sequence.
+out of order. The current parallel API publishes only aggregate summary/status
+after all workers join and reduces failures to the earliest file-block
+sequence. ADR 0017 deliberately keeps ordered borrowed element traversal on the
+serial reader path; a future parallel owned-destination path is tracked by
+#64.
 
 ## Scratch-storage policy
 
@@ -76,7 +83,7 @@ The project should exploit D where it produces measurable benefits:
 - `@safe` by default with very small audited `@trusted`/`@system` islands;
 - value types over heap objects in decoding;
 - LDC/LLVM for release-performance builds;
-- LTO and PGO only after baseline profiling;
+- LTO and PGO only when a stable consumer workload and measured bottleneck justify them;
 - Mir/`ndslice` for columnar numerical work only when benchmarks justify it.
 
 ## Compiler policy
@@ -87,18 +94,47 @@ numbers are produced with a documented LDC release configuration.
 Compiler flags, CPU model, storage, thread count, OS and dataset hashes belong
 in every published benchmark record.
 
+## M3 allocation and PGO decision — 2026-11-03
+
+M3 does not introduce a separate worker-local linear arena or PGO.
+
+The reusable workspace already meets the intended steady-state allocation
+contract on the qualified workloads:
+
+- Bremen: the first complete serial read allocated 4,694,192 D-GC bytes while
+  scratch capacity grew; the second and third reads allocated **0 D-GC bytes**
+  and caused **0 collections**;
+- Austria (808,820,532-byte pinned input): the first complete serial read
+  allocated 11,067,568 D-GC bytes with **0 collections**; the second allocated
+  **0 D-GC bytes** and caused **0 collections**;
+- the bounded parallel Bremen qualification showed useful 2- and 4-worker
+  scaling without evidence of allocator contention that a new arena must solve.
+
+A linear arena remains an available implementation technique if a later owned
+model/store or new temporary decode structure introduces measured allocation
+pressure. It is not a missing Phase-3 component.
+
+PGO is likewise deferred. The current evidence does not isolate a stable
+consumer-visible residual bottleneck for which PGO is the justified next
+mechanism. If later release-scale measurements establish such a gap, PGO may be
+qualified as an optimization against the same semantic workload. It is not an
+M3 completion requirement.
+
 ## Memory targets
 
-Streaming decode must not scale resident memory linearly with input size.
-Peak memory should be approximately bounded by:
+The current public PBF APIs receive an already-loaded whole input buffer, so
+process RSS necessarily includes that input and therefore grows with input
+size. The **additional reader working set** should remain approximately bounded
+by:
 
 ```text
-input buffers
-+ N worker decompression buffers
-+ N worker arenas
-+ bounded queue contents
-+ current consumer state
+caller-owned input
++ N reusable worker workspaces
+  (decompression + StringTable refs + Way plans)
++ fixed-capacity queue metadata
++ current consumer/summary state
 ```
 
-Materializing a compact editable store is a separate benchmark with its own
-memory target.
+Queued whole-buffer jobs borrow Blob slices and do not duplicate compressed
+payload bytes. Materializing a compact editable store is a separate benchmark
+with its own memory target.

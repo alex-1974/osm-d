@@ -34,7 +34,7 @@ arena or PGO are implemented only when measured evidence justifies them.
 - [x] Protobuf field scanner.
 - [x] Correct support for packed, unpacked and segmented repeated scalars.
 - [x] Structured non-allocating decode errors.
-- [ ] Worker-local linear arena — evidence decision in #51.
+- [x] Worker-local linear arena decision — not required for M3; revisit only on measured allocation/peak-memory pressure. #51
 - [x] Reusable owned/borrowed block buffers.
 - [x] Fuzz and malformed-input harnesses for the wire layer. #50
 
@@ -69,7 +69,7 @@ Tracked by M3: #43.
 - [x] `@nogc` hot-path audit.
 - [x] Peak-memory benchmark.
 - [x] Thread-scaling benchmark.
-- [ ] Profile-guided optimization — evidence decision in #51.
+- [x] Profile-guided optimization decision — deferred until a stable consumer workload exposes a material opportunity. #51
 - [ ] Reconcile reader documentation and absorbed Phase 3 branches. #52
 
 ## Phase 4 — Raw/loss-aware round trip
