@@ -59,7 +59,17 @@ struct OsmXmlDocumentInfo
     /** Create an independently mutable copy of aggregate storage. */
     OsmXmlDocumentInfo deepCopy() const @safe
     {
-        OsmXmlDocumentInfo result = this;
+        OsmXmlDocumentInfo result;
+        result.hasVersion = hasVersion;
+        result.versionText = versionText;
+        result.hasGenerator = hasGenerator;
+        result.generator = generator;
+        result.hasCopyright = hasCopyright;
+        result.copyrightText = copyrightText;
+        result.hasAttribution = hasAttribution;
+        result.attribution = attribution;
+        result.hasLicense = hasLicense;
+        result.license = license;
         result.bounds = bounds.dup;
         return result;
     }
