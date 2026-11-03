@@ -912,6 +912,43 @@ private size_t ownedMetadataBytes(scope ref const OwnedMetadata value)
         (value.hasUsername ? value.username.length : 0);
 }
 
+private size_t ownedTagBytes(scope ref const OwnedTag value)
+    @safe pure nothrow @nogc
+{
+    return OwnedTag.sizeof + value.key.length + value.value.length;
+}
+
+private size_t ownedNodeBytes(scope ref const OwnedNode value)
+    @safe pure nothrow @nogc
+{
+    size_t result = OwnedNode.sizeof + ownedMetadataBytes(value.metadata);
+    foreach (ref const tag; value.tags)
+        result += ownedTagBytes(tag);
+    return result;
+}
+
+private size_t ownedWayBytes(scope ref const OwnedWay value)
+    @safe pure nothrow @nogc
+{
+    size_t result = OwnedWay.sizeof + ownedMetadataBytes(value.metadata);
+    result += value.nodes.length * OwnedWayNode.sizeof;
+    foreach (ref const tag; value.tags)
+        result += ownedTagBytes(tag);
+    return result;
+}
+
+private size_t ownedRelationBytes(scope ref const OwnedRelation value)
+    @safe pure nothrow @nogc
+{
+    size_t result =
+        OwnedRelation.sizeof + ownedMetadataBytes(value.metadata);
+    foreach (ref const tag; value.tags)
+        result += ownedTagBytes(tag);
+    foreach (ref const member; value.members)
+        result += OwnedRelationMember.sizeof + member.role.length;
+    return result;
+}
+
 private size_t ownedDatasetBytes(scope ref const OwnedDataset data)
     @safe pure nothrow @nogc
 {
