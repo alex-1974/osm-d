@@ -88,7 +88,7 @@ Tracked by M5: #45.
 - [x] XML/osmChange mapping and modification semantics. #57
 - [x] Streaming OSM XML reader/writer. #58
 - [x] osmChange reader/writer. #59
-- [ ] Complete-object validation and JOSM/iD interoperability. #60
+- [x] Complete-object validation and JOSM/iD interoperability. #60
 
 ## Phase 6 — Compact store
 
