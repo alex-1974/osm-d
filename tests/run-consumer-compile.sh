@@ -23,4 +23,12 @@ for compiler in "${compilers[@]}"; do
         "$SOURCE" \
         -of="$object"
     echo "PASS: $compiler external consumer compile"
+
+    echo "=== XML DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/xml-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler XML DUB consumer compile"
 done

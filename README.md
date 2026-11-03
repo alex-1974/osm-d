@@ -262,6 +262,53 @@ traversal. Consumers that need maximum whole-file throughput should therefore
 prefer the direct sink API; the foreach adapters trade about five percent on
 this workload for idiomatic element-specific traversal.
 
+## Streaming OSM XML
+
+Ordinary OSM XML uses the same owned Node/Way/Relation model as PBF. The
+consumer-facing facade is `osm.xml`; XML parsing details remain internal.
+Byte resources come from `transport-d`.
+
+```d
+import osm.xml;
+import transport.source : MemorySink, MemorySource;
+
+const(ubyte)[] bytes = ...;
+auto source = new MemorySource(bytes);
+
+OsmXmlDocument document;
+OsmXmlReadStatus readStatus;
+
+if (!readOsmXmlDocument(source, document, readStatus))
+{
+    // readStatus reports transport, XML syntax, unsupported-content,
+    // precision, or structural failures explicitly.
+}
+
+auto sink = new MemorySink();
+OsmXmlWriter writer;
+OsmXmlWriteStatus writeStatus;
+
+if (!writer.write(document, sink, writeStatus))
+{
+    // Ordinary OSM XML cannot represent every semantic extension. For
+    // example, Way-node LocationsOnWays coordinates fail explicitly.
+}
+```
+
+`OsmXmlReader.read` is the bounded streaming boundary when complete
+materialization is not wanted: it retains only parser state plus one owned OSM
+object at a time before invoking the consumer callback. The convenience
+`readOsmXmlDocument` deliberately materializes the whole dataset.
+
+Coordinates are accepted only when they are exactly representable by the
+current signed-nanodegree semantic location. XML values with non-zero precision
+beyond nine decimal places fail with `OsmXmlReadError.precisionLoss`; they are
+never rounded silently. Known document-level JOSM metadata such as
+`upload="never"` is preserved. JOSM editor-only element actions such as
+`action="modify"` remain outside the ordinary XML dataset model and fail
+closed; complete JOSM/iD editing interoperability is tracked separately by M5
+qualification.
+
 ## Status
 
 The first substantial PBF implementation slice is in place. Implemented
@@ -297,8 +344,10 @@ consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
 behind one concrete semantic `NodeView`. Bounded block-parallel validation and
 summary decoding are implemented through `PbfParallelReader`; generic ordered
 parallel delivery of worker-borrowed element views is intentionally not part of
-Phase 3 (ADR 0017). Loss-aware writing, XML/osmChange support, and the compact
-editable store remain future work.
+Phase 3 (ADR 0017). Loss-aware PBF writing and ordinary streaming OSM XML
+read/write support are now implemented. osmChange support, full editor
+interoperability qualification, and the compact editable store remain future
+work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use

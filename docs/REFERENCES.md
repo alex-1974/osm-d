@@ -172,6 +172,28 @@ normalizes data. Current writer behavior includes sorting primitives by ID,
 sorting tags by key and skipping incomplete primitives. `osm-d` must not copy
 those behaviors into its loss-aware raw layer.
 
+
+M5 XML interoperability evidence was rechecked on **2026-11-03** against
+JOSM mirror commit
+`3e27f592911ab5477fd807b825101548da94f1ca`. In particular:
+
+- `nodist/data/filterTests.osm` (blob
+  `5cff075f85408553bd03be9d1c8dd5a530897cc3`) uses the ordinary JOSM root
+  form `<osm version='0.6' upload='never' generator='JOSM'>` and contains
+  coordinates with more precision than the current nanodegree semantic model;
+- `nodist/data/UnconnectedWaysTest.osm` (blob
+  `ebe9f2d8a906bc32781caab424dcfc422cb74c4c`) independently demonstrates
+  the same root metadata and high-precision local-node coordinates;
+- several JOSM working fixtures additionally use element
+  `action='modify'`, which is editor state rather than ordinary dataset
+  semantics.
+
+The M5 ordinary XML codec therefore preserves the known root upload policy but
+fails closed on unrepresented editor actions and on coordinate precision that
+cannot be represented exactly. Full JOSM/iD editing interoperability remains a
+separate qualification item (#60). The upstream GPL fixture files are referenced
+by commit/blob hash rather than copied into the MIT package.
+
 ### R3/R4/R5 — iD
 
 Repository:
