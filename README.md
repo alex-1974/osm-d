@@ -265,11 +265,11 @@ this workload for idiomatic element-specific traversal.
 ## Streaming OSM XML
 
 Ordinary OSM XML uses the same owned Node/Way/Relation model as PBF. The
-consumer-facing facade is `osm.io.xml`; XML parsing details remain internal.
+consumer-facing facade is `osm.xml`; XML parsing details remain internal.
 Byte resources come from `transport-d`.
 
 ```d
-import osm.io.xml;
+import osm.xml;
 import transport.source : MemorySink, MemorySource;
 
 const(ubyte)[] bytes = ...;
