@@ -109,8 +109,13 @@ struct OwnedNode
     /** Copy this node and its mutable tag array. Immutable string bytes may share. */
     OwnedNode deepCopy() const @safe
     {
-        OwnedNode result = this;
-        result.tags = tags.dup;
+        OwnedNode result;
+        result.id = id;
+        result.location = LocationView(
+            location.latitudeNanodegrees,
+            location.longitudeNanodegrees);
+        result.metadata = copyMetadata(metadata);
+        result.tags = copyTags(tags);
         return result;
     }
 }
@@ -126,9 +131,24 @@ struct OwnedWay
     /** Copy this way and every mutable child array. Immutable strings may share. */
     OwnedWay deepCopy() const @safe
     {
-        OwnedWay result = this;
-        result.tags = tags.dup;
-        result.nodes = nodes.dup;
+        OwnedWay result;
+        result.id = id;
+        result.metadata = copyMetadata(metadata);
+        result.tags = copyTags(tags);
+
+        result.nodes.length = nodes.length;
+        foreach (i, ref const value; nodes)
+        {
+            result.nodes[i].id = value.id;
+            result.nodes[i].hasLocation = value.hasLocation;
+            if (value.hasLocation)
+            {
+                result.nodes[i].location = LocationView(
+                    value.location.latitudeNanodegrees,
+                    value.location.longitudeNanodegrees);
+            }
+        }
+
         return result;
     }
 }
@@ -144,9 +164,19 @@ struct OwnedRelation
     /** Copy this relation and every mutable child array. Immutable strings may share. */
     OwnedRelation deepCopy() const @safe
     {
-        OwnedRelation result = this;
-        result.tags = tags.dup;
-        result.members = members.dup;
+        OwnedRelation result;
+        result.id = id;
+        result.metadata = copyMetadata(metadata);
+        result.tags = copyTags(tags);
+
+        result.members.length = members.length;
+        foreach (i, ref const value; members)
+        {
+            result.members[i].type = value.type;
+            result.members[i].id = value.id;
+            result.members[i].role = value.role;
+        }
+
         return result;
     }
 }
@@ -196,6 +226,36 @@ struct OwnedDataset
 
         return result;
     }
+}
+
+private OwnedMetadata copyMetadata(ref const OwnedMetadata value) @safe
+{
+    OwnedMetadata result;
+    result.hasVersion = value.hasVersion;
+    result.versionNumber = value.versionNumber;
+    result.hasTimestamp = value.hasTimestamp;
+    result.timestampMilliseconds = value.timestampMilliseconds;
+    result.hasChangeset = value.hasChangeset;
+    result.changesetId = value.changesetId;
+    result.hasUserId = value.hasUserId;
+    result.userId = value.userId;
+    result.hasUsername = value.hasUsername;
+    result.username = value.username;
+    result.hasVisibility = value.hasVisibility;
+    result.visible = value.visible;
+    return result;
+}
+
+private OwnedTag[] copyTags(scope const(OwnedTag)[] values) @safe
+{
+    OwnedTag[] result;
+    result.length = values.length;
+    foreach (i, ref const value; values)
+    {
+        result[i].key = value.key;
+        result[i].value = value.value;
+    }
+    return result;
 }
 
 /** Copy exact borrowed bytes into immutable owned storage. */
