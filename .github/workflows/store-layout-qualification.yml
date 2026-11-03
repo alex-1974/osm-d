@@ -66,6 +66,14 @@ jobs:
             benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
             | tee benchmark/store/reference-bremen.txt
 
+      - name: Run compact build from materialized dataset
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-store-layout \
+            --variant=compact-owned \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            | tee benchmark/store/compact-owned-bremen.txt
+
       - name: Run compact candidate
         shell: bash
         run: |
@@ -93,6 +101,13 @@ jobs:
             test "$rv" = "$cv"
             echo "PASS: $key=$rv"
           done
+
+          materialized="benchmark/store/compact-owned-bremen.txt"
+          mv="$(get_value semantic_checksum "$materialized")"
+          rv="$(get_value semantic_checksum "$ref")"
+          test -n "$mv"
+          test "$mv" = "$rv"
+          echo "PASS: compact-owned semantic_checksum=$mv"
 
           test "$(get_value integrity "$ref")" = "pass"
           test "$(get_value integrity "$cmp")" = "pass"
@@ -137,6 +152,7 @@ jobs:
           name: store-layout-bremen-${{ github.sha }}
           path: |
             benchmark/store/reference-bremen.txt
+            benchmark/store/compact-owned-bremen.txt
             benchmark/store/compact-bremen.txt
             benchmark/store/bremen-decision.txt
           if-no-files-found: error
