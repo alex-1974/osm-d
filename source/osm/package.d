@@ -20,6 +20,7 @@ public import osm.model.compare :
     PbfSemanticDifference,
     comparePbfSemantics,
     sameOsmSemantics,
+    sameChangeSemantics,
     samePbfHeaderSemantics,
     samePbfSemantics,
     samePbfRawSource;
