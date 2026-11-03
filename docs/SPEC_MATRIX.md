@@ -280,8 +280,8 @@ Sources: N3, R2.
 | --- | --- | --- | --- | --- |
 | actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** `OwnedChangeEntry` represents the operation independently of XML and carries whole-object state. | tag-only logical edit still serializes full object. |
 | modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** create/modify use `ChangeObjectState.complete`; never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
-| placeholder IDs | Negative local IDs are the safe interoperable placeholder convention; Rails substitution effectively requires negative refs for replacement. | iD/JOSM use negative local IDs. | **MUST:** generated create placeholders are negative and unique within upload scope. | create node -> way -> relation chain. |
-| dependency order | Current API rejects forward references to placeholders. | iD sorts new relations by dependencies and orders create node->way->relation. | **MUST:** build dependency graph/topological order; detect cycles/unresolvable placeholder graphs before network call. | forward ref, nested relations, cycle. |
+| placeholder IDs | Negative local IDs are the safe interoperable placeholder convention; Rails substitution effectively requires negative refs for replacement. | iD/JOSM use negative local IDs. | **MUST:** create placeholders are negative and unique within their typed element namespace. `validateUploadChanges` enforces this for an upload sequence. | create node -> way -> relation chain; same numeric placeholder in different type namespaces; duplicate typed placeholder. |
+| dependency order | Current API rejects forward references to placeholders. | iD sorts new relations by dependencies and orders create node->way->relation. | Upload validation requires every negative/local reference to resolve to an earlier create of the correct type. It does not silently reorder input; a future builder may topologically order a graph before validation. | forward ref, nested create dependencies, unresolved local member. |
 | modify order | iD emits node->way->relation. | Useful deterministic policy. | **SHOULD:** deterministic dependency-safe order where applicable; correctness does not rely on arbitrary source order. | stable serializer test. |
 | delete order | iD emits relation->way->node and `if-unused=true`. | Mature editor policy. | Source order is preserved by the change model. `deleteIfUnused` is explicit per delete entry; codecs never inject it. A future API layer may apply an explicit dependency/deletion policy before upload. | used object deletion with/without policy; source-order preservation. |
 | osmChange action-section order | Action groups are serialization containers around whole elements. | Editors commonly group operations, but grouping is not the semantic model. | Reader appends entries in source order. Writer only coalesces consecutive entries with equal action/delete policy and may repeat action sections to preserve order. | create -> modify -> delete -> create round-trip. |
@@ -291,6 +291,20 @@ Sources: N3, R2.
 | diffResult | Server maps uploaded IDs and returns new IDs/versions for successful create/modify results as applicable. | Editors update local graph from server response. | **MUST:** apply returned mapping/version; never assume version increment or server ID. | old->new placeholder mapping. |
 
 Sources: N1, N4, R4.
+
+### Implemented upload-readiness boundary
+
+`validateUploadChanges` is deliberately stronger than XML/osmChange decoding.
+It rejects incomplete create/modify states, zero IDs, invalid create/existing ID
+signs, duplicate typed create placeholders, missing/non-positive changesets,
+missing/non-positive modify/delete versions, out-of-world or non-1e-7 Node
+coordinates, invalid/duplicate/overlong tags, unrepresentable Way-node
+locations, zero references and unresolved negative/local references. Positive
+references may remain unresolved locally.
+
+The validator uses a temporary hash index proportional to created placeholders.
+The changeset-element capability applies to the supplied sequence/request, not
+to earlier requests in the same server-side changeset.
 
 ---
 
@@ -315,8 +329,8 @@ actual values may change.
 
 | Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
-| capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **MUST:** API validators take a `CapabilityProfile`; no current server limit is hardcoded as normative model truth. | mocked capability changes. |
-| offline validation | No server may be available. | Editors use defaults/fallbacks. | Separate *format validity* from *target-server uploadability*. Offline policy may carry explicit configured defaults. | same object valid format but invalid against smaller server cap. |
+| capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **IMPLEMENTED:** `CapabilityProfile` supplies optional changeset-element, Way-node and Relation-member limits to `validateUploadChanges`; zero means unspecified. No current server limit is hardcoded as normative truth. | mocked smaller Way/member/change limits. |
+| offline validation | No server may be available. | Editors use defaults/fallbacks. | Format decoding remains separate from target uploadability. `CapabilityProfile.unbounded()` performs semantic upload checks without target-specific size caps; callers may provide explicit offline policy limits. | same sequence valid unbounded but invalid against smaller profile. |
 
 Sources: N1, R5.
 
@@ -340,6 +354,12 @@ Do **not** treat as lossless behavior:
 
 Therefore JOSM is an editor-behavior reference, not a raw roundtrip oracle.
 
+M5 qualification includes independently authored JOSM-compatible ordinary XML
+and osmChange fixtures. Their `generator="JOSM"` value is input metadata used
+to exercise the codec; it is **not** a provenance claim that JOSM itself wrote
+those bytes. Literal JOSM-export provenance must be recorded separately before
+making such a release claim.
+
 ### iD
 
 Borrow:
@@ -352,6 +372,11 @@ Borrow:
 
 Do not copy browser-specific numeric/string/JSON representation choices into the
 codec without independent justification.
+
+M5 also includes an independently authored iD-compatible osmChange fixture with
+dependency-safe create Node->Way->Relation order, modify
+Node->Way->Relation order, and delete Relation->Way->Node order. Qualification
+is semantic rather than byte-identical.
 
 ### libosmium / protozero
 
