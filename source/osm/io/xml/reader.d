@@ -487,7 +487,7 @@ void skipAsciiSpace(const(char)[] text, ref size_t i)
 {
     while (i < text.length)
     {
-        final switch (text[i])
+        switch (text[i])
         {
             case ' ':
             case '\t':
