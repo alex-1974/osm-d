@@ -303,3 +303,22 @@ void compileConsumer()
         assert(document.preservation.hasSource || input.length == 0);
     }
 }
+
+
+@safe void compilePbfWriterSurface()
+{
+    PbfDocument document = PbfDocument.create();
+    PbfWriter writer;
+    PbfWriteOptions options;
+    PbfWriteStatus status;
+    ubyte[] output;
+
+    const ok = writer.write(document, output, status, options);
+    assert(ok == status.ok);
+
+    ubyte[] original;
+    PbfWriteStatus originalStatus;
+    const originalOk =
+        writer.writeOriginalSource(document, original, originalStatus);
+    assert(originalOk || originalStatus.error == PbfWriteError.noOriginalSource);
+}
