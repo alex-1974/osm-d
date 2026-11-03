@@ -1172,33 +1172,33 @@ private EditMetrics runReferenceEdits(
 
     EditMetrics metrics;
     metrics.editNs = elapsedNs(() {
-        foreach (ref const op; nodeTagOps)
+        foreach (ref op; nodeTagOps)
             store.data.nodes[op.slot] = op.value;
-        foreach (ref const op; wayTagOps)
+        foreach (ref op; wayTagOps)
             store.data.ways[op.slot] = op.value;
-        foreach (ref const op; relationTagOps)
+        foreach (ref op; relationTagOps)
             store.data.relations[op.slot] = op.value;
 
-        foreach (ref const op; coordinateOps)
+        foreach (ref op; coordinateOps)
             store.data.nodes[op.slot] = op.value;
-        foreach (ref const op; referenceOps)
+        foreach (ref op; referenceOps)
             store.data.ways[op.slot] = op.value;
-        foreach (ref const op; memberOps)
+        foreach (ref op; memberOps)
             store.data.relations[op.slot] = op.value;
 
-        foreach (ref const created; createdNodes)
+        foreach (ref created; createdNodes)
         {
             const slot = cast(uint)store.data.nodes.length;
             store.data.nodes ~= created;
             store.nodeIndex[created.id] = slot;
         }
-        foreach (ref const created; createdWays)
+        foreach (ref created; createdWays)
         {
             const slot = cast(uint)store.data.ways.length;
             store.data.ways ~= created;
             store.wayIndex[created.id] = slot;
         }
-        foreach (ref const created; createdRelations)
+        foreach (ref created; createdRelations)
         {
             const slot = cast(uint)store.data.relations.length;
             store.data.relations ~= created;
@@ -1230,24 +1230,24 @@ private EditMetrics runReferenceEdits(
         store.estimatedOwnedBytes + parentBytes;
 
     metrics.revertNs = elapsedNs(() {
-        foreach (ref const op; nodeTagOps)
+        foreach (ref op; nodeTagOps)
             store.data.nodes[op.slot] = op.original;
-        foreach (ref const op; coordinateOps)
+        foreach (ref op; coordinateOps)
             store.data.nodes[op.slot] = op.original;
-        foreach (ref const op; wayTagOps)
+        foreach (ref op; wayTagOps)
             store.data.ways[op.slot] = op.original;
-        foreach (ref const op; referenceOps)
+        foreach (ref op; referenceOps)
             store.data.ways[op.slot] = op.original;
-        foreach (ref const op; relationTagOps)
+        foreach (ref op; relationTagOps)
             store.data.relations[op.slot] = op.original;
-        foreach (ref const op; memberOps)
+        foreach (ref op; memberOps)
             store.data.relations[op.slot] = op.original;
 
-        foreach (ref const created; createdRelations)
+        foreach (ref created; createdRelations)
             assert(store.relationIndex.remove(created.id));
-        foreach (ref const created; createdWays)
+        foreach (ref created; createdWays)
             assert(store.wayIndex.remove(created.id));
-        foreach (ref const created; createdNodes)
+        foreach (ref created; createdNodes)
             assert(store.nodeIndex.remove(created.id));
 
         store.data.relations.length = originalRelationLength;
@@ -1358,33 +1358,33 @@ private EditMetrics runCompactEdits(
 
     EditMetrics metrics;
     metrics.editNs = elapsedNs(() {
-        foreach (ref const op; nodeTagOps)
+        foreach (ref op; nodeTagOps)
             assert(store.replace(op.handle, op.value, status));
-        foreach (ref const op; wayTagOps)
+        foreach (ref op; wayTagOps)
             assert(store.replace(op.handle, op.value, status));
-        foreach (ref const op; relationTagOps)
-            assert(store.replace(op.handle, op.value, status));
-
-        foreach (ref const op; coordinateOps)
-            assert(store.replace(op.handle, op.value, status));
-        foreach (ref const op; referenceOps)
-            assert(store.replace(op.handle, op.value, status));
-        foreach (ref const op; memberOps)
+        foreach (ref op; relationTagOps)
             assert(store.replace(op.handle, op.value, status));
 
-        foreach (ref const created; createdNodes)
+        foreach (ref op; coordinateOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref op; referenceOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref op; memberOps)
+            assert(store.replace(op.handle, op.value, status));
+
+        foreach (ref created; createdNodes)
         {
             OsmHandle handle;
             assert(store.add(created, handle, status));
             createdNodeHandles ~= handle;
         }
-        foreach (ref const created; createdWays)
+        foreach (ref created; createdWays)
         {
             OsmHandle handle;
             assert(store.add(created, handle, status));
             createdWayHandles ~= handle;
         }
-        foreach (ref const created; createdRelations)
+        foreach (ref created; createdRelations)
         {
             OsmHandle handle;
             assert(store.add(created, handle, status));
@@ -1413,17 +1413,17 @@ private EditMetrics runCompactEdits(
         store.memoryUsage.totalOwnedBytes + parentBytes;
 
     metrics.revertNs = elapsedNs(() {
-        foreach (ref const op; relationTagOps)
+        foreach (ref op; relationTagOps)
             assert(store.revert(op.handle, status));
-        foreach (ref const op; memberOps)
+        foreach (ref op; memberOps)
             assert(store.revert(op.handle, status));
-        foreach (ref const op; wayTagOps)
+        foreach (ref op; wayTagOps)
             assert(store.revert(op.handle, status));
-        foreach (ref const op; referenceOps)
+        foreach (ref op; referenceOps)
             assert(store.revert(op.handle, status));
-        foreach (ref const op; nodeTagOps)
+        foreach (ref op; nodeTagOps)
             assert(store.revert(op.handle, status));
-        foreach (ref const op; coordinateOps)
+        foreach (ref op; coordinateOps)
             assert(store.revert(op.handle, status));
 
         foreach_reverse (handle; createdRelationHandles)
