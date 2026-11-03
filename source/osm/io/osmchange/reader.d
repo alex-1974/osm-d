@@ -972,3 +972,27 @@ unittest // committed ordered osmChange fixture
 
     assert(document.changes.entries[4].action == ChangeAction.create);
 }
+
+
+unittest // deletion metadata is preserved, never fabricated
+{
+    import transport.source : MemorySource;
+
+    enum xml =
+        "<osmChange version=\"0.6\"><delete>" ~
+        "<node id=\"77\"/>" ~
+        "</delete></osmChange>";
+
+    auto source = new MemorySource(cast(const(ubyte)[]) xml);
+
+    OsmChangeDocument document;
+    OsmChangeReadStatus status;
+    assert(readOsmChangeDocument(source, document, status));
+    assert(document.changes.entries.length == 1);
+
+    ref const entry = document.changes.entries[0];
+    assert(entry.action == ChangeAction.deleteObject);
+    assert(entry.objectState == ChangeObjectState.identityOnly);
+    assert(!entry.metadata.hasVersion);
+    assert(!entry.metadata.hasChangeset);
+}
