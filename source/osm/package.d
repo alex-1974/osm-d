@@ -15,6 +15,11 @@ module osm;
 public import osm.view.element :
     ElementType,
     OsmId;
+public import osm.model.compare :
+    sameOsmSemantics,
+    samePbfHeaderSemantics,
+    samePbfSemantics,
+    samePbfRawSource;
 public import osm.model.owned :
     OwnedBytes,
     OwnedTag,
