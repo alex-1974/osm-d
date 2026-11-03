@@ -29,3 +29,12 @@ The default real-data set is Monaco plus Liechtenstein. Larger pinned datasets
 may be supplied explicitly. Austria is intentionally not an ordinary M4 gate:
 the current document API materializes the complete owned dataset and is not the
 future compact-store/streaming writer benchmark.
+
+
+## I/O boundary
+
+This qualification executable uses ordinary file APIs only as test-harness
+plumbing. The public `osm-d` library does not define filesystem or HTTP I/O.
+Production byte-resource access belongs to `transport-d` (ADR 0019). Once its
+v0.1.0 release is tagged and registry-resolvable, source/sink integration can be
+qualified against that released contract without changing PBF semantics.
