@@ -16,8 +16,10 @@
  */
 module osm.store.compact.store;
 
+import core.atomic : atomicOp;
 import osm.model.owned :
     OwnedBytes,
+    OwnedDataset,
     OwnedMetadata,
     OwnedNode,
     OwnedRelation,
@@ -450,6 +452,8 @@ public:
         skipDeleted();
     }
 }
+
+private shared uint nextStoreEpoch;
 
 private struct Span32
 {
@@ -895,7 +899,7 @@ private bool sameBytes(
 final class OsmStore
 {
 private:
-    uint _epoch = 1;
+    uint _epoch;
 
     StringPool _strings;
 
@@ -932,6 +936,10 @@ private:
 public:
     this() @safe
     {
+        _epoch = atomicOp!"+="(nextStoreEpoch, 1);
+        if (_epoch == 0)
+            _epoch = atomicOp!"+="(nextStoreEpoch, 1);
+
         _strings.initialize();
         _nodeIndex.initialize();
         _wayIndex.initialize();
@@ -1039,25 +1047,33 @@ public:
         return true;
     }
 
-    /** Build the store from an already-owned semantic dataset. */
-    bool addAll(
-        scope const(OwnedNode)[] nodes,
-        scope const(OwnedWay)[] ways,
-        scope const(OwnedRelation)[] relations,
+    /**
+     * Build a complete store transactionally from an owned semantic dataset.
+     *
+     * On failure store is null and no partially-built result escapes.
+     */
+    static bool build(
+        scope ref const OwnedDataset data,
+        out OsmStore store,
         out StoreStatus status) @safe
     {
+        store = null;
         status = StoreStatus.init;
+
+        auto candidate = new OsmStore();
         OsmHandle ignored;
 
-        foreach (ref const value; nodes)
-            if (!add(value, ignored, status))
+        foreach (ref const value; data.nodes)
+            if (!candidate.add(value, ignored, status))
                 return false;
-        foreach (ref const value; ways)
-            if (!add(value, ignored, status))
+        foreach (ref const value; data.ways)
+            if (!candidate.add(value, ignored, status))
                 return false;
-        foreach (ref const value; relations)
-            if (!add(value, ignored, status))
+        foreach (ref const value; data.relations)
+            if (!candidate.add(value, ignored, status))
                 return false;
+
+        store = candidate;
         return true;
     }
 
