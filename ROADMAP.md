@@ -86,7 +86,7 @@ Tracked by M4: #44.
 Tracked by M5: #45.
 
 - [x] XML/osmChange mapping and modification semantics. #57
-- [ ] Streaming OSM XML reader/writer. #58
+- [x] Streaming OSM XML reader/writer. #58
 - [ ] osmChange reader/writer. #59
 - [ ] Complete-object validation and JOSM/iD interoperability. #60
 
