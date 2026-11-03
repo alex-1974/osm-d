@@ -11,12 +11,14 @@ command -v osmium >/dev/null 2>&1 || {
     exit 2
 }
 
-dub run \
+dub build \
     --root="$ROOT/tests/osmchange-toolchain" \
     --compiler="$COMPILER" \
     --build=debug \
     --force \
-    > "$OUT"
+    >/dev/null
+
+"$ROOT/tests/osmchange-toolchain/osm-d-osmchange-toolchain" > "$OUT"
 
 # Parsing the library-produced .osc with libosmium/osmium-tool is the
 # independent syntax/interoperability gate. No byte-identical output is assumed.
