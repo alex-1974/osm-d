@@ -309,6 +309,52 @@ never rounded silently. Known document-level JOSM metadata such as
 closed; complete JOSM/iD editing interoperability is tracked separately by M5
 qualification.
 
+## osmChange 0.6
+
+Edit interchange uses the format-neutral `OwnedChangeSequence`; XML action
+groups are only serialization. The supported facade is `osm.osmchange`.
+
+```d
+import osm.osmchange;
+import transport.source : MemorySink, MemorySource;
+
+const(ubyte)[] bytes = ...;
+auto source = new MemorySource(bytes);
+
+OsmChangeDocument document;
+OsmChangeReadStatus readStatus;
+if (!readOsmChangeDocument(source, document, readStatus))
+{
+    // malformed XML, incomplete create/modify objects, unsupported content,
+    // precision loss, or transport errors are reported explicitly.
+}
+
+auto sink = new MemorySink();
+OsmChangeWriter writer;
+OsmChangeWriteStatus writeStatus;
+if (!writer.write(document, sink, writeStatus))
+{
+    // No partial semantic object is silently converted into a modify.
+}
+```
+
+Entry order is preserved. Consecutive operations may share one XML action
+section, but the writer opens a new section whenever the action changes, so
+`create -> modify -> delete -> create` stays in that order. The delete
+`if-unused` policy is carried explicitly per entry and is never injected.
+
+Create and modify entries must contain complete object state. Delete may carry
+a complete object or only identity plus metadata. For an empty delete Way or
+Relation the XML syntax cannot distinguish a complete empty object from a
+minimal deletion; the reader therefore uses the conservative
+`ChangeObjectState.identityOnly` representation instead of inventing
+completeness.
+
+Metadata is preserved when present. In particular, the reader/writer does not
+invent a missing version or changeset on deletes. Whether an otherwise
+representable change is valid for an OSM API upload is a stronger validation
+contract handled separately by the modification-validation layer.
+
 ## Status
 
 The first substantial PBF implementation slice is in place. Implemented
