@@ -41,7 +41,7 @@ import osm.view.location : LocationView;
  * remain @safe and expose only bounds-checked values or borrowed slices whose
  * invalidation follows the documented store mutation contract.
  */
-private struct ManualArray(T)
+package(osm) struct ManualArray(T)
 {
 private:
     T* _ptr;
@@ -65,7 +65,7 @@ public:
         return _length;
     }
 
-    @property void length(size_t value) @trusted
+    @property void length(size_t value) @trusted nothrow @nogc
     {
         if (value > _capacity)
             reserve(value);
@@ -76,7 +76,7 @@ public:
         _length = value;
     }
 
-    void reserve(size_t requested) @trusted
+    void reserve(size_t requested) @trusted nothrow @nogc
     {
         if (requested <= _capacity)
             return;
@@ -94,13 +94,13 @@ public:
         _capacity = requested;
     }
 
-    void append(T value) @trusted
+    void append(T value) @trusted nothrow @nogc
     {
         ensureAppendCapacity(1);
         _ptr[_length++] = value;
     }
 
-    void append(scope const(T)[] values) @trusted
+    void append(scope const(T)[] values) @trusted nothrow @nogc
     {
         if (values.length == 0)
             return;
@@ -113,41 +113,51 @@ public:
         _length += values.length;
     }
 
-    ref ManualArray opOpAssign(string op : "~")(T value) @trusted
+    ref ManualArray opOpAssign(string op : "~")(T value) @trusted nothrow @nogc
     {
         append(value);
         return this;
     }
 
     ref ManualArray opOpAssign(string op : "~")(scope const(T)[] values)
-        @trusted
+        @trusted nothrow @nogc
     {
         append(values);
         return this;
     }
 
-    ref T opIndex(size_t index) @trusted
+    ref T opIndex(size_t index) @trusted nothrow @nogc
     {
         if (index >= _length)
             onArrayIndexError(index, _length);
         return _ptr[index];
     }
 
-    ref const(T) opIndex(size_t index) const @trusted
+    ref const(T) opIndex(size_t index) const @trusted nothrow @nogc
     {
         if (index >= _length)
             onArrayIndexError(index, _length);
         return _ptr[index];
     }
 
-    T[] opSlice(size_t lower, size_t upper) @trusted
+    T[] opSlice() @trusted nothrow @nogc
+    {
+        return _ptr[0 .. _length];
+    }
+
+    const(T)[] opSlice() const @trusted nothrow @nogc
+    {
+        return _ptr[0 .. _length];
+    }
+
+    T[] opSlice(size_t lower, size_t upper) @trusted nothrow @nogc
     {
         if (lower > upper || upper > _length)
             onArraySliceError(lower, upper, _length);
         return _ptr[lower .. upper];
     }
 
-    const(T)[] opSlice(size_t lower, size_t upper) const @trusted
+    const(T)[] opSlice(size_t lower, size_t upper) const @trusted nothrow @nogc
     {
         if (lower > upper || upper > _length)
             onArraySliceError(lower, upper, _length);
@@ -170,7 +180,7 @@ public:
     }
 
 private:
-    void ensureAppendCapacity(size_t additional) @trusted
+    void ensureAppendCapacity(size_t additional) @trusted nothrow @nogc
     {
         if (additional > size_t.max - _length)
             onOutOfMemoryError();
@@ -662,7 +672,7 @@ private struct StringPool
     ManualArray!uint buckets;
     size_t count;
 
-    void initialize() @safe
+    void initialize() @safe nothrow @nogc
     {
         if (entries.length != 0)
             return;
@@ -671,7 +681,7 @@ private struct StringPool
         count = 1;
     }
 
-    void prepare(size_t maximumEntries, size_t maximumBytes) @safe
+    void prepare(size_t maximumEntries, size_t maximumBytes) @safe nothrow @nogc
     {
         if (entries.length == 0)
             initialize();
@@ -692,7 +702,7 @@ private struct StringPool
         }
     }
 
-    uint intern(scope const(ubyte)[] value) @safe
+    uint intern(scope const(ubyte)[] value) @safe nothrow @nogc
     {
         if (entries.length == 0)
             initialize();
@@ -741,7 +751,7 @@ private struct StringPool
         return bytes[entry.offset .. entry.offset + entry.length];
     }
 
-    void rehash(size_t requested) @safe
+    void rehash(size_t requested) @safe nothrow @nogc
     {
         size_t capacity = 16;
         while (capacity < requested)
@@ -779,7 +789,7 @@ private struct IdIndex
     size_t count;
     size_t deleted;
 
-    void initialize() @safe
+    void initialize() @safe nothrow @nogc
     {
         if (values.length != 0)
             return;
@@ -787,7 +797,7 @@ private struct IdIndex
         values.length = 16;
     }
 
-    void prepare(size_t expectedEntries) @safe
+    void prepare(size_t expectedEntries) @safe nothrow @nogc
     {
         size_t capacity = 16;
         while (capacity * 7 < expectedEntries * 10)
@@ -828,7 +838,7 @@ private struct IdIndex
         }
     }
 
-    bool insert(OsmId id, uint slot) @safe
+    bool insert(OsmId id, uint slot) @safe nothrow @nogc
     {
         if (values.length == 0)
             initialize();
@@ -892,7 +902,7 @@ private struct IdIndex
         }
     }
 
-    void rehash(size_t requested) @safe
+    void rehash(size_t requested) @safe nothrow @nogc
     {
         size_t capacity = 16;
         while (capacity < requested)
@@ -956,6 +966,27 @@ private struct MetadataColumns
 
     void append(scope ref const OwnedMetadata value, ref StringPool strings)
         @safe
+    {
+        ubyte bits;
+        if (value.hasVersion) bits |= 1 << 0;
+        if (value.hasTimestamp) bits |= 1 << 1;
+        if (value.hasChangeset) bits |= 1 << 2;
+        if (value.hasUserId) bits |= 1 << 3;
+        if (value.hasUsername) bits |= 1 << 4;
+        if (value.hasVisibility) bits |= 1 << 5;
+
+        flags ~= bits;
+        versions ~= value.versionNumber;
+        timestamps ~= value.timestampMilliseconds;
+        changesets ~= value.changesetId;
+        userIds ~= value.userId;
+        usernames ~= value.hasUsername ? strings.intern(value.username) : 0;
+        visible ~= value.visible ? 1 : 0;
+    }
+
+
+    void appendBorrowed(Metadata)(Metadata value, ref StringPool strings)
+        @safe nothrow @nogc
     {
         ubyte bits;
         if (value.hasVersion) bits |= 1 << 0;
@@ -1079,6 +1110,22 @@ private struct CommonColumns
         generations ~= 1;
         tags ~= tagSpan;
         metadata.append(metadataValue, strings);
+    }
+
+
+    void appendBorrowed(Metadata)(
+        OsmId id,
+        StoreElementState state,
+        Span32 tagSpan,
+        Metadata metadataValue,
+        ref StringPool strings) @safe nothrow @nogc
+    {
+        ids ~= id;
+        states ~= state;
+        deletedFrom ~= state;
+        generations ~= 1;
+        tags ~= tagSpan;
+        metadata.appendBorrowed(metadataValue, strings);
     }
 
     @property size_t logicalBytes() const @safe pure nothrow @nogc
@@ -1359,6 +1406,137 @@ public:
 
         handle = makeHandle(
             ElementType.relation, slot, _relations.generations[slot]);
+        return true;
+    }
+
+
+    /**
+     * Package-internal ingestion from an already validated borrowed Node view.
+     *
+     * The template is format-neutral: only semantic properties are consumed.
+     * It exists to qualify the #62 representation without exposing a codec-
+     * specific construction API; #64 owns production direct PBF construction.
+     */
+    package(osm) bool addBorrowedNode(Node)(
+        scope ref Node value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.node;
+        status.id = value.id;
+
+        if (!preflightBorrowedIdentity(ElementType.node, value.id, status))
+            return false;
+
+        auto sourceTags = value.tags;
+        if (!preflightBorrowedTags(sourceTags, status))
+            return false;
+
+        const tagSpan = appendBorrowedTags(value.tags);
+        const slot = cast(uint)_nodes.ids.length;
+        auto metadata = value.metadata;
+
+        _nodes.appendBorrowed(
+            value.id,
+            StoreElementState.clean,
+            tagSpan,
+            metadata,
+            _strings);
+        const location = value.location;
+        _nodeLatitudes ~= location.latitudeNanodegrees;
+        _nodeLongitudes ~= location.longitudeNanodegrees;
+
+        if (!_nodeIndex.insert(value.id, slot))
+        {
+            status.error = StoreError.duplicateId;
+            return false;
+        }
+
+        ++_liveNodes;
+        return true;
+    }
+
+    /** Package-internal ingestion from an already validated borrowed Way view. */
+    package(osm) bool addBorrowedWay(Way)(
+        scope ref Way value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.way;
+        status.id = value.id;
+
+        if (!preflightBorrowedIdentity(ElementType.way, value.id, status))
+            return false;
+
+        auto sourceTags = value.tags;
+        if (!preflightBorrowedTags(sourceTags, status))
+            return false;
+
+        const tagSpan = appendBorrowedTags(value.tags);
+        const refSpan = appendBorrowedWayNodes(value.nodes);
+        const locationSpan = lastWayLocationSpan;
+        const slot = cast(uint)_ways.ids.length;
+        auto metadata = value.metadata;
+
+        _ways.appendBorrowed(
+            value.id,
+            StoreElementState.clean,
+            tagSpan,
+            metadata,
+            _strings);
+        _wayRefs ~= refSpan;
+        _wayLocationSpans ~= locationSpan;
+
+        if (!_wayIndex.insert(value.id, slot))
+        {
+            status.error = StoreError.duplicateId;
+            return false;
+        }
+
+        ++_liveWays;
+        return true;
+    }
+
+    /**
+     * Package-internal ingestion from an already validated borrowed Relation
+     * view.
+     */
+    package(osm) bool addBorrowedRelation(Relation)(
+        scope ref Relation value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.relation;
+        status.id = value.id;
+
+        if (!preflightBorrowedIdentity(
+                ElementType.relation, value.id, status))
+            return false;
+
+        auto sourceTags = value.tags;
+        if (!preflightBorrowedTags(sourceTags, status))
+            return false;
+
+        const tagSpan = appendBorrowedTags(value.tags);
+        const memberSpan = appendBorrowedRelationMembers(value.members);
+        const slot = cast(uint)_relations.ids.length;
+        auto metadata = value.metadata;
+
+        _relations.appendBorrowed(
+            value.id,
+            StoreElementState.clean,
+            tagSpan,
+            metadata,
+            _strings);
+        _relationMembers ~= memberSpan;
+
+        if (!_relationIndex.insert(value.id, slot))
+        {
+            status.error = StoreError.duplicateId;
+            return false;
+        }
+
+        ++_liveRelations;
         return true;
     }
 
@@ -2158,6 +2336,144 @@ private:
             }
         }
         return true;
+    }
+
+
+    bool preflightBorrowedIdentity(
+        ElementType type,
+        OsmId id,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        if (id <= 0)
+        {
+            status.error = StoreError.invalidId;
+            return false;
+        }
+
+        OsmHandle existing;
+        if (find(type, id, existing))
+        {
+            status.error = StoreError.duplicateId;
+            return false;
+        }
+
+        return true;
+    }
+
+    bool preflightBorrowedTags(Range)(
+        Range source,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        auto outer = source;
+        while (!outer.empty)
+        {
+            const tag = outer.front;
+            if (tag.key.length == 0)
+            {
+                status.error = StoreError.emptyTagKey;
+                return false;
+            }
+
+            auto inner = outer;
+            inner.popFront();
+            while (!inner.empty)
+            {
+                if (sameBytes(tag.key, inner.front.key))
+                {
+                    status.error = StoreError.duplicateTagKey;
+                    return false;
+                }
+                inner.popFront();
+            }
+
+            outer.popFront();
+        }
+        return true;
+    }
+
+    Span32 appendBorrowedTags(Range)(Range source)
+        @safe nothrow @nogc
+    {
+        Span32 result;
+        result.offset = cast(uint)_tags.length;
+
+        while (!source.empty)
+        {
+            const value = source.front;
+            CompactTag tag;
+            tag.key = _strings.intern(value.key);
+            tag.value = _strings.intern(value.value);
+            _tags ~= tag;
+            ++result.length;
+            source.popFront();
+        }
+
+        return result;
+    }
+
+    Span32 appendBorrowedWayNodes(Range)(Range source)
+        @safe nothrow @nogc
+    {
+        Span32 refs;
+        refs.offset = cast(uint)_wayRefIds.length;
+
+        Span32 locations;
+        locations.offset = cast(uint)_wayLocations.length;
+
+        uint relativeIndex;
+        while (!source.empty)
+        {
+            const value = source.front;
+            if (value.id <= 0)
+            {
+                // Validated editor-store state never accepts unresolved local
+                // IDs from a borrowed file source.
+                onArrayIndexError(0, 0);
+            }
+
+            _wayRefIds ~= value.id;
+            ++refs.length;
+
+            if (value.hasLocation)
+            {
+                SparseWayLocation entry;
+                entry.relativeIndex = relativeIndex;
+                entry.latitudeNanodegrees =
+                    value.location.latitudeNanodegrees;
+                entry.longitudeNanodegrees =
+                    value.location.longitudeNanodegrees;
+                _wayLocations ~= entry;
+            }
+
+            ++relativeIndex;
+            source.popFront();
+        }
+
+        locations.length = cast(uint)_wayLocations.length - locations.offset;
+        _lastWayLocationSpan = locations;
+        return refs;
+    }
+
+    Span32 appendBorrowedRelationMembers(Range)(Range source)
+        @safe nothrow @nogc
+    {
+        Span32 result;
+        result.offset = cast(uint)_relationMemberIds.length;
+
+        while (!source.empty)
+        {
+            const value = source.front;
+            if (value.id <= 0)
+                onArrayIndexError(0, 0);
+
+            _relationMemberIds ~= value.id;
+            _relationMemberTypes ~= cast(ubyte)value.type;
+            _relationMemberRoles ~= _strings.intern(value.role);
+            ++result.length;
+            source.popFront();
+        }
+
+        return result;
     }
 
     Span32 appendTags(scope const(OwnedTag)[] values) @safe
