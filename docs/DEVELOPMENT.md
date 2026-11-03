@@ -169,9 +169,12 @@ Blob slices from it, the queue has fixed capacity, each worker owns one
 `PbfReaderWorkspace`, and every worker is joined before return. No semantic
 element view crosses a worker boundary.
 
-The parallel API publishes only value-type summary/status results. Consumer
-callbacks remain the responsibility of the ordered `PbfReader.read` API until
-an explicit lifetime-preserving ordered-merge design is implemented.
+The parallel API publishes only value-type summary/status results. Ordered
+borrowed consumer callbacks remain the responsibility of `PbfReader.read` and
+the element-specific foreach adapters. ADR 0017 deliberately closes Phase 3
+without a generic ordered parallel borrowed-view API; future parallel decoded
+element publication requires an explicit owned destination/store or a new
+lifetime/backpressure contract.
 
 ## Build profiles
 
