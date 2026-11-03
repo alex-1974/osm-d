@@ -63,6 +63,13 @@ struct PbfPreservation
 {
     PbfRawFile source;
     PbfPreservationReason reason;
+    /**
+     * File-block start offset containing the first rewrite-sensitive content.
+     *
+     * For compressed payloads the exact nested protobuf byte has no stable
+     * file offset without referring to compressed representation, so this
+     * deliberately identifies the enclosing PBF file block.
+     */
     size_t firstSensitiveOffset;
 
     /** Whether a semantic rewrite may proceed without known silent loss. */
