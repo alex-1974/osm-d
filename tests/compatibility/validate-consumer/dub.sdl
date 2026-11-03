@@ -1,0 +1,8 @@
+name "osm-d-validate-consumer"
+description "External consumer compile probe for osm-d upload validation API"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../../.."

@@ -48,16 +48,18 @@ GitHub Actions separates checks by branch trust level.
 
 For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
 supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
-external DUB consumer probes, DIP1000 lifetime-negative checks, the deterministic
+external DUB consumer probes, deterministic JOSM-/iD-compatible edit
+interoperability fixtures, DIP1000 lifetime-negative checks, the deterministic
 wire malformed-input seed corpus, PBF round-trip smoke tests, and release/
 benchmark builds. The DMD baseline additionally generates osmChange output with
 `osm-d` and requires Ubuntu's `osmium-tool`/libosmium to parse it successfully.
 
 For pull requests targeting `main`, pushes to `main`, and release/hotfix
 branches, the Release Gate runs the full six-compiler qualification matrix,
-reruns the deterministic malformed-input and round-trip gates, compiles the
-external consumers, and builds the parser decode-count benchmark. The baseline
-DMD job also repeats the osmChange `osmium-tool` interoperability check. This
+reruns the deterministic malformed-input, round-trip, and editor
+interoperability gates, compiles the external consumers, and builds the parser
+decode-count benchmark. The baseline DMD job also repeats the osmChange
+`osmium-tool` interoperability check. This
 keeps expensive cross-generation qualification out of ordinary `develop`
 commits while requiring it before release promotion. `main` remains the
 release line; normal development targets `develop`.
@@ -130,6 +132,12 @@ The current pre-1.0 surface is classified as follows:
   It reuses `OwnedChangeSequence` and exports streaming/materializing reader
   and writer boundaries without exposing XML parser entities. Source entry
   order and explicit delete `if-unused` policy are semantic contracts.
+- `osm.validate` is the supported upload-readiness validation facade.
+  `CapabilityProfile` carries target-server limits; `validateUploadChanges`
+  reports the first deterministic semantic/upload failure without reordering
+  or repairing the input. The convenience validator allocates a temporary
+  placeholder hash index proportional to create entries; it is not part of a
+  parser hot path.
 - Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
   Their documented decoding APIs may be used directly during pre-1.0
   development, but their module organization and callable signatures are not

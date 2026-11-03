@@ -60,6 +60,15 @@ jobs:
           OSMCHANGE_COMPILER="$DC" \
             bash tests/run-osmchange-toolchain.sh
 
+      - name: Run editor interoperability fixtures
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/edit-interoperability \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="iD">
+  <create>
+    <node id="-1" changeset="42" lat="48.2100000" lon="16.3700000">
+      <tag k="amenity" v="drinking_water"/>
+    </node>
+    <node id="-2" changeset="42" lat="48.2110000" lon="16.3710000"/>
+    <way id="-3" changeset="42">
+      <nd ref="-1"/>
+      <nd ref="-2"/>
+      <tag k="highway" v="path"/>
+    </way>
+    <relation id="-4" changeset="42">
+      <member type="way" ref="-3" role="outer"/>
+      <member type="node" ref="-1" role="label"/>
+      <tag k="type" v="multipolygon"/>
+    </relation>
+  </create>
+  <modify>
+    <node id="100" version="4" changeset="42" visible="true" lat="48.2120000" lon="16.3720000">
+      <tag k="name" v="Modified node"/>
+    </node>
+    <way id="101" version="5" changeset="42" visible="true">
+      <nd ref="100"/>
+      <nd ref="-1"/>
+      <tag k="highway" v="residential"/>
+    </way>
+    <relation id="102" version="3" changeset="42" visible="true">
+      <member type="way" ref="101" role="route"/>
+      <member type="node" ref="100" role="stop"/>
+      <tag k="type" v="route"/>
+    </relation>
+  </modify>
+  <delete if-unused="true">
+    <relation id="202" version="2" changeset="42"/>
+    <way id="201" version="2" changeset="42"/>
+    <node id="200" version="2" changeset="42"/>
+  </delete>
+</osmChange>
