@@ -15,6 +15,9 @@
   </modify>
   <delete if-unused="true">
     <relation id="20" version="2" changeset="42"/>
+    <node id="30" version="4" changeset="42" lat="48.21" lon="16.38">
+      <tag k="note" v="complete delete payload"/>
+    </node>
   </delete>
   <create>
     <node id="-2" lat="48.209" lon="16.374" changeset="42"/>
