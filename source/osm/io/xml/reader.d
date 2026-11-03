@@ -1522,3 +1522,103 @@ unittest
         "2008-09-21T21:37:45Z", timestamp) == TimestampParse.ok);
     assert(timestamp > 1_200_000_000_000L);
 }
+
+
+unittest // representative OSM XML fixture
+{
+    import transport.source : MemorySource;
+
+    enum fixture = import("xml/osm-api-style.osm");
+    auto source = new MemorySource(cast(const(ubyte)[]) fixture);
+
+    OsmXmlDocument document;
+    OsmXmlReadStatus status;
+    assert(readOsmXmlDocument(source, document, status));
+    assert(status.ok);
+
+    assert(document.info.hasVersion);
+    assert(cast(string) document.info.versionText == "0.6");
+    assert(document.info.hasGenerator);
+    assert(cast(string) document.info.generator == "JOSM");
+    assert(document.info.bounds.length == 1);
+    assert(document.info.bounds[0].minimum.latitudeNanodegrees ==
+        48_200_000_000L);
+
+    assert(document.data.nodes.length == 2);
+    assert(document.data.ways.length == 1);
+    assert(document.data.relations.length == 1);
+
+    const node = document.data.nodes[0];
+    assert(node.id == -1);
+    assert(node.location.latitudeNanodegrees == 48_208_174_300L);
+    assert(node.location.longitudeNanodegrees == 16_373_818_900L);
+    assert(node.metadata.hasVersion && node.metadata.versionNumber == 1);
+    assert(node.metadata.hasTimestamp);
+    assert(node.metadata.hasChangeset && node.metadata.changesetId == 42);
+    assert(node.metadata.hasUserId && node.metadata.userId == 7);
+    assert(node.metadata.hasUsername);
+    assert(cast(string) node.metadata.username == "A & B");
+    assert(node.metadata.hasVisibility && node.metadata.visible);
+    assert(node.tags.length == 1);
+    assert(cast(string) node.tags[0].value == "Bench & tree");
+
+    const way = document.data.ways[0];
+    assert(way.id == 3);
+    assert(way.nodes.length == 2);
+    assert(way.nodes[0].id == -1);
+    assert(way.nodes[1].id == 2);
+    assert(!way.nodes[0].hasLocation);
+
+    const relation = document.data.relations[0];
+    assert(relation.id == 4);
+    assert(relation.members.length == 2);
+    assert(relation.members[0].type == ElementType.way);
+    assert(relation.members[0].id == 3);
+    assert(cast(string) relation.members[0].role == "outer");
+    assert(relation.members[1].type == ElementType.node);
+    assert(relation.members[1].id == -1);
+}
+
+unittest // XML error and encoding policy
+{
+    import transport.source : MemorySource;
+
+    OsmXmlDocument document;
+    OsmXmlReadStatus status;
+
+    {
+        enum xml = "<osm version=\"0.6\" unknown=\"x\"></osm>";
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.unsupportedContent);
+    }
+
+    {
+        enum xml = "<osm version=\"0.6\"><node id=\"1\" lat=\"1.0000000001\" lon=\"2\"/></osm>";
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.precisionLoss);
+    }
+
+    {
+        const ubyte[] utf16Bom = [0xFF, 0xFE, 0x3C, 0x00];
+        auto source = new MemorySource(utf16Bom);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.unsupportedEncoding);
+    }
+
+    {
+        enum xml = "<osm version=\"0.6\"><node></osm>";
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.malformedXml ||
+               status.error == OsmXmlReadError.missingAttribute);
+    }
+
+    {
+        enum xml = "<osm version=\"0.6\"><node id=\"1\" lat=\"1\" lon=\"2\" user=\"&custom;\"/></osm>";
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        assert(!readOsmXmlDocument(source, document, status));
+        assert(status.error == OsmXmlReadError.malformedXml);
+    }
+}
