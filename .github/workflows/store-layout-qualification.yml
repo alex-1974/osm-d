@@ -36,15 +36,16 @@ jobs:
           "$DC" --version
           dub --version
 
-      - name: Download pinned Bremen workload
+      - name: Fetch pinned Bremen workload
         shell: bash
         run: |
-          mkdir -p benchmark/data
-          curl --fail --location --retry 3 \
-            -o benchmark/data/bremen-260901.osm.pbf \
-            https://download.geofabrik.de/europe/germany/bremen-260901.osm.pbf
-          echo "52bc46f09ce1f1198b95de308aba10c1b59108c9fdbb827fea305f7316b4ea0e  benchmark/data/bremen-260901.osm.pbf" \
-            | sha256sum --check -
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch bremen-260901; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Build layout benchmark
         shell: bash
@@ -62,7 +63,7 @@ jobs:
         run: |
           benchmark/bin/osm-d-bench-store-layout \
             --variant=reference \
-            benchmark/data/bremen-260901.osm.pbf \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
             | tee benchmark/store/reference-bremen.txt
 
       - name: Run compact candidate
@@ -70,7 +71,7 @@ jobs:
         run: |
           benchmark/bin/osm-d-bench-store-layout \
             --variant=compact \
-            benchmark/data/bremen-260901.osm.pbf \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
             | tee benchmark/store/compact-bremen.txt
 
       - name: Compare semantic and memory results
