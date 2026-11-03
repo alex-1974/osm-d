@@ -1128,7 +1128,7 @@ private EditSelection makeEditSelection(scope ref const OwnedDataset data) @safe
 }
 
 
-private EditSelection makeEditSelection(OsmStore store) @safe nothrow @nogc
+private EditSelection makeEditSelection(OsmStore store) @safe
 {
     EditSelection result;
 
