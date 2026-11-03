@@ -117,9 +117,22 @@ private bool roundTrip(
         return false;
     }
 
-    if (!samePbfSemantics(source, decoded))
+    PbfSemanticDifference difference;
+    if (!comparePbfSemantics(source, decoded, difference))
     {
-        stderr.writeln("semantic comparator mismatch");
+        stderr.write(
+            "semantic comparator mismatch: field=",
+            difference.field);
+        if (difference.hasElement)
+        {
+            stderr.write(
+                " element=", difference.elementType,
+                "/", difference.elementId,
+                " element_index=", difference.elementIndex);
+        }
+        if (difference.hasChild)
+            stderr.write(" child_index=", difference.childIndex);
+        stderr.writeln();
         return false;
     }
 
@@ -216,9 +229,22 @@ private int qualifyFile(string inputPath, string outputPath)
         return 1;
     }
 
-    if (!samePbfSemantics(source, decoded))
+    PbfSemanticDifference difference;
+    if (!comparePbfSemantics(source, decoded, difference))
     {
-        stderr.writeln("semantic round-trip mismatch");
+        stderr.write(
+            "semantic round-trip mismatch: field=",
+            difference.field);
+        if (difference.hasElement)
+        {
+            stderr.write(
+                " element=", difference.elementType,
+                "/", difference.elementId,
+                " element_index=", difference.elementIndex);
+        }
+        if (difference.hasChild)
+            stderr.write(" child_index=", difference.childIndex);
+        stderr.writeln();
         return 1;
     }
 
