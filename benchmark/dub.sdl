@@ -108,3 +108,13 @@ configuration "parser-parallel-summary" {
     importPaths "parser"
     mainSourceFile "parser/parallel_summary.d"
 }
+
+
+configuration "store-layout" {
+    targetType "executable"
+    targetName "osm-d-bench-store-layout"
+    targetPath "bin"
+    sourcePaths "store"
+    importPaths "store"
+    mainSourceFile "store/layout_compare.d"
+}
