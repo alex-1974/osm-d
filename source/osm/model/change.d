@@ -28,7 +28,8 @@ import osm.model.owned :
     OwnedRelationMember,
     OwnedTag,
     OwnedWay,
-    OwnedWayNode;
+    OwnedWayNode,
+    ownBytes;
 import osm.view.element : ElementType, OsmId;
 import osm.view.location : LocationView;
 
@@ -287,8 +288,8 @@ unittest
     node.id = -1;
     node.location = LocationView(48_208_174_300L, 16_373_818_900L);
     node.tags ~= OwnedTag(
-        cast(immutable(ubyte)[])"amenity",
-        cast(immutable(ubyte)[])"bench");
+        ownBytes(cast(const(ubyte)[])"amenity"),
+        ownBytes(cast(const(ubyte)[])"bench"));
 
     auto created = OwnedChangeEntry.fromNode(ChangeAction.create, node);
     assert(created.shapeValid);
@@ -321,16 +322,16 @@ unittest
     OwnedWay way;
     way.id = 5;
     way.tags ~= OwnedTag(
-        cast(immutable(ubyte)[])"highway",
-        cast(immutable(ubyte)[])"service");
+        ownBytes(cast(const(ubyte)[])"highway"),
+        ownBytes(cast(const(ubyte)[])"service"));
 
     OwnedChangeSequence sequence;
     sequence.entries ~= OwnedChangeEntry.fromWay(ChangeAction.modify, way);
 
     auto copy = sequence.deepCopy();
     copy.entries[0].tags ~= OwnedTag(
-        cast(immutable(ubyte)[])"name",
-        cast(immutable(ubyte)[])"A");
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"A"));
 
     assert(sequence.entries[0].tags.length == 1);
     assert(copy.entries[0].tags.length == 2);
