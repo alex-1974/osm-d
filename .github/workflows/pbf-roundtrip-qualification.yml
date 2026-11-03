@@ -1,9 +1,6 @@
 name: PBF Round-trip Qualification
 
 on:
-  push:
-    branches:
-      - feat/m4-roundtrip-qualification
   workflow_dispatch:
 
 permissions:
