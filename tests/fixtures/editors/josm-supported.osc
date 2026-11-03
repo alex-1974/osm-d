@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="JOSM">
+  <create>
+    <node id="-3" changeset="42" visible="true" lat="48.2081800" lon="16.3738200">
+      <tag k="amenity" v="bench"/>
+    </node>
+    <node id="-2" changeset="42" visible="true" lat="48.2081900" lon="16.3738300"/>
+    <way id="-1" changeset="42" visible="true">
+      <nd ref="-3"/>
+      <nd ref="-2"/>
+      <tag k="highway" v="service"/>
+    </way>
+    <relation id="-4" changeset="42" visible="true">
+      <member type="way" ref="-1" role="outer"/>
+      <member type="node" ref="-3" role="label"/>
+      <tag k="type" v="multipolygon"/>
+    </relation>
+  </create>
+  <modify>
+    <node id="100" version="4" changeset="42" visible="true" lat="48.2081700" lon="16.3738100">
+      <tag k="name" v="Updated node"/>
+    </node>
+  </modify>
+  <delete if-unused="true">
+    <relation id="200" version="5" changeset="42"/>
+  </delete>
+</osmChange>
