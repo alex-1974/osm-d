@@ -322,3 +322,40 @@ void compileConsumer()
         writer.writeOriginalSource(document, original, originalStatus);
     assert(originalOk || originalStatus.error == PbfWriteError.noOriginalSource);
 }
+
+
+@safe void compileChangeModelSurface()
+{
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(48_208_174_300L, 16_373_818_900L);
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"amenity"),
+        ownBytes(cast(const(ubyte)[])"bench"));
+
+    OwnedChangeEntry created =
+        OwnedChangeEntry.fromNode(ChangeAction.create, node);
+    assert(created.complete);
+    assert(created.shapeValid);
+    assert(created.objectState == ChangeObjectState.complete);
+
+    OwnedMetadata deletionMetadata;
+    deletionMetadata.hasVersion = true;
+    deletionMetadata.versionNumber = 3;
+    deletionMetadata.hasChangeset = true;
+    deletionMetadata.changesetId = 7;
+
+    OwnedChangeEntry deleted = OwnedChangeEntry.deletion(
+        ElementType.node, 42, deletionMetadata, true);
+    assert(deleted.action == ChangeAction.deleteObject);
+    assert(!deleted.complete);
+    assert(deleted.deleteIfUnused);
+    assert(deleted.shapeValid);
+
+    OwnedChangeSequence changes;
+    changes.entries ~= created;
+    changes.entries ~= deleted;
+
+    auto copy = changes.deepCopy();
+    assert(copy.entries.length == 2);
+}

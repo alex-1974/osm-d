@@ -264,7 +264,7 @@ canonical serialization.
 | block order | Conventional/documented entity block order is nodes, ways, relations; blocks may be absent and IDs need not be sorted. | Reader does not require ID sorting. Writer may choose deterministic type order but must document semantic vs format roundtrip mode. | unsorted IDs; missing type blocks. |
 | negative IDs | Negative IDs occur in editor files. | Preserve signed IDs. | JOSM-style local objects. |
 | metadata presence | Metadata/user/version details vary between API, extracts, history and editor files. | Explicit optional metadata fields; no sentinels. | omitmeta/editor variants. |
-| unknown attributes/elements | JOSM/Overpass and other producers have extensions/flavours. | Raw XML layer preserves supported unknown metadata/extension structures for loss-aware roundtrip, or marks rewrite unsafe. **Never convert unknown attributes into OSM tags implicitly.** | custom root/element attribute and child extension. |
+| unknown attributes/elements | JOSM/Overpass and other producers have extensions/flavours. | The M5 semantic XML codec fails explicitly on unsupported unknown attributes/elements rather than dropping them. **Never convert unknown attributes into OSM tags implicitly.** Arbitrary lexical/extension preservation requires a separately designed raw XML representation. | custom root/element attribute and child extension fail closed; represented extensions round-trip when later added. |
 | lexical XML identity | Whitespace, quote style, attribute order, entity spelling and comments are not OSM semantics. | First production contract is semantic/loss-aware roundtrip, **not byte-identical XML**. Exact lexical preservation is out of scope unless separately designed. | semantically equivalent XML. |
 
 Sources: N3, R2.
@@ -275,12 +275,12 @@ Sources: N3, R2.
 
 | Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
-| actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** change model contains whole-object states. | tag-only logical edit still serializes full object. |
-| modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
+| actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** `OwnedChangeEntry` represents the operation independently of XML and carries whole-object state. | tag-only logical edit still serializes full object. |
+| modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** create/modify use `ChangeObjectState.complete`; never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
 | placeholder IDs | Negative local IDs are the safe interoperable placeholder convention; Rails substitution effectively requires negative refs for replacement. | iD/JOSM use negative local IDs. | **MUST:** generated create placeholders are negative and unique within upload scope. | create node -> way -> relation chain. |
 | dependency order | Current API rejects forward references to placeholders. | iD sorts new relations by dependencies and orders create node->way->relation. | **MUST:** build dependency graph/topological order; detect cycles/unresolvable placeholder graphs before network call. | forward ref, nested relations, cycle. |
 | modify order | iD emits node->way->relation. | Useful deterministic policy. | **SHOULD:** deterministic dependency-safe order where applicable; correctness does not rely on arbitrary source order. | stable serializer test. |
-| delete order | iD emits relation->way->node and `if-unused=true`. | Mature editor policy. | API layer chooses an explicit deletion policy. Default should be conservative and documented; do not accidentally inject `if-unused`. | used object deletion with/without policy. |
+| delete order | iD emits relation->way->node and `if-unused=true`. | Mature editor policy. | Source order is preserved by the change model. `deleteIfUnused` is explicit per delete entry; codecs never inject it. A future API layer may apply an explicit dependency/deletion policy before upload. | used object deletion with/without policy; source-order preservation. |
 | diff upload transaction | One diff upload request is transactional: all applied or none. A whole changeset spanning requests is not globally atomic. | Editors use diff upload. | **MUST:** transaction boundary represented as request, not changeset object. | simulated failure mid-diff => no local commit. |
 | diffResult | Server maps uploaded IDs and returns new IDs/versions for successful create/modify results as applicable. | Editors update local graph from server response. | **MUST:** apply returned mapping/version; never assume version increment or server ID. | old->new placeholder mapping. |
 
@@ -427,15 +427,14 @@ These remain deliberately unresolved rather than guessed:
    `bytes`, OSM text validity and lossless preservation policy.
 2. **Unknown protobuf field rewrite:** preserve individual unknown wire fields
    versus preserve untouched encoded submessage/block as opaque bytes.
-3. **XML extension preservation:** exact scope of unknown attributes/elements
-   promised by `formatRoundtrippable`.
-4. **Canonical validated tag container:** ordered `Tag[]` + index, small-vector
+3. **Canonical validated tag container:** ordered `Tag[]` + index, small-vector
    representation, or another structure that preserves stable ordering without
    sacrificing lookup speed.
-5. **Canonical coordinate conversion:** precise rule for accepting exact PBF
+4. **Canonical coordinate conversion:** precise rule for accepting exact PBF
    coordinates into the normal OSM 1e-7 model without rounding.
-6. **Delete policy:** default use of API `if-unused` belongs in the future API
-   layer and must be explicit.
+5. **API delete-policy selection:** the change representation and codecs keep
+   `if-unused` explicit; a future API layer still needs an explicit default
+   policy for constructing upload requests.
 
 Each resolved item should update this matrix and, when architectural, gain an
 ADR.
