@@ -16,6 +16,9 @@ public import osm.view.element :
     ElementType,
     OsmId;
 public import osm.model.compare :
+    PbfSemanticField,
+    PbfSemanticDifference,
+    comparePbfSemantics,
     sameOsmSemantics,
     samePbfHeaderSemantics,
     samePbfSemantics,
