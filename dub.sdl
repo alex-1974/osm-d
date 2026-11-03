@@ -6,3 +6,6 @@ copyright "Copyright © 2026 Alexander Bernardi"
 license "MIT"
 targetType "library"
 sourcePaths "source"
+
+dependency "dxml" version="~>0.4.5"
+dependency "transport-d" version="~>0.1.1"
