@@ -2309,3 +2309,145 @@ unittest
     assert(!relations.empty);
     assert(relations.front.members.front.id == -2);
 }
+
+
+unittest
+{
+    // Handles are store-local even when slot/generation/type coincide.
+    auto a = new OsmStore();
+    auto b = new OsmStore();
+
+    OwnedNode node;
+    node.id = 7;
+    node.location = LocationView(1, 2);
+
+    OsmHandle handleA;
+    OsmHandle handleB;
+    StoreStatus status;
+    assert(a.add(node, handleA, status));
+    assert(b.add(node, handleB, status));
+    assert(handleA != handleB);
+
+    StoreNodeView view;
+    assert(!b.node(handleA, view, status));
+    assert(status.error == StoreError.invalidHandle);
+}
+
+unittest
+{
+    // Whole-dataset construction fails without exposing a partial store.
+    OwnedDataset data;
+
+    OwnedNode a;
+    a.id = 1;
+    a.location = LocationView(1, 2);
+    data.nodes ~= a;
+
+    OwnedNode duplicate = a;
+    duplicate.location = LocationView(3, 4);
+    data.nodes ~= duplicate;
+
+    OsmStore store;
+    StoreStatus status;
+    assert(!OsmStore.build(data, store, status));
+    assert(store is null);
+    assert(status.error == StoreError.duplicateId);
+}
+
+unittest
+{
+    // First edit captures one baseline and revert restores semantic state.
+    import osm.model.owned : ownBytes;
+
+    auto store = new OsmStore();
+
+    OwnedNode original;
+    original.id = 11;
+    original.location = LocationView(10, 20);
+    original.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"before"));
+
+    OsmHandle handle;
+    StoreStatus status;
+    assert(store.add(original, handle, status));
+
+    auto edited = original.deepCopy();
+    edited.location = LocationView(30, 40);
+    edited.tags[0].value = ownBytes(cast(const(ubyte)[])"after");
+    assert(store.replace(handle, edited, status));
+
+    StoreElementState lifecycle;
+    assert(store.state(handle, lifecycle, status));
+    assert(lifecycle == StoreElementState.modified);
+
+    assert(store.revert(handle, status));
+    assert(store.state(handle, lifecycle, status));
+    assert(lifecycle == StoreElementState.clean);
+
+    OwnedNode restored;
+    assert(store.copyNode(handle, restored, status));
+    assert(restored.location.latitudeNanodegrees == 10);
+    assert(restored.location.longitudeNanodegrees == 20);
+    assert(restored.tags[0].value == cast(const(ubyte)[])"before");
+}
+
+unittest
+{
+    // The #62 remap kernel rewrites known inbound locations atomically while
+    // preserving all stable handles. #63 will supply these locations from
+    // production parent indexes.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(1, 2);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = -2;
+    OwnedWayNode refValue;
+    refValue.id = -1;
+    way.nodes ~= refValue;
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation relation;
+    relation.id = -3;
+
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    relation.members ~= wayMember;
+
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = -1;
+    relation.members ~= nodeMember;
+
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+
+    auto wayRefs = [KnownWayRefRewrite(wayHandle, 0)];
+    auto relationRefs = [KnownRelationMemberRewrite(relationHandle, 1)];
+    assert(store.remapKnown(
+        nodeHandle, 101, 1, wayRefs, relationRefs, status));
+
+    OsmHandle found;
+    assert(store.find(ElementType.node, 101, found));
+    assert(found == nodeHandle);
+    assert(!store.find(ElementType.node, -1, found));
+
+    StoreWayView wayView;
+    assert(store.way(wayHandle, wayView, status));
+    assert(wayView.nodes.front.id == 101);
+
+    StoreRelationView relationView;
+    assert(store.relation(relationHandle, relationView, status));
+    auto members = relationView.members;
+    assert(members.front.id == -2);
+    members.popFront();
+    assert(members.front.id == 101);
+}
