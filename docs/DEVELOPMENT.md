@@ -119,6 +119,12 @@ The current pre-1.0 surface is classified as follows:
   exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
   module `osm.io.pbf.parallel_reader` is supported for the same summary-only
   API.
+- `osm.io.xml` is the supported high-level ordinary OSM XML facade.
+  It exports document-envelope metadata plus `OsmXmlReader`,
+  `readOsmXmlDocument`, and `OsmXmlWriter` with their status/options types.
+  The facade deliberately does not expose dxml parser/writer entities.
+  `ByteSource` and `ByteSink` remain transport-d concepts rather than an
+  osm-d-specific stream hierarchy.
 - Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
   Their documented decoding APIs may be used directly during pre-1.0
   development, but their module organization and callable signatures are not
@@ -269,11 +275,11 @@ range, stream, retry, cache or scheduler policy. The workspace package
 `transport-d` is the canonical byte-resource transport layer for those tasks;
 see ADR 0019.
 
-At the current M4 checkpoint `transport-d` is still a 0.1.0 release candidate:
-its implementation gates are complete, but the release tag and DUB-registry
-verification are pending. Therefore `osm-d` does not yet add it as a hard DUB
-dependency. A future source/sink adapter must target the released
-`transport-d` contract rather than create an `osm-d`-specific I/O hierarchy.
+`transport-d` v0.1.1 is tagged and registry-resolvable. M5 therefore uses
+`transport-d ~>0.1.1` as the byte-resource boundary for streaming XML, and
+the external XML consumer compile probe resolves it through DUB. Future
+source/sink adapters use the same contract rather than creating an
+`osm-d`-specific I/O hierarchy.
 
 ## Dependencies
 
