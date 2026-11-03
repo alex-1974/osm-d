@@ -41,6 +41,7 @@ dub test --compiler=ldc2 --force
 dub build --compiler=ldc2 --build=release --force
 bash tests/run-consumer-compile.sh
 tests/run-dip1000-negative.sh
+bash tests/fuzz/run-wire-seeds.sh
 ```
 
 GitHub Actions separates checks by branch trust level.
@@ -48,12 +49,14 @@ GitHub Actions separates checks by branch trust level.
 For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
 supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
 an external-consumer compile probe through the curated package root, DIP1000
-lifetime-negative checks, and a release build.
+lifetime-negative checks, the deterministic wire malformed-input seed corpus,
+and a release build.
 
 For pull requests targeting `main`, pushes to `main`, and release/hotfix
 branches, the Release Gate runs the full six-compiler qualification matrix and
-additionally builds the parser decode-count benchmark as a consumer-facing
-parser smoke test. This deliberately keeps expensive cross-generation
+reruns the deterministic wire malformed-input seed corpus across the full
+compiler matrix and additionally builds the parser decode-count benchmark as a
+consumer-facing parser smoke test. This deliberately keeps expensive cross-generation
 qualification out of ordinary `develop` commits while requiring it before
 release promotion. `main` remains the release line; normal development targets
 `develop`.
