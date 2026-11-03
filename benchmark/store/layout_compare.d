@@ -551,6 +551,12 @@ private OsmId[] makeQueries(scope const(OsmId)[] existing, size_t count) @safe
     return result;
 }
 
+private void require(bool condition, string message)
+{
+    if (!condition)
+        throw new Exception(message);
+}
+
 private long elapsedNs(void delegate() operation) @trusted
 {
     StopWatch sw = StopWatch(AutoStart.yes);
@@ -1053,7 +1059,7 @@ private uint referenceSlot(
     OsmId id) @safe
 {
     uint slot;
-    assert(store.find(type, id, slot));
+    require(store.find(type, id, slot), "reference lookup failed");
     return slot;
 }
 
@@ -1061,7 +1067,7 @@ private OsmHandle compactHandle(OsmStore store, ElementType type, OsmId id)
     @safe nothrow @nogc
 {
     OsmHandle handle;
-    assert(store.find(type, id, handle));
+    require(store.find(type, id, handle), "compact lookup failed");
     return handle;
 }
 
@@ -1208,19 +1214,19 @@ private EditMetrics runReferenceEdits(
         foreach (slot; deleteNodeSlots)
         {
             const id = store.data.nodes[slot].id;
-            assert(store.nodeIndex.remove(id));
+            require(store.nodeIndex.remove(id), "reference node delete failed");
             store.nodeIndex[id] = slot;
         }
         foreach (slot; deleteWaySlots)
         {
             const id = store.data.ways[slot].id;
-            assert(store.wayIndex.remove(id));
+            require(store.wayIndex.remove(id), "reference way delete failed");
             store.wayIndex[id] = slot;
         }
         foreach (slot; deleteRelationSlots)
         {
             const id = store.data.relations[slot].id;
-            assert(store.relationIndex.remove(id));
+            require(store.relationIndex.remove(id), "reference relation delete failed");
             store.relationIndex[id] = slot;
         }
     });
@@ -1244,11 +1250,11 @@ private EditMetrics runReferenceEdits(
             store.data.relations[op.slot] = op.original;
 
         foreach (ref created; createdRelations)
-            assert(store.relationIndex.remove(created.id));
+            require(store.relationIndex.remove(created.id), "reference created relation revert failed");
         foreach (ref created; createdWays)
-            assert(store.wayIndex.remove(created.id));
+            require(store.wayIndex.remove(created.id), "reference created way revert failed");
         foreach (ref created; createdNodes)
-            assert(store.nodeIndex.remove(created.id));
+            require(store.nodeIndex.remove(created.id), "reference created node revert failed");
 
         store.data.relations.length = originalRelationLength;
         store.data.ways.length = originalWayLength;
@@ -1278,7 +1284,7 @@ private EditMetrics runCompactEdits(
         NodeOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.node, id);
-        assert(store.copyNode(op.handle, op.value, status));
+        require(store.copyNode(op.handle, op.value, status), "compact node copy failed");
         setBenchmarkTag(op.value.tags, key, valueBytes);
         nodeTagOps ~= op;
     }
@@ -1289,7 +1295,7 @@ private EditMetrics runCompactEdits(
         WayOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.way, id);
-        assert(store.copyWay(op.handle, op.value, status));
+        require(store.copyWay(op.handle, op.value, status), "compact way copy failed");
         setBenchmarkTag(op.value.tags, key, valueBytes);
         wayTagOps ~= op;
     }
@@ -1300,7 +1306,7 @@ private EditMetrics runCompactEdits(
         RelationOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.relation, id);
-        assert(store.copyRelation(op.handle, op.value, status));
+        require(store.copyRelation(op.handle, op.value, status), "compact relation copy failed");
         setBenchmarkTag(op.value.tags, key, valueBytes);
         relationTagOps ~= op;
     }
@@ -1311,7 +1317,7 @@ private EditMetrics runCompactEdits(
         NodeOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.node, id);
-        assert(store.copyNode(op.handle, op.value, status));
+        require(store.copyNode(op.handle, op.value, status), "compact node copy failed");
         editNodeCoordinate(op.value);
         coordinateOps ~= op;
     }
@@ -1322,7 +1328,7 @@ private EditMetrics runCompactEdits(
         WayOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.way, id);
-        assert(store.copyWay(op.handle, op.value, status));
+        require(store.copyWay(op.handle, op.value, status), "compact way copy failed");
         editWayReferences(op.value);
         referenceOps ~= op;
     }
@@ -1333,7 +1339,7 @@ private EditMetrics runCompactEdits(
         RelationOp op;
         op.id = id;
         op.handle = compactHandle(store, ElementType.relation, id);
-        assert(store.copyRelation(op.handle, op.value, status));
+        require(store.copyRelation(op.handle, op.value, status), "compact relation copy failed");
         editRelationMembers(op.value);
         memberOps ~= op;
     }
@@ -1359,52 +1365,52 @@ private EditMetrics runCompactEdits(
     EditMetrics metrics;
     metrics.editNs = elapsedNs(() {
         foreach (ref op; nodeTagOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
         foreach (ref op; wayTagOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
         foreach (ref op; relationTagOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
 
         foreach (ref op; coordinateOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
         foreach (ref op; referenceOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
         foreach (ref op; memberOps)
-            assert(store.replace(op.handle, op.value, status));
+            require(store.replace(op.handle, op.value, status), "compact replace failed");
 
         foreach (ref created; createdNodes)
         {
             OsmHandle handle;
-            assert(store.add(created, handle, status));
+            require(store.add(created, handle, status), "compact create failed");
             createdNodeHandles ~= handle;
         }
         foreach (ref created; createdWays)
         {
             OsmHandle handle;
-            assert(store.add(created, handle, status));
+            require(store.add(created, handle, status), "compact create failed");
             createdWayHandles ~= handle;
         }
         foreach (ref created; createdRelations)
         {
             OsmHandle handle;
-            assert(store.add(created, handle, status));
+            require(store.add(created, handle, status), "compact create failed");
             createdRelationHandles ~= handle;
         }
 
         foreach (handle; deleteNodeHandles)
         {
-            assert(store.remove(handle, status));
-            assert(store.restore(handle, status));
+            require(store.remove(handle, status), "compact delete failed");
+            require(store.restore(handle, status), "compact restore failed");
         }
         foreach (handle; deleteWayHandles)
         {
-            assert(store.remove(handle, status));
-            assert(store.restore(handle, status));
+            require(store.remove(handle, status), "compact delete failed");
+            require(store.restore(handle, status), "compact restore failed");
         }
         foreach (handle; deleteRelationHandles)
         {
-            assert(store.remove(handle, status));
-            assert(store.restore(handle, status));
+            require(store.remove(handle, status), "compact delete failed");
+            require(store.restore(handle, status), "compact restore failed");
         }
     });
 
@@ -1414,24 +1420,24 @@ private EditMetrics runCompactEdits(
 
     metrics.revertNs = elapsedNs(() {
         foreach (ref op; relationTagOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
         foreach (ref op; memberOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
         foreach (ref op; wayTagOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
         foreach (ref op; referenceOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
         foreach (ref op; nodeTagOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
         foreach (ref op; coordinateOps)
-            assert(store.revert(op.handle, status));
+            require(store.revert(op.handle, status), "compact revert failed");
 
         foreach_reverse (handle; createdRelationHandles)
-            assert(store.revert(handle, status));
+            require(store.revert(handle, status), "compact created revert failed");
         foreach_reverse (handle; createdWayHandles)
-            assert(store.revert(handle, status));
+            require(store.revert(handle, status), "compact created revert failed");
         foreach_reverse (handle; createdNodeHandles)
-            assert(store.revert(handle, status));
+            require(store.revert(handle, status), "compact created revert failed");
     });
 
     metrics.revertChecksum = traverseCompact(store);
@@ -1470,7 +1476,7 @@ private RemapMetrics runReferenceRemap() @safe
 
     RemapMetrics result;
     result.elapsedNs = elapsedNs(() {
-        assert(store.nodeIndex.remove(-1));
+        require(store.nodeIndex.remove(-1), "reference node remap delete failed");
         store.data.nodes[0].id = 101;
         store.data.nodes[0].metadata.hasVersion = true;
         store.data.nodes[0].metadata.versionNumber = 1;
@@ -1478,14 +1484,14 @@ private RemapMetrics runReferenceRemap() @safe
         store.data.ways[0].nodes[0].id = 101;
         store.data.relations[0].members[1].id = 101;
 
-        assert(store.wayIndex.remove(-2));
+        require(store.wayIndex.remove(-2), "reference way remap delete failed");
         store.data.ways[0].id = 102;
         store.data.ways[0].metadata.hasVersion = true;
         store.data.ways[0].metadata.versionNumber = 1;
         store.wayIndex[102] = 0;
         store.data.relations[0].members[0].id = 102;
 
-        assert(store.relationIndex.remove(-3));
+        require(store.relationIndex.remove(-3), "reference relation remap delete failed");
         store.data.relations[0].id = 103;
         store.data.relations[0].metadata.hasVersion = true;
         store.data.relations[0].metadata.versionNumber = 1;
@@ -1505,13 +1511,13 @@ private RemapMetrics runCompactRemap() @safe
     node.id = -1;
     node.location = typeof(node.location)(1, 2);
     OsmHandle nodeHandle;
-    assert(store.add(node, nodeHandle, status));
+    require(store.add(node, nodeHandle, status), "compact remap node create failed");
 
     OwnedWay way;
     way.id = -2;
     way.nodes ~= OwnedWayNode(-1, false, typeof(node.location).init);
     OsmHandle wayHandle;
-    assert(store.add(way, wayHandle, status));
+    require(store.add(way, wayHandle, status), "compact remap way create failed");
 
     OwnedRelation relation;
     relation.id = -3;
@@ -1523,7 +1529,7 @@ private RemapMetrics runCompactRemap() @safe
     nodeMember.id = -1;
     relation.members = [wayMember, nodeMember];
     OsmHandle relationHandle;
-    assert(store.add(relation, relationHandle, status));
+    require(store.add(relation, relationHandle, status), "compact remap relation create failed");
 
     auto nodeWayRefs = [KnownWayRefRewrite(wayHandle, 0)];
     auto nodeRelationRefs = [KnownRelationMemberRewrite(relationHandle, 1)];
@@ -1533,20 +1539,23 @@ private RemapMetrics runCompactRemap() @safe
 
     RemapMetrics result;
     result.elapsedNs = elapsedNs(() {
-        assert(store.remapKnown(
-            nodeHandle, 101, 1, nodeWayRefs, nodeRelationRefs, status));
-        assert(store.remapKnown(
-            wayHandle, 102, 1, noWays, wayRelationRefs, status));
-        assert(store.remapKnown(
-            relationHandle, 103, 1, noWays, noRelations, status));
+        require(store.remapKnown(
+            nodeHandle, 101, 1, nodeWayRefs, nodeRelationRefs, status),
+            "compact node remap failed");
+        require(store.remapKnown(
+            wayHandle, 102, 1, noWays, wayRelationRefs, status),
+            "compact way remap failed");
+        require(store.remapKnown(
+            relationHandle, 103, 1, noWays, noRelations, status),
+            "compact relation remap failed");
     });
 
     OsmHandle found;
-    assert(store.find(ElementType.node, 101, found));
+    require(store.find(ElementType.node, 101, found), "remapped node missing");
     assert(found == nodeHandle);
-    assert(store.find(ElementType.way, 102, found));
+    require(store.find(ElementType.way, 102, found), "remapped way missing");
     assert(found == wayHandle);
-    assert(store.find(ElementType.relation, 103, found));
+    require(store.find(ElementType.relation, 103, found), "remapped relation missing");
     assert(found == relationHandle);
 
     result.checksum = traverseCompact(store);
