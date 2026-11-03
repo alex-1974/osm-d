@@ -16,9 +16,10 @@ contract exposes bounded `ByteSource`/`ByteSink` access and
 `ByteReader`/`ByteWriter` adapters while keeping parsing and format semantics
 in the consumer library.
 
-At this checkpoint `transport-d` documents 0.1.0 as a release candidate. Its
-implementation gates are complete, but the v0.1.0 tag and DUB-registry
-verification are still pending.
+`transport-d` v0.1.1 is now tagged and registry-resolvable. Its published
+`ByteSource.readSome` contract provides bounded partial reads with explicit
+EOF semantics, which is the refill primitive required by the streaming XML
+adapter.
 
 ## Decision
 
@@ -47,12 +48,10 @@ parallel I/O hierarchy in `osm-d`.
 
 ## Dependency timing
 
-`osm-d` does not add a hard DUB dependency on `transport-d` until
-`transport-d` has a tagged, registry-resolvable release. This avoids making a
-standalone released library depend on an unreleased workspace-only package.
-
-Once that release exists, integration should be qualified through external
-consumer tests using the released package version.
+The release condition is now satisfied. M5 adds a hard DUB dependency on
+`transport-d ~>0.1.1` and qualifies the released package through ordinary
+`osm-d` CI. XML readers consume `ByteSource`; XML writers consume
+`ByteSink`. No parallel file/network abstraction is introduced in `osm-d`.
 
 ## Tests and tools
 
@@ -65,5 +64,6 @@ consumer-facing file/network/resource access should use `transport-d`.
 - one workspace-wide vocabulary exists for byte-resource access;
 - PBF correctness remains independent of filesystem or HTTP policy;
 - `osm-d` avoids duplicated FileSource/FileSink/HTTP/async abstractions;
-- M4 can complete without prematurely pinning an unreleased dependency;
-- future streaming PBF/store work has an explicit transport boundary.
+- M4 completed without prematurely pinning an unreleased dependency;
+- M5 XML streaming uses the released transport contract directly;
+- future streaming PBF/store work has the same explicit transport boundary.
