@@ -35,6 +35,11 @@ public import osm.io.pbf.document :
     PbfHeader,
     PbfDocument;
 public import osm.io.pbf.document_reader : readPbfDocument;
+public import osm.io.pbf.writer :
+    PbfWriteError,
+    PbfWriteStatus,
+    PbfWriteOptions,
+    PbfWriter;
 public import osm.view.location : LocationView;
 public import osm.view.metadata : MetadataView;
 public import osm.io.pbf.node_view : NodeView;
