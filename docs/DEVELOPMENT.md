@@ -253,6 +253,19 @@ Do not optimize from intuition alone. For performance-sensitive changes:
 A microbenchmark improvement that worsens the end-to-end city workload is not
 a project improvement.
 
+## External byte-resource I/O
+
+`osm-d` owns PBF/OSM interpretation and serialization, not filesystem, HTTP,
+range, stream, retry, cache or scheduler policy. The workspace package
+`transport-d` is the canonical byte-resource transport layer for those tasks;
+see ADR 0019.
+
+At the current M4 checkpoint `transport-d` is still a 0.1.0 release candidate:
+its implementation gates are complete, but the release tag and DUB-registry
+verification are pending. Therefore `osm-d` does not yet add it as a hard DUB
+dependency. A future source/sink adapter must target the released
+`transport-d` contract rather than create an `osm-d`-specific I/O hierarchy.
+
 ## Dependencies
 
 Dependencies are evaluated against:
