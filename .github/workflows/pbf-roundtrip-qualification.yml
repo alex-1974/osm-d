@@ -29,10 +29,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y osmium-tool
 
-      - name: Pinned Monaco and Liechtenstein semantic round trips
+      - name: Pinned Monaco, Liechtenstein and Bremen semantic round trips
         shell: bash
         run: |
           ROUNDTRIP_COMPILER="$DC" \
             bash tests/roundtrip/run-pinned-roundtrip.sh \
               monaco-260901 \
-              liechtenstein-260901
+              liechtenstein-260901 \
+              bremen-260901
