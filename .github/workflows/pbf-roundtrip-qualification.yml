@@ -33,6 +33,6 @@ jobs:
         shell: bash
         run: |
           ROUNDTRIP_COMPILER="$DC" \
-            tests/roundtrip/run-pinned-roundtrip.sh \
+            bash tests/roundtrip/run-pinned-roundtrip.sh \
               monaco-260901 \
               liechtenstein-260901
