@@ -31,4 +31,12 @@ for compiler in "${compilers[@]}"; do
         --build=debug \
         --force
     echo "PASS: $compiler XML DUB consumer compile"
+
+    echo "=== OSMCHANGE DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/osmchange-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler osmChange DUB consumer compile"
 done
