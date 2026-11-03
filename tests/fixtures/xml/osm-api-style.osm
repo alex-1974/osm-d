@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<osm version="0.6" generator="JOSM">
+<osm version="0.6" upload="never" generator="JOSM">
   <bounds minlat="48.2000000" minlon="16.3000000" maxlat="48.3000000" maxlon="16.4000000" origin="OSM API style fixture"/>
   <node id="-1" lat="48.2081743" lon="16.3738189" version="1" timestamp="2026-11-03T19:00:00Z" changeset="42" uid="7" user="A &amp; B" visible="true">
     <tag k="name" v="Bench &amp; tree"/>
