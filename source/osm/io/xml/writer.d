@@ -106,89 +106,7 @@ struct OsmXmlWriter
         OsmXmlWriteOptions options = OsmXmlWriteOptions.init)
         @safe
     {
-        status = OsmXmlWriteStatus.init;
-
-        if (sink is null)
-        {
-            status.error = OsmXmlWriteError.transportFailure;
-            status.transportError = WriteError.destinationFailure;
-            return false;
-        }
-
-        if (document.info.hasVersion &&
-            cast(string) document.info.versionText != "0.6")
-        {
-            status.error = OsmXmlWriteError.unsupportedVersion;
-            return false;
-        }
-
-        if (!preflight(document.data, status))
-            return false;
-
-        try
-        {
-            auto output = new XmlSinkOutput(sink, options.bufferSize);
-            writeXMLDecl!string(output);
-            output.put('\n');
-
-            auto xml = xmlWriter(output, "  ");
-
-            xml.openStartTag("osm", Newline.no);
-            xml.writeAttr("version", "0.6");
-
-            const generator = options.generator.length
-                ? options.generator
-                : "osm-d";
-            xml.writeAttr("generator", encodeAttr(generator));
-
-            if (document.info.hasCopyright)
-                xml.writeAttr(
-                    "copyright",
-                    encodeAttr(cast(string) document.info.copyrightText));
-            if (document.info.hasAttribution)
-                xml.writeAttr(
-                    "attribution",
-                    encodeAttr(cast(string) document.info.attribution));
-            if (document.info.hasLicense)
-                xml.writeAttr(
-                    "license",
-                    encodeAttr(cast(string) document.info.license));
-
-            xml.closeStartTag();
-
-            foreach (ref const bounds; document.info.bounds)
-                writeBounds(xml, bounds);
-
-            foreach (ref const node; document.data.nodes)
-                writeNode(xml, node, status);
-
-            foreach (ref const way; document.data.ways)
-                writeWay(xml, way, status);
-
-            foreach (ref const relation; document.data.relations)
-                writeRelation(xml, relation, status);
-
-            xml.writeEndTag("osm");
-            xml.output.put('\n');
-            xml.output.flush();
-            return true;
-        }
-        catch (XmlSinkException e)
-        {
-            status.error = OsmXmlWriteError.transportFailure;
-            status.transportError = e.error;
-            return false;
-        }
-        catch (XMLWritingException)
-        {
-            status.error = OsmXmlWriteError.invalidText;
-            return false;
-        }
-        catch (UTFException)
-        {
-            status.error = OsmXmlWriteError.invalidText;
-            return false;
-        }
+        return writeCore(document.info, document.data, sink, status, options);
     }
 
     /** Write a dataset using a standard OSM XML envelope. */
@@ -199,14 +117,105 @@ struct OsmXmlWriter
         OsmXmlWriteOptions options = OsmXmlWriteOptions.init)
         @safe
     {
-        OsmXmlDocument document;
-        document.data = dataset;
-        return write(document, sink, status, options);
+        const OsmXmlDocumentInfo info;
+        return writeCore(info, dataset, sink, status, options);
     }
 }
 
 private:
 
+bool writeCore(
+    ref const OsmXmlDocumentInfo info,
+    ref const OwnedDataset data,
+    ByteSink sink,
+    out OsmXmlWriteStatus status,
+    OsmXmlWriteOptions options)
+    @safe
+{
+    status = OsmXmlWriteStatus.init;
+
+    if (sink is null)
+    {
+        status.error = OsmXmlWriteError.transportFailure;
+        status.transportError = WriteError.destinationFailure;
+        return false;
+    }
+
+    if (info.hasVersion &&
+        cast(string) info.versionText != "0.6")
+    {
+        status.error = OsmXmlWriteError.unsupportedVersion;
+        return false;
+    }
+
+    if (!preflight(data, status))
+        return false;
+
+    try
+    {
+        auto output = new XmlSinkOutput(sink, options.bufferSize);
+        writeXMLDecl!string(output);
+        output.put('\n');
+
+        auto xml = xmlWriter(output, "  ");
+
+        xml.openStartTag("osm", Newline.no);
+        xml.writeAttr("version", "0.6");
+
+        const generator = options.generator.length
+            ? options.generator
+            : "osm-d";
+        xml.writeAttr("generator", encodeAttr(generator));
+
+        if (info.hasCopyright)
+            xml.writeAttr(
+                "copyright",
+                encodeAttr(cast(string) info.copyrightText));
+        if (info.hasAttribution)
+            xml.writeAttr(
+                "attribution",
+                encodeAttr(cast(string) info.attribution));
+        if (info.hasLicense)
+            xml.writeAttr(
+                "license",
+                encodeAttr(cast(string) info.license));
+
+        xml.closeStartTag();
+
+        foreach (ref const bounds; info.bounds)
+            writeBounds(xml, bounds);
+
+        foreach (ref const node; data.nodes)
+            writeNode(xml, node, status);
+
+        foreach (ref const way; data.ways)
+            writeWay(xml, way, status);
+
+        foreach (ref const relation; data.relations)
+            writeRelation(xml, relation, status);
+
+        xml.writeEndTag("osm");
+        xml.output.put('\n');
+        xml.output.flush();
+        return true;
+    }
+    catch (XmlSinkException e)
+    {
+        status.error = OsmXmlWriteError.transportFailure;
+        status.transportError = e.error;
+        return false;
+    }
+    catch (XMLWritingException)
+    {
+        status.error = OsmXmlWriteError.invalidText;
+        return false;
+    }
+    catch (UTFException)
+    {
+        status.error = OsmXmlWriteError.invalidText;
+        return false;
+    }
+}
 void setIdentity(
     ref OsmXmlWriteStatus status,
     ElementType type,
