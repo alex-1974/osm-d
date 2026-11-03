@@ -162,6 +162,16 @@ void writeSemanticXmlMetadata(W)(
     writeMetadata(xml, metadata);
 }
 
+string formatSemanticXmlNanodegrees(long value) @safe
+{
+    return formatNanodegrees(value);
+}
+
+string formatSemanticXmlTimestampMilliseconds(long value) @safe
+{
+    return formatTimestampMilliseconds(value);
+}
+
 private:
 
 bool writeCore(
