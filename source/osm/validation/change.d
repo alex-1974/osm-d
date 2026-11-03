@@ -702,3 +702,147 @@ unittest
     const ubyte[] surrogate = [0xED, 0xA0, 0x80];
     assert(!utf8ScalarCount(surrogate, count));
 }
+
+
+unittest // upload metadata is stronger than codec representability
+{
+    import osm.model.owned : OwnedMetadata;
+
+    OwnedMetadata metadata;
+    metadata.hasChangeset = true;
+    metadata.changesetId = 42;
+
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.deletion(
+        ElementType.node,
+        100,
+        metadata,
+        true);
+
+    UploadValidationIssue issue;
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error == UploadValidationError.missingVersion);
+
+    changes.entries[0].metadata.hasVersion = true;
+    changes.entries[0].metadata.versionNumber = 3;
+    changes.entries[0].metadata.hasChangeset = false;
+
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error == UploadValidationError.missingChangeset);
+}
+
+unittest // upload coordinates require exact canonical 1e-7 precision
+{
+    import osm.model.owned : OwnedMetadata, OwnedNode;
+    import osm.view.location : LocationView;
+
+    OwnedMetadata metadata;
+    metadata.hasChangeset = true;
+    metadata.changesetId = 42;
+
+    OwnedNode node;
+    node.id = -1;
+    node.metadata = metadata;
+    node.location = LocationView(48_000_000_001L, 16_000_000_000L);
+
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, node);
+
+    UploadValidationIssue issue;
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error ==
+        UploadValidationError.nonCanonicalCoordinatePrecision);
+}
+
+unittest // API-compatible tag length counts Unicode scalars, not UTF-8 bytes
+{
+    import osm.model.owned :
+        OwnedMetadata,
+        OwnedNode,
+        OwnedTag,
+        ownBytes;
+    import osm.view.location : LocationView;
+
+    OwnedMetadata metadata;
+    metadata.hasChangeset = true;
+    metadata.changesetId = 42;
+
+    ubyte[255] key255;
+    key255[] = 'a';
+
+    OwnedNode node;
+    node.id = -1;
+    node.metadata = metadata;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    node.tags ~= OwnedTag(
+        ownBytes(key255[]),
+        ownBytes(cast(const(ubyte)[])"ok"));
+
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, node);
+
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+
+    ubyte[256] key256;
+    key256[] = 'a';
+    changes.entries[0].tags[0].key = ownBytes(key256[]);
+
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error == UploadValidationError.tagTooLong);
+}
+
+unittest // ID namespaces are typed while placeholders remain unique per type
+{
+    import osm.model.owned :
+        OwnedMetadata,
+        OwnedNode,
+        OwnedWay;
+    import osm.view.location : LocationView;
+
+    OwnedMetadata metadata;
+    metadata.hasChangeset = true;
+    metadata.changesetId = 42;
+
+    OwnedNode node;
+    node.id = -1;
+    node.metadata = metadata;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+
+    OwnedWay way;
+    way.id = -1;
+    way.metadata = metadata;
+
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, node);
+    changes.entries ~= OwnedChangeEntry.fromWay(ChangeAction.create, way);
+
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+
+    changes.entries ~= OwnedChangeEntry.fromNode(ChangeAction.create, node);
+    assert(!validateUploadChanges(
+        changes,
+        CapabilityProfile.unbounded(),
+        issue));
+    assert(issue.error ==
+        UploadValidationError.duplicateCreatePlaceholder);
+}
