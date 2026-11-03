@@ -551,7 +551,7 @@ private OsmId[] makeQueries(scope const(OsmId)[] existing, size_t count) @safe
     return result;
 }
 
-private void require(bool condition, string message)
+private void require(bool condition, string message) @safe
 {
     if (!condition)
         throw new Exception(message);
