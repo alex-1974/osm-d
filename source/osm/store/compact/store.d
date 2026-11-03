@@ -1325,14 +1325,16 @@ public:
                 captureNodeBaseline(handle._slot);
                 _nodes.deletedFrom[handle._slot] = _nodes.states[handle._slot];
                 _nodes.states[handle._slot] = StoreElementState.deleted;
-                assert(_nodeIndex.remove(_nodes.ids[handle._slot]));
+                const removed = _nodeIndex.remove(_nodes.ids[handle._slot]);
+                assert(removed);
                 --_liveNodes;
                 break;
             case ElementType.way:
                 captureWayBaseline(handle._slot);
                 _ways.deletedFrom[handle._slot] = _ways.states[handle._slot];
                 _ways.states[handle._slot] = StoreElementState.deleted;
-                assert(_wayIndex.remove(_ways.ids[handle._slot]));
+                const removed = _wayIndex.remove(_ways.ids[handle._slot]);
+                assert(removed);
                 --_liveWays;
                 break;
             case ElementType.relation:
@@ -1340,7 +1342,9 @@ public:
                 _relations.deletedFrom[handle._slot] =
                     _relations.states[handle._slot];
                 _relations.states[handle._slot] = StoreElementState.deleted;
-                assert(_relationIndex.remove(_relations.ids[handle._slot]));
+                const removed =
+                    _relationIndex.remove(_relations.ids[handle._slot]);
+                assert(removed);
                 --_liveRelations;
                 break;
         }
@@ -1575,22 +1579,29 @@ public:
         final switch (handle.type)
         {
             case ElementType.node:
-                assert(_nodeIndex.insert(newId, handle._slot));
-                assert(_nodeIndex.remove(oldId));
+                const inserted = _nodeIndex.insert(newId, handle._slot);
+                assert(inserted);
+                const removed = _nodeIndex.remove(oldId);
+                assert(removed);
                 _nodes.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_nodes, handle._slot, newVersion);
                 _nodes.states[handle._slot] = StoreElementState.clean;
                 break;
             case ElementType.way:
-                assert(_wayIndex.insert(newId, handle._slot));
-                assert(_wayIndex.remove(oldId));
+                const inserted = _wayIndex.insert(newId, handle._slot);
+                assert(inserted);
+                const removed = _wayIndex.remove(oldId);
+                assert(removed);
                 _ways.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_ways, handle._slot, newVersion);
                 _ways.states[handle._slot] = StoreElementState.clean;
                 break;
             case ElementType.relation:
-                assert(_relationIndex.insert(newId, handle._slot));
-                assert(_relationIndex.remove(oldId));
+                const inserted =
+                    _relationIndex.insert(newId, handle._slot);
+                assert(inserted);
+                const removed = _relationIndex.remove(oldId);
+                assert(removed);
                 _relations.ids[handle._slot] = newId;
                 setAuthoritativeVersion(
                     _relations, handle._slot, newVersion);
