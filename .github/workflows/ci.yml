@@ -63,6 +63,17 @@ jobs:
           WIRE_FUZZ_COMPILER="$DC" \
             bash tests/fuzz/run-wire-seeds.sh
 
+      - name: Run deterministic PBF round-trip self-test
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/roundtrip \
+            --config=pbf-roundtrip \
+            --compiler="$DC" \
+            --build=debug \
+            -- \
+            --self-test
+
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
