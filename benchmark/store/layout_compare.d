@@ -458,7 +458,7 @@ private final class ReferenceStore
         relationBaselines = null;
     }
 
-    @property size_t baselineOwnedBytes() const @safe pure nothrow @nogc
+    @property size_t baselineOwnedBytes() const @safe
     {
         size_t result;
         foreach (slot, ref const value; nodeBaselines)
