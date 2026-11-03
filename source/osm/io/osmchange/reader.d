@@ -941,3 +941,34 @@ unittest
         assert(status.error == OsmChangeReadError.invalidOperation);
     }
 }
+
+
+unittest // committed ordered osmChange fixture
+{
+    import transport.source : MemorySource;
+
+    enum fixture = import("osmchange/order-and-delete.osc");
+    auto source = new MemorySource(cast(const(ubyte)[]) fixture);
+
+    OsmChangeDocument document;
+    OsmChangeReadStatus status;
+    assert(readOsmChangeDocument(source, document, status));
+    assert(status.ok);
+
+    assert(document.changes.entries.length == 5);
+    assert(document.changes.entries[0].action == ChangeAction.create);
+    assert(document.changes.entries[1].action == ChangeAction.modify);
+
+    assert(document.changes.entries[2].action == ChangeAction.deleteObject);
+    assert(document.changes.entries[2].objectState ==
+        ChangeObjectState.identityOnly);
+    assert(document.changes.entries[2].deleteIfUnused);
+
+    assert(document.changes.entries[3].action == ChangeAction.deleteObject);
+    assert(document.changes.entries[3].objectState ==
+        ChangeObjectState.complete);
+    assert(document.changes.entries[3].deleteIfUnused);
+    assert(document.changes.entries[3].type == ElementType.node);
+
+    assert(document.changes.entries[4].action == ChangeAction.create);
+}
