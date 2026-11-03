@@ -347,8 +347,19 @@ private FieldRule fieldRule(
             switch (number)
             {
                 case 1:
-                case 2:
                     return scalarRule(wireType == WireType.lengthDelimited);
+                case 2:
+                    if (wireType != WireType.lengthDelimited)
+                        return FieldRule.init;
+
+                    // BlobHeader.indexdata is intentionally opaque to the
+                    // semantic document model. Treat its presence as known but
+                    // unrepresented source content so semantic rewrite cannot
+                    // silently discard it.
+                    FieldRule indexData;
+                    indexData.known = true;
+                    indexData.unsupportedSemantic = true;
+                    return indexData;
                 case 3:
                     return scalarRule(wireType == WireType.varint);
                 default:
@@ -618,4 +629,31 @@ unittest
         preservation,
         status));
     assert(preservation.reason == PbfPreservationReason.unknownField);
+}
+
+
+unittest
+{
+    PbfPreservation preservation;
+    PbfStatus status;
+
+    // BlobHeader.indexdata is legal PBF framing content, but M4 does not model
+    // it semantically. Its presence must therefore block semantic rewrite
+    // rather than disappear during re-encoding.
+    const(ubyte)[] header = [
+        0x0a, 0x07, 'O', 'S', 'M', 'D', 'a', 't', 'a',
+        0x12, 0x02, 0xaa, 0xbb,
+        0x18, 0x00,
+    ];
+
+    assert(scanMessage(
+        header,
+        MessageKind.blobHeader,
+        64,
+        preservation,
+        status));
+    assert(status.ok);
+    assert(preservation.reason ==
+        PbfPreservationReason.unsupportedSemanticContent);
+    assert(preservation.firstSensitiveOffset == 64);
 }

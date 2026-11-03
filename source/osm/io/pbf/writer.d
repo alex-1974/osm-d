@@ -13,6 +13,10 @@
  * compression remain representation optimizations rather than semantic
  * requirements.
  *
+ * This module serializes PBF bytes; it does not own filesystem, HTTP, range or
+ * stream transport. Workspace consumers use `transport-d` for those I/O
+ * concerns once its released package contract is available. See ADR 0019.
+ *
  * Authors: Alexander Bernardi
  * Date: 2026-11-03
  * Copyright: Copyright © 2026 Alexander Bernardi
@@ -58,6 +62,8 @@ enum PbfWriteError : ubyte
     noOriginalSource,
     /// Writer options violate the bounded PBF block contract.
     invalidOptions,
+    /// Current semantic content requires a HeaderBlock feature not declared.
+    missingRequiredFeature,
     /// A known HeaderBlock feature cannot be truthfully produced by this writer.
     unsupportedHeaderFeature,
     /// Header declares type/id sorting but current semantic arrays violate it.
@@ -132,9 +138,6 @@ struct PbfWriter
         if (!status.ok)
             return false;
 
-        PbfHeader header = document.header.deepCopy();
-        ensureRequiredFeature(header, "OsmSchema-V0.6");
-
         bool hasLocations;
         bool hasVisibility;
         if (!inspectDocument(
@@ -146,14 +149,27 @@ struct PbfWriter
             return false;
         }
 
-        if (hasLocations)
-            ensureRequiredFeature(header, "LocationsOnWays");
-        if (hasVisibility)
-            ensureRequiredFeature(header, "HistoricalInformation");
+        // Required-feature negotiation is fail-closed. The writer never
+        // silently repairs HeaderBlock declarations in an owned document.
+        if (!hasRequiredFeature(
+                document.header,
+                "OsmSchema-V0.6") ||
+            (hasLocations &&
+             !hasRequiredFeature(
+                 document.header,
+                 "LocationsOnWays")) ||
+            (hasVisibility &&
+             !hasRequiredFeature(
+                 document.header,
+                 "HistoricalInformation")))
+        {
+            status.error = PbfWriteError.missingRequiredFeature;
+            return false;
+        }
 
         bool requiresTypeIdSort;
         if (!validateHeaderFeatures(
-                header,
+                document.header,
                 requiresTypeIdSort,
                 status))
         {
@@ -169,7 +185,7 @@ struct PbfWriter
 
         ubyte[] encoded;
 
-        ubyte[] headerPayload = encodeHeader(header);
+        ubyte[] headerPayload = encodeHeader(document.header);
         if (!appendFileBlock(
                 encoded,
                 "OSMHeader",
@@ -375,16 +391,18 @@ private bool idsSorted(T)(scope const(T)[] values)
     return true;
 }
 
-private void ensureRequiredFeature(ref PbfHeader header, string feature) @safe
+private bool hasRequiredFeature(
+    ref const PbfHeader header,
+    string feature)
+    @safe pure nothrow @nogc
 {
     foreach (value; header.requiredFeatures)
     {
         if (equalsAscii(value, feature))
-            return;
+            return true;
     }
 
-    header.requiredFeatures ~= ownBytes(
-        cast(const(ubyte)[])feature);
+    return false;
 }
 
 private bool equalsAscii(scope const(ubyte)[] bytes, string value)
@@ -1035,6 +1053,8 @@ unittest
         ownBytes(cast(const(ubyte)[])"highway"),
         ownBytes(cast(const(ubyte)[])"service"));
     source.data.ways ~= way;
+    source.header.requiredFeatures ~= ownBytes(
+        cast(const(ubyte)[])"LocationsOnWays");
 
     OwnedRelation relation;
     relation.id = 20;
@@ -1104,4 +1124,28 @@ unittest
     PbfWriteStatus status;
     assert(writer.writeOriginalSource(document, output, status));
     assert(output == [0x01, 0x02, 0x03]);
+}
+
+
+unittest
+{
+    import osm.model.owned : OwnedWay, OwnedWayNode;
+    import osm.view.location : LocationView;
+
+    // PbfDocument.create declares only OsmSchema-V0.6. Adding semantic
+    // LocationsOnWays data without the matching required feature is an
+    // inconsistent document; the writer must fail instead of repairing it.
+    PbfDocument document = PbfDocument.create();
+
+    OwnedWay way;
+    way.id = 11;
+    way.nodes ~= OwnedWayNode(1, true, LocationView(1, 2));
+    document.data.ways ~= way;
+
+    PbfWriter writer;
+    ubyte[] output = [0xaa];
+    PbfWriteStatus status;
+    assert(!writer.write(document, output, status));
+    assert(status.error == PbfWriteError.missingRequiredFeature);
+    assert(output == [0xaa]);
 }

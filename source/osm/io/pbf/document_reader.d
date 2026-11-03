@@ -12,6 +12,10 @@
  * semantically unsupported input can still be retained for inspection even
  * when owned semantic materialization fails.
  *
+ * This API consumes an already-loaded byte sequence. Filesystem, HTTP, range
+ * access and sequential stream adaptation belong to the workspace
+ * `transport-d` layer rather than this codec. See ADR 0019.
+ *
  * Authors: Alexander Bernardi
  * Date: 2026-11-03
  * Copyright: Copyright © 2026 Alexander Bernardi

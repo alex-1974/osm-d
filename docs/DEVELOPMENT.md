@@ -105,6 +105,15 @@ The current pre-1.0 surface is classified as follows:
   combines known HeaderBlock semantics, an `OwnedDataset`, and explicit raw
   preservation state. Semantic rewrite and exact-source reproduction are
   separate contracts.
+- `readPbfDocument` and `PbfWriter` are the M4 durable PBF boundaries
+  exported by `osm`. Semantic writing is fail-closed when raw preservation
+  detects unrepresented source content or when required HeaderBlock feature
+  declarations are missing. `writeOriginalSource` is explicitly distinct
+  from semantic writing and reproduces only the captured source bytes.
+- `comparePbfSemantics` reports the first structured semantic difference;
+  the boolean `samePbfSemantics` helper remains available when diagnostics
+  are not needed. M4 qualification uses the structured comparator plus an
+  independent libosmium differential check.
 - `osm.io.pbf.reader` is the supported direct-import module for the ordered
   consumer-facing PBF reader boundary exported by `osm`. The curated root also
   exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
@@ -252,6 +261,19 @@ Do not optimize from intuition alone. For performance-sensitive changes:
 
 A microbenchmark improvement that worsens the end-to-end city workload is not
 a project improvement.
+
+## External byte-resource I/O
+
+`osm-d` owns PBF/OSM interpretation and serialization, not filesystem, HTTP,
+range, stream, retry, cache or scheduler policy. The workspace package
+`transport-d` is the canonical byte-resource transport layer for those tasks;
+see ADR 0019.
+
+At the current M4 checkpoint `transport-d` is still a 0.1.0 release candidate:
+its implementation gates are complete, but the release tag and DUB-registry
+verification are pending. Therefore `osm-d` does not yet add it as a hard DUB
+dependency. A future source/sink adapter must target the released
+`transport-d` contract rather than create an `osm-d`-specific I/O hierarchy.
 
 ## Dependencies
 
