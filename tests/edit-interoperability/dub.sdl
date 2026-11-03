@@ -1,0 +1,9 @@
+name "osm-d-edit-interoperability"
+description "Deterministic JOSM/iD edit interchange qualification for osm-d"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+stringImportPaths "../fixtures"
+
+dependency "osm-d" path="../.."
