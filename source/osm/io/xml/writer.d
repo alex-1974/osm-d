@@ -508,6 +508,7 @@ unittest // semantic XML round trip
     import osm.io.xml.reader :
         OsmXmlReadStatus,
         readOsmXmlDocument;
+    import osm.model.compare : sameOsmSemantics;
     import osm.model.owned : OwnedWay, OwnedWayNode;
     import osm.view.location : LocationView;
     import transport.source : MemorySink, MemorySource;
@@ -530,30 +531,12 @@ unittest // semantic XML round trip
     OsmXmlDocument roundTrip;
     assert(readOsmXmlDocument(rewritten, roundTrip, readStatus));
 
-    assert(roundTrip.data.nodes.length == original.data.nodes.length);
-    assert(roundTrip.data.ways.length == original.data.ways.length);
-    assert(roundTrip.data.relations.length == original.data.relations.length);
-
-    assert(roundTrip.data.nodes[0].id == original.data.nodes[0].id);
-    assert(roundTrip.data.nodes[0].location.latitudeNanodegrees ==
-        original.data.nodes[0].location.latitudeNanodegrees);
-    assert(roundTrip.data.nodes[0].location.longitudeNanodegrees ==
-        original.data.nodes[0].location.longitudeNanodegrees);
-    assert(roundTrip.data.nodes[0].metadata.timestampMilliseconds ==
-        original.data.nodes[0].metadata.timestampMilliseconds);
-    assert(roundTrip.data.nodes[0].metadata.username ==
-        original.data.nodes[0].metadata.username);
-    assert(roundTrip.data.nodes[0].tags == original.data.nodes[0].tags);
-
-    assert(roundTrip.data.ways[0].id == original.data.ways[0].id);
-    assert(roundTrip.data.ways[0].nodes == original.data.ways[0].nodes);
-    assert(roundTrip.data.ways[0].tags == original.data.ways[0].tags);
-
-    assert(roundTrip.data.relations[0].id == original.data.relations[0].id);
-    assert(roundTrip.data.relations[0].members ==
-        original.data.relations[0].members);
-    assert(roundTrip.data.relations[0].tags ==
-        original.data.relations[0].tags);
+    assert(sameOsmSemantics(original.data, roundTrip.data));
+    assert(roundTrip.info.hasUploadPolicy);
+    assert(roundTrip.info.uploadPolicy == original.info.uploadPolicy);
+    // The new serializer truthfully identifies itself as the generator.
+    assert(roundTrip.info.hasGenerator);
+    assert(cast(string) roundTrip.info.generator == "osm-d");
 }
 
 unittest // refuse semantics ordinary OSM XML cannot represent
