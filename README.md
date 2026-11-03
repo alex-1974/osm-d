@@ -390,10 +390,10 @@ consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
 behind one concrete semantic `NodeView`. Bounded block-parallel validation and
 summary decoding are implemented through `PbfParallelReader`; generic ordered
 parallel delivery of worker-borrowed element views is intentionally not part of
-Phase 3 (ADR 0017). Loss-aware PBF writing and ordinary streaming OSM XML
-read/write support are now implemented. osmChange support, full editor
-interoperability qualification, and the compact editable store remain future
-work.
+Phase 3 (ADR 0017). Loss-aware PBF writing, ordinary streaming OSM XML,
+and streaming osmChange read/write support are now implemented. Complete edit
+validation/editor interoperability qualification and the compact editable store
+remain future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
