@@ -103,9 +103,16 @@ struct UploadValidationIssue
  * - every negative/local reference resolves to a preceding create entry of the
  *   same element type, so forward references and placeholder cycles fail.
  *
- * Optional CapabilityProfile limits are applied when nonzero.
+ * Optional CapabilityProfile limits are applied when nonzero. The changeset
+ * element limit applies to this sequence/request only; callers assembling a
+ * changeset across multiple requests must account for already uploaded objects
+ * separately.
  *
- * The function does not reorder or repair input.
+ * The function does not reorder or repair input. It uses a temporary hash
+ * index proportional to the number of create placeholders so negative
+ * references can be checked in one forward pass. This validation boundary is
+ * not a parser hot path; callers that later need allocation reuse can use a
+ * dedicated validation workspace without changing the semantic contract.
  */
 bool validateUploadChanges(
     ref const OwnedChangeSequence changes,
