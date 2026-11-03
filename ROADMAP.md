@@ -36,7 +36,7 @@ arena or PGO are implemented only when measured evidence justifies them.
 - [x] Structured non-allocating decode errors.
 - [ ] Worker-local linear arena — evidence decision in #51.
 - [x] Reusable owned/borrowed block buffers.
-- [ ] Fuzz and malformed-input harnesses for the wire layer. #50
+- [x] Fuzz and malformed-input harnesses for the wire layer. #50
 
 ## Phase 2 — PBF vertical slice
 

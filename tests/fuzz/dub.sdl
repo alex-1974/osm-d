@@ -1,0 +1,16 @@
+name "osm-d-wire-fuzz"
+description "Deterministic seed and raw-input harness for osm-d wire/PBF boundaries"
+authors "Alexander Bernardi"
+copyright "Copyright © 2026 Alexander Bernardi"
+license "MIT"
+
+dependency "osm-d" path="../.."
+
+configuration "wire-fuzz" {
+    targetType "executable"
+    targetName "osm-d-wire-fuzz"
+    targetPath "bin"
+    sourcePaths "."
+    importPaths "."
+    mainSourceFile "wire_fuzz.d"
+}

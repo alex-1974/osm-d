@@ -63,6 +63,12 @@ jobs:
           DIP1000_COMPILERS="$DC" \
             tests/run-dip1000-negative.sh
 
+      - name: Run deterministic wire malformed-input seeds
+        shell: bash
+        run: |
+          WIRE_FUZZ_COMPILER="$DC" \
+            bash tests/fuzz/run-wire-seeds.sh
+
       - name: Build release configuration
         shell: bash
         run: dub build --compiler="$DC" --build=release --force
