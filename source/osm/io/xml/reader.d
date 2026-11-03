@@ -585,6 +585,11 @@ bool parseRootAttributes(Entity)(
             info.hasGenerator = true;
             info.generator = ownDecoded(attr.value);
         }
+        else if (equal(attr.name.save, "upload"))
+        {
+            info.hasUploadPolicy = true;
+            info.uploadPolicy = ownDecoded(attr.value);
+        }
         else if (equal(attr.name.save, "copyright"))
         {
             info.hasCopyright = true;
