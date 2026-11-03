@@ -383,26 +383,44 @@ private final class ReferenceStore
 
     void deleteRestoreNode(uint slot) @safe
     {
-        auto baseline = data.nodes[slot].deepCopy();
+        const hadBaseline = slot in nodeBaselines;
+        if (!hadBaseline)
+            nodeBaselines[slot] = data.nodes[slot].deepCopy();
+
         const id = data.nodes[slot].id;
         require(nodeIndex.remove(id), "reference node delete failed");
         nodeIndex[id] = slot;
+
+        if (!hadBaseline)
+            nodeBaselines.remove(slot);
     }
 
     void deleteRestoreWay(uint slot) @safe
     {
-        auto baseline = data.ways[slot].deepCopy();
+        const hadBaseline = slot in wayBaselines;
+        if (!hadBaseline)
+            wayBaselines[slot] = data.ways[slot].deepCopy();
+
         const id = data.ways[slot].id;
         require(wayIndex.remove(id), "reference way delete failed");
         wayIndex[id] = slot;
+
+        if (!hadBaseline)
+            wayBaselines.remove(slot);
     }
 
     void deleteRestoreRelation(uint slot) @safe
     {
-        auto baseline = data.relations[slot].deepCopy();
+        const hadBaseline = slot in relationBaselines;
+        if (!hadBaseline)
+            relationBaselines[slot] = data.relations[slot].deepCopy();
+
         const id = data.relations[slot].id;
         require(relationIndex.remove(id), "reference relation delete failed");
         relationIndex[id] = slot;
+
+        if (!hadBaseline)
+            relationBaselines.remove(slot);
     }
 
     void addCreated(scope ref const OwnedNode value) @safe
