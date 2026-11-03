@@ -70,7 +70,7 @@ Tracked by M3: #43.
 - [x] Peak-memory benchmark.
 - [x] Thread-scaling benchmark.
 - [x] Profile-guided optimization decision — deferred until a stable consumer workload exposes a material opportunity. #51
-- [ ] Reconcile reader documentation and absorbed Phase 3 branches. #52
+- [x] Reconcile reader documentation and retire absorbed Phase 3 branches; preserve `research-integration`. #52
 
 ## Phase 4 — Raw/loss-aware round trip
 
