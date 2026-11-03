@@ -125,13 +125,19 @@ after every thread has joined.
 
 There is no global per-element counter and no shared mutable sink.
 
-## Future ordered element delivery
+## Consumer-visible ordered element delivery
 
-Ordered merge remains intentionally separate. Consumer-visible borrowed views
-cannot simply be stored in a reorder queue because their payload/StringTable
-backing belongs to a reusable worker workspace.
+ADR 0017 closes the Phase-3 decision: the parallel reader does **not** expose a
+generic ordered borrowed-element callback API.
 
-A future ordered design must explicitly choose a lifetime-preserving mechanism,
-for example block ownership transfer, a consumer barrier before worker-buffer
-reuse, or direct construction of an owned destination/store. It must not
-silently materialize every OSM element.
+Consumer-visible ordered traversal remains the responsibility of the serial
+`PbfReader.read` and `foreach` paths. The first planned parallel path that
+publishes decoded element state is deferred to direct construction of an owned
+destination/store (#64), where decoded values can become durable before a
+worker reuses its workspace.
+
+A later generic ordered parallel API would require a new contract. It must
+choose an explicit lifetime-preserving mechanism such as block ownership
+transfer or a consumer barrier, define bounded backpressure, and qualify its
+cost against the direct sink. Borrowed worker-backed views must never be queued
+past workspace reuse, and osm-d must not silently materialize every element.
