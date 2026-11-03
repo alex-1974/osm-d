@@ -851,6 +851,708 @@ private void printTiming(string prefix, Timing value)
     writefln("%s_checksum=%s", prefix, value.checksum);
 }
 
+
+private struct EditSelection
+{
+    OsmId[] nodeTags;
+    OsmId[] wayTags;
+    OsmId[] relationTags;
+    OsmId[] nodeCoordinates;
+    OsmId[] wayReferences;
+    OsmId[] relationMembers;
+    OsmId[] deleteNodes;
+    OsmId[] deleteWays;
+    OsmId[] deleteRelations;
+}
+
+private struct EditMetrics
+{
+    long editNs;
+    long revertNs;
+    ulong editChecksum;
+    ulong revertChecksum;
+    size_t postEditOwnedBytes;
+    size_t postRevertOwnedBytes;
+}
+
+private struct RemapMetrics
+{
+    long elapsedNs;
+    ulong checksum;
+}
+
+private EditSelection makeEditSelection(scope ref const OwnedDataset data) @safe
+{
+    EditSelection result;
+
+    foreach (ref const node; data.nodes)
+    {
+        if (result.nodeTags.length < 3_000)
+            result.nodeTags ~= node.id;
+        if (result.nodeCoordinates.length < 2_000)
+            result.nodeCoordinates ~= node.id;
+        if (result.deleteNodes.length < 200)
+            result.deleteNodes ~= node.id;
+    }
+
+    foreach (ref const way; data.ways)
+    {
+        if (result.wayTags.length < 800)
+            result.wayTags ~= way.id;
+        if (result.wayReferences.length < 1_500 && way.nodes.length >= 2)
+            result.wayReferences ~= way.id;
+        if (result.deleteWays.length < 200)
+            result.deleteWays ~= way.id;
+    }
+
+    foreach (ref const relation; data.relations)
+    {
+        if (result.relationTags.length < 200)
+            result.relationTags ~= relation.id;
+        if (result.relationMembers.length < 500 &&
+            relation.members.length >= 2)
+            result.relationMembers ~= relation.id;
+        if (result.deleteRelations.length < 100)
+            result.deleteRelations ~= relation.id;
+    }
+
+    assert(result.nodeTags.length == 3_000);
+    assert(result.wayTags.length == 800);
+    assert(result.relationTags.length == 200);
+    assert(result.nodeCoordinates.length == 2_000);
+    assert(result.wayReferences.length == 1_500);
+    assert(result.relationMembers.length == 500);
+    assert(result.deleteNodes.length == 200);
+    assert(result.deleteWays.length == 200);
+    assert(result.deleteRelations.length == 100);
+    return result;
+}
+
+private void setBenchmarkTag(
+    ref OwnedTag[] tags,
+    immutable(ubyte)[] key,
+    immutable(ubyte)[] value) @safe
+{
+    foreach (ref tag; tags)
+    {
+        if (tag.key == key)
+        {
+            tag.value = value;
+            return;
+        }
+    }
+    tags ~= OwnedTag(key, value);
+}
+
+private void editNodeCoordinate(ref OwnedNode value) @safe pure nothrow @nogc
+{
+    value.location = typeof(value.location)(
+        value.location.latitudeNanodegrees + 1,
+        value.location.longitudeNanodegrees - 1);
+}
+
+private void editWayReferences(ref OwnedWay value) @safe pure nothrow @nogc
+{
+    assert(value.nodes.length >= 2);
+    auto first = value.nodes[0];
+    value.nodes[0] = value.nodes[1];
+    value.nodes[1] = first;
+}
+
+private void editRelationMembers(ref OwnedRelation value)
+    @safe pure nothrow @nogc
+{
+    assert(value.members.length >= 2);
+    auto first = value.members[0];
+    value.members[0] = value.members[1];
+    value.members[1] = first;
+}
+
+private OwnedNode[] makeCreatedNodes() @safe
+{
+    OwnedNode[] result;
+    result.length = 800;
+    foreach (i, ref value; result)
+    {
+        value.id = -1 - cast(long)i;
+        value.location = typeof(value.location)(
+            48_000_000_000L + cast(long)i,
+            16_000_000_000L + cast(long)i);
+    }
+    return result;
+}
+
+private OwnedWay[] makeCreatedWays() @safe
+{
+    OwnedWay[] result;
+    result.length = 150;
+    foreach (i, ref value; result)
+    {
+        value.id = -1_001 - cast(long)i;
+
+        OwnedWayNode a;
+        a.id = -1 - cast(long)((i * 2) % 800);
+        OwnedWayNode b;
+        b.id = -1 - cast(long)((i * 2 + 1) % 800);
+        value.nodes = [a, b];
+    }
+    return result;
+}
+
+private OwnedRelation[] makeCreatedRelations() @safe
+{
+    OwnedRelation[] result;
+    result.length = 50;
+    foreach (i, ref value; result)
+    {
+        value.id = -2_001 - cast(long)i;
+
+        OwnedRelationMember way;
+        way.type = ElementType.way;
+        way.id = -1_001 - cast(long)(i % 150);
+
+        OwnedRelationMember node;
+        node.type = ElementType.node;
+        node.id = -1 - cast(long)(i % 800);
+
+        value.members = [way, node];
+    }
+    return result;
+}
+
+private struct NodeOp
+{
+    OsmId id;
+    OsmHandle handle;
+    uint slot;
+    OwnedNode original;
+    OwnedNode value;
+}
+
+private struct WayOp
+{
+    OsmId id;
+    OsmHandle handle;
+    uint slot;
+    OwnedWay original;
+    OwnedWay value;
+}
+
+private struct RelationOp
+{
+    OsmId id;
+    OsmHandle handle;
+    uint slot;
+    OwnedRelation original;
+    OwnedRelation value;
+}
+
+private uint referenceSlot(
+    ReferenceStore store,
+    ElementType type,
+    OsmId id) @safe
+{
+    uint slot;
+    assert(store.find(type, id, slot));
+    return slot;
+}
+
+private OsmHandle compactHandle(OsmStore store, ElementType type, OsmId id)
+    @safe nothrow @nogc
+{
+    OsmHandle handle;
+    assert(store.find(type, id, handle));
+    return handle;
+}
+
+private EditMetrics runReferenceEdits(
+    ReferenceStore store,
+    scope ref const EditSelection selection,
+    ulong originalChecksum,
+    size_t parentBytes) @safe
+{
+    auto key = ownBytes(cast(const(ubyte)[])"osm-d:layout-benchmark");
+    auto valueBytes = ownBytes(cast(const(ubyte)[])"edited");
+
+    NodeOp[] nodeTagOps;
+    foreach (id; selection.nodeTags)
+    {
+        const slot = referenceSlot(store, ElementType.node, id);
+        NodeOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.nodes[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        nodeTagOps ~= op;
+    }
+
+    WayOp[] wayTagOps;
+    foreach (id; selection.wayTags)
+    {
+        const slot = referenceSlot(store, ElementType.way, id);
+        WayOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.ways[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        wayTagOps ~= op;
+    }
+
+    RelationOp[] relationTagOps;
+    foreach (id; selection.relationTags)
+    {
+        const slot = referenceSlot(store, ElementType.relation, id);
+        RelationOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.relations[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        relationTagOps ~= op;
+    }
+
+    NodeOp[] coordinateOps;
+    foreach (id; selection.nodeCoordinates)
+    {
+        const slot = referenceSlot(store, ElementType.node, id);
+        NodeOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.nodes[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        editNodeCoordinate(op.value);
+        coordinateOps ~= op;
+    }
+
+    WayOp[] referenceOps;
+    foreach (id; selection.wayReferences)
+    {
+        const slot = referenceSlot(store, ElementType.way, id);
+        WayOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.ways[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        editWayReferences(op.value);
+        referenceOps ~= op;
+    }
+
+    RelationOp[] memberOps;
+    foreach (id; selection.relationMembers)
+    {
+        const slot = referenceSlot(store, ElementType.relation, id);
+        RelationOp op;
+        op.id = id;
+        op.slot = slot;
+        op.original = store.data.relations[slot].deepCopy();
+        op.value = op.original.deepCopy();
+        editRelationMembers(op.value);
+        memberOps ~= op;
+    }
+
+    auto createdNodes = makeCreatedNodes();
+    auto createdWays = makeCreatedWays();
+    auto createdRelations = makeCreatedRelations();
+
+    uint[] deleteNodeSlots;
+    foreach (id; selection.deleteNodes)
+        deleteNodeSlots ~= referenceSlot(store, ElementType.node, id);
+    uint[] deleteWaySlots;
+    foreach (id; selection.deleteWays)
+        deleteWaySlots ~= referenceSlot(store, ElementType.way, id);
+    uint[] deleteRelationSlots;
+    foreach (id; selection.deleteRelations)
+        deleteRelationSlots ~= referenceSlot(store, ElementType.relation, id);
+
+    const originalNodeLength = store.data.nodes.length;
+    const originalWayLength = store.data.ways.length;
+    const originalRelationLength = store.data.relations.length;
+
+    EditMetrics metrics;
+    metrics.editNs = elapsedNs(() {
+        foreach (ref const op; nodeTagOps)
+            store.data.nodes[op.slot] = op.value;
+        foreach (ref const op; wayTagOps)
+            store.data.ways[op.slot] = op.value;
+        foreach (ref const op; relationTagOps)
+            store.data.relations[op.slot] = op.value;
+
+        foreach (ref const op; coordinateOps)
+            store.data.nodes[op.slot] = op.value;
+        foreach (ref const op; referenceOps)
+            store.data.ways[op.slot] = op.value;
+        foreach (ref const op; memberOps)
+            store.data.relations[op.slot] = op.value;
+
+        foreach (ref const created; createdNodes)
+        {
+            const slot = cast(uint)store.data.nodes.length;
+            store.data.nodes ~= created;
+            store.nodeIndex[created.id] = slot;
+        }
+        foreach (ref const created; createdWays)
+        {
+            const slot = cast(uint)store.data.ways.length;
+            store.data.ways ~= created;
+            store.wayIndex[created.id] = slot;
+        }
+        foreach (ref const created; createdRelations)
+        {
+            const slot = cast(uint)store.data.relations.length;
+            store.data.relations ~= created;
+            store.relationIndex[created.id] = slot;
+        }
+
+        foreach (slot; deleteNodeSlots)
+        {
+            const id = store.data.nodes[slot].id;
+            assert(store.nodeIndex.remove(id));
+            store.nodeIndex[id] = slot;
+        }
+        foreach (slot; deleteWaySlots)
+        {
+            const id = store.data.ways[slot].id;
+            assert(store.wayIndex.remove(id));
+            store.wayIndex[id] = slot;
+        }
+        foreach (slot; deleteRelationSlots)
+        {
+            const id = store.data.relations[slot].id;
+            assert(store.relationIndex.remove(id));
+            store.relationIndex[id] = slot;
+        }
+    });
+
+    metrics.editChecksum = traverseReference(store.data);
+    metrics.postEditOwnedBytes =
+        store.estimatedOwnedBytes + parentBytes;
+
+    metrics.revertNs = elapsedNs(() {
+        foreach (ref const op; nodeTagOps)
+            store.data.nodes[op.slot] = op.original;
+        foreach (ref const op; coordinateOps)
+            store.data.nodes[op.slot] = op.original;
+        foreach (ref const op; wayTagOps)
+            store.data.ways[op.slot] = op.original;
+        foreach (ref const op; referenceOps)
+            store.data.ways[op.slot] = op.original;
+        foreach (ref const op; relationTagOps)
+            store.data.relations[op.slot] = op.original;
+        foreach (ref const op; memberOps)
+            store.data.relations[op.slot] = op.original;
+
+        foreach (ref const created; createdRelations)
+            assert(store.relationIndex.remove(created.id));
+        foreach (ref const created; createdWays)
+            assert(store.wayIndex.remove(created.id));
+        foreach (ref const created; createdNodes)
+            assert(store.nodeIndex.remove(created.id));
+
+        store.data.relations.length = originalRelationLength;
+        store.data.ways.length = originalWayLength;
+        store.data.nodes.length = originalNodeLength;
+    });
+
+    metrics.revertChecksum = traverseReference(store.data);
+    assert(metrics.revertChecksum == originalChecksum);
+    metrics.postRevertOwnedBytes =
+        store.estimatedOwnedBytes + parentBytes;
+    return metrics;
+}
+
+private EditMetrics runCompactEdits(
+    OsmStore store,
+    scope ref const EditSelection selection,
+    ulong originalChecksum,
+    size_t parentBytes) @safe
+{
+    auto key = ownBytes(cast(const(ubyte)[])"osm-d:layout-benchmark");
+    auto valueBytes = ownBytes(cast(const(ubyte)[])"edited");
+    StoreStatus status;
+
+    NodeOp[] nodeTagOps;
+    foreach (id; selection.nodeTags)
+    {
+        NodeOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.node, id);
+        assert(store.copyNode(op.handle, op.value, status));
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        nodeTagOps ~= op;
+    }
+
+    WayOp[] wayTagOps;
+    foreach (id; selection.wayTags)
+    {
+        WayOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.way, id);
+        assert(store.copyWay(op.handle, op.value, status));
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        wayTagOps ~= op;
+    }
+
+    RelationOp[] relationTagOps;
+    foreach (id; selection.relationTags)
+    {
+        RelationOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.relation, id);
+        assert(store.copyRelation(op.handle, op.value, status));
+        setBenchmarkTag(op.value.tags, key, valueBytes);
+        relationTagOps ~= op;
+    }
+
+    NodeOp[] coordinateOps;
+    foreach (id; selection.nodeCoordinates)
+    {
+        NodeOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.node, id);
+        assert(store.copyNode(op.handle, op.value, status));
+        editNodeCoordinate(op.value);
+        coordinateOps ~= op;
+    }
+
+    WayOp[] referenceOps;
+    foreach (id; selection.wayReferences)
+    {
+        WayOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.way, id);
+        assert(store.copyWay(op.handle, op.value, status));
+        editWayReferences(op.value);
+        referenceOps ~= op;
+    }
+
+    RelationOp[] memberOps;
+    foreach (id; selection.relationMembers)
+    {
+        RelationOp op;
+        op.id = id;
+        op.handle = compactHandle(store, ElementType.relation, id);
+        assert(store.copyRelation(op.handle, op.value, status));
+        editRelationMembers(op.value);
+        memberOps ~= op;
+    }
+
+    auto createdNodes = makeCreatedNodes();
+    auto createdWays = makeCreatedWays();
+    auto createdRelations = makeCreatedRelations();
+
+    OsmHandle[] deleteNodeHandles;
+    foreach (id; selection.deleteNodes)
+        deleteNodeHandles ~= compactHandle(store, ElementType.node, id);
+    OsmHandle[] deleteWayHandles;
+    foreach (id; selection.deleteWays)
+        deleteWayHandles ~= compactHandle(store, ElementType.way, id);
+    OsmHandle[] deleteRelationHandles;
+    foreach (id; selection.deleteRelations)
+        deleteRelationHandles ~= compactHandle(store, ElementType.relation, id);
+
+    OsmHandle[] createdNodeHandles;
+    OsmHandle[] createdWayHandles;
+    OsmHandle[] createdRelationHandles;
+
+    EditMetrics metrics;
+    metrics.editNs = elapsedNs(() {
+        foreach (ref const op; nodeTagOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref const op; wayTagOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref const op; relationTagOps)
+            assert(store.replace(op.handle, op.value, status));
+
+        foreach (ref const op; coordinateOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref const op; referenceOps)
+            assert(store.replace(op.handle, op.value, status));
+        foreach (ref const op; memberOps)
+            assert(store.replace(op.handle, op.value, status));
+
+        foreach (ref const created; createdNodes)
+        {
+            OsmHandle handle;
+            assert(store.add(created, handle, status));
+            createdNodeHandles ~= handle;
+        }
+        foreach (ref const created; createdWays)
+        {
+            OsmHandle handle;
+            assert(store.add(created, handle, status));
+            createdWayHandles ~= handle;
+        }
+        foreach (ref const created; createdRelations)
+        {
+            OsmHandle handle;
+            assert(store.add(created, handle, status));
+            createdRelationHandles ~= handle;
+        }
+
+        foreach (handle; deleteNodeHandles)
+        {
+            assert(store.remove(handle, status));
+            assert(store.restore(handle, status));
+        }
+        foreach (handle; deleteWayHandles)
+        {
+            assert(store.remove(handle, status));
+            assert(store.restore(handle, status));
+        }
+        foreach (handle; deleteRelationHandles)
+        {
+            assert(store.remove(handle, status));
+            assert(store.restore(handle, status));
+        }
+    });
+
+    metrics.editChecksum = traverseCompact(store);
+    metrics.postEditOwnedBytes =
+        store.memoryUsage.totalOwnedBytes + parentBytes;
+
+    metrics.revertNs = elapsedNs(() {
+        foreach (ref const op; relationTagOps)
+            assert(store.revert(op.handle, status));
+        foreach (ref const op; memberOps)
+            assert(store.revert(op.handle, status));
+        foreach (ref const op; wayTagOps)
+            assert(store.revert(op.handle, status));
+        foreach (ref const op; referenceOps)
+            assert(store.revert(op.handle, status));
+        foreach (ref const op; nodeTagOps)
+            assert(store.revert(op.handle, status));
+        foreach (ref const op; coordinateOps)
+            assert(store.revert(op.handle, status));
+
+        foreach_reverse (handle; createdRelationHandles)
+            assert(store.revert(handle, status));
+        foreach_reverse (handle; createdWayHandles)
+            assert(store.revert(handle, status));
+        foreach_reverse (handle; createdNodeHandles)
+            assert(store.revert(handle, status));
+    });
+
+    metrics.revertChecksum = traverseCompact(store);
+    assert(metrics.revertChecksum == originalChecksum);
+    metrics.postRevertOwnedBytes =
+        store.memoryUsage.totalOwnedBytes + parentBytes;
+    return metrics;
+}
+
+private RemapMetrics runReferenceRemap() @safe
+{
+    OwnedDataset data;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = typeof(node.location)(1, 2);
+    data.nodes ~= node;
+
+    OwnedWay way;
+    way.id = -2;
+    way.nodes ~= OwnedWayNode(-1, false, typeof(node.location).init);
+    data.ways ~= way;
+
+    OwnedRelation relation;
+    relation.id = -3;
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = -1;
+    relation.members = [wayMember, nodeMember];
+    data.relations ~= relation;
+
+    auto store = new ReferenceStore(data);
+
+    RemapMetrics result;
+    result.elapsedNs = elapsedNs(() {
+        assert(store.nodeIndex.remove(-1));
+        store.data.nodes[0].id = 101;
+        store.data.nodes[0].metadata.hasVersion = true;
+        store.data.nodes[0].metadata.versionNumber = 1;
+        store.nodeIndex[101] = 0;
+        store.data.ways[0].nodes[0].id = 101;
+        store.data.relations[0].members[1].id = 101;
+
+        assert(store.wayIndex.remove(-2));
+        store.data.ways[0].id = 102;
+        store.data.ways[0].metadata.hasVersion = true;
+        store.data.ways[0].metadata.versionNumber = 1;
+        store.wayIndex[102] = 0;
+        store.data.relations[0].members[0].id = 102;
+
+        assert(store.relationIndex.remove(-3));
+        store.data.relations[0].id = 103;
+        store.data.relations[0].metadata.hasVersion = true;
+        store.data.relations[0].metadata.versionNumber = 1;
+        store.relationIndex[103] = 0;
+    });
+
+    result.checksum = traverseReference(store.data);
+    return result;
+}
+
+private RemapMetrics runCompactRemap() @safe
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = typeof(node.location)(1, 2);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = -2;
+    way.nodes ~= OwnedWayNode(-1, false, typeof(node.location).init);
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation relation;
+    relation.id = -3;
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = -1;
+    relation.members = [wayMember, nodeMember];
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+
+    auto nodeWayRefs = [KnownWayRefRewrite(wayHandle, 0)];
+    auto nodeRelationRefs = [KnownRelationMemberRewrite(relationHandle, 1)];
+    KnownWayRefRewrite[] noWays;
+    auto wayRelationRefs = [KnownRelationMemberRewrite(relationHandle, 0)];
+    KnownRelationMemberRewrite[] noRelations;
+
+    RemapMetrics result;
+    result.elapsedNs = elapsedNs(() {
+        assert(store.remapKnown(
+            nodeHandle, 101, 1, nodeWayRefs, nodeRelationRefs, status));
+        assert(store.remapKnown(
+            wayHandle, 102, 1, noWays, wayRelationRefs, status));
+        assert(store.remapKnown(
+            relationHandle, 103, 1, noWays, noRelations, status));
+    });
+
+    OsmHandle found;
+    assert(store.find(ElementType.node, 101, found));
+    assert(found == nodeHandle);
+    assert(store.find(ElementType.way, 102, found));
+    assert(found == wayHandle);
+    assert(store.find(ElementType.relation, 103, found));
+    assert(found == relationHandle);
+
+    result.checksum = traverseCompact(store);
+    return result;
+}
+
 int main(string[] args)
 {
     string variant;
