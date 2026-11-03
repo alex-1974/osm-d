@@ -306,8 +306,9 @@ beyond nine decimal places fail with `OsmXmlReadError.precisionLoss`; they are
 never rounded silently. Known document-level JOSM metadata such as
 `upload="never"` is preserved. JOSM editor-only element actions such as
 `action="modify"` remain outside the ordinary XML dataset model and fail
-closed; complete JOSM/iD editing interoperability is tracked separately by M5
-qualification.
+closed. M5 qualifies the supported JOSM-/iD-compatible semantic interchange
+path; literal JOSM-export provenance is preserved separately as evidence issue
+#85.
 
 ## osmChange 0.6
 
@@ -432,7 +433,9 @@ Phase 3 (ADR 0017). Loss-aware PBF writing, ordinary streaming OSM XML,
 streaming osmChange read/write support, and deterministic upload validation are
 now implemented. Editor interoperability is backed by semantic compatibility
 fixtures; literal JOSM-export provenance remains a separate evidence claim.
-The compact editable store remains future work.
+M5 XML/osmChange interoperability is complete. Literal JOSM-export provenance
+is tracked separately in #85 as evidence hardening, not as a semantic/API
+blocker. The compact editable store remains future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
