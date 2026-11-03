@@ -1472,6 +1472,10 @@ public:
         if (!preflightBorrowedTags(sourceTags, status))
             return false;
 
+        auto sourceNodes = value.nodes;
+        if (!preflightBorrowedWayNodes(sourceNodes, status))
+            return false;
+
         const tagSpan = appendBorrowedTags(value.tags);
         const refSpan = appendBorrowedWayNodes(value.nodes);
         const locationSpan = lastWayLocationSpan;
@@ -1515,6 +1519,10 @@ public:
 
         auto sourceTags = value.tags;
         if (!preflightBorrowedTags(sourceTags, status))
+            return false;
+
+        auto sourceMembers = value.members;
+        if (!preflightBorrowedRelationMembers(sourceMembers, status))
             return false;
 
         const tagSpan = appendBorrowedTags(value.tags);
@@ -2411,6 +2419,45 @@ private:
         return result;
     }
 
+
+    bool preflightBorrowedWayNodes(Range)(
+        Range source,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        while (!source.empty)
+        {
+            const value = source.front;
+            if (value.id <= 0)
+            {
+                status.error = StoreError.unresolvedLocalReference;
+                status.type = ElementType.node;
+                status.id = value.id;
+                return false;
+            }
+            source.popFront();
+        }
+        return true;
+    }
+
+    bool preflightBorrowedRelationMembers(Range)(
+        Range source,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        while (!source.empty)
+        {
+            const value = source.front;
+            if (value.id <= 0)
+            {
+                status.error = StoreError.unresolvedLocalReference;
+                status.type = value.type;
+                status.id = value.id;
+                return false;
+            }
+            source.popFront();
+        }
+        return true;
+    }
+
     Span32 appendBorrowedWayNodes(Range)(Range source)
         @safe nothrow @nogc
     {
@@ -2424,13 +2471,6 @@ private:
         while (!source.empty)
         {
             const value = source.front;
-            if (value.id <= 0)
-            {
-                // Validated editor-store state never accepts unresolved local
-                // IDs from a borrowed file source.
-                onArrayIndexError(0, 0);
-            }
-
             _wayRefIds ~= value.id;
             ++refs.length;
 
@@ -2463,9 +2503,6 @@ private:
         while (!source.empty)
         {
             const value = source.front;
-            if (value.id <= 0)
-                onArrayIndexError(0, 0);
-
             _relationMemberIds ~= value.id;
             _relationMemberTypes ~= cast(ubyte)value.type;
             _relationMemberRoles ~= _strings.intern(value.role);
