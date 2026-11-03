@@ -137,7 +137,7 @@ struct OsmXmlReader
         out OsmXmlReadSummary summary,
         out OsmXmlReadStatus status,
         OsmXmlReadOptions options = OsmXmlReadOptions.init)
-        @safe
+        @trusted
     {
         summary = OsmXmlReadSummary.init;
         status = OsmXmlReadStatus.init;
@@ -212,8 +212,7 @@ struct OsmXmlReader
                         return false;
                     ++summary.nodes;
                     summary.tags += tagCount;
-                    static if (__traits(compiles, handler.node(node)))
-                        handler.node(node);
+                    deliverNode(handler, node);
                 }
                 else if (equal(xml.front.name.save, "way"))
                 {
@@ -224,8 +223,7 @@ struct OsmXmlReader
                     ++summary.ways;
                     summary.tags += tagCount;
                     summary.wayNodeReferences += way.nodes.length;
-                    static if (__traits(compiles, handler.way(way)))
-                        handler.way(way);
+                    deliverWay(handler, way);
                 }
                 else if (equal(xml.front.name.save, "relation"))
                 {
@@ -236,8 +234,7 @@ struct OsmXmlReader
                     ++summary.relations;
                     summary.tags += tagCount;
                     summary.relationMembers += relation.members.length;
-                    static if (__traits(compiles, handler.relation(relation)))
-                        handler.relation(relation);
+                    deliverRelation(handler, relation);
                 }
                 else
                 {
@@ -317,6 +314,25 @@ bool readOsmXmlDocument(
 }
 
 private:
+
+void deliverNode(Handler)(ref Handler handler, OwnedNode value) @safe
+{
+    static if (__traits(compiles, handler.node(value)))
+        handler.node(value);
+}
+
+void deliverWay(Handler)(ref Handler handler, OwnedWay value) @safe
+{
+    static if (__traits(compiles, handler.way(value)))
+        handler.way(value);
+}
+
+void deliverRelation(Handler)(ref Handler handler, OwnedRelation value) @safe
+{
+    static if (__traits(compiles, handler.relation(value)))
+        handler.relation(value);
+}
+
 enum size_t defaultMaximumChildren = 1_000_000;
 enum size_t defaultDeclarationBytes = 4096;
 
@@ -334,7 +350,7 @@ size_t declarationLimit(OsmXmlReadOptions options) @safe pure nothrow @nogc
         : options.maximumXmlDeclarationBytes;
 }
 
-void setPosition(Entity)(ref OsmXmlReadStatus status, ref Entity entity)
+void setPosition(Entity)(ref OsmXmlReadStatus status, Entity entity)
 {
     status.line = entity.pos.line;
     status.column = entity.pos.col;
@@ -512,7 +528,7 @@ OwnedBytes ownDecoded(R)(R range)
 }
 
 bool parseRootAttributes(Entity)(
-    ref Entity entity,
+    Entity entity,
     ref OsmXmlDocumentInfo info,
     ref OsmXmlReadStatus status)
 {
@@ -1102,7 +1118,7 @@ bool parseMetadataAttribute(Attr, Entity)(
         if (!parseInt(value, parsed))
             goto invalid;
         metadata.hasVersion = true;
-        metadata.versionTextNumber = parsed;
+        metadata.versionNumber = parsed;
         return true;
     }
 
