@@ -1,6 +1,6 @@
 module app;
 
-import osm.io.xml;
+import osm.xml;
 import osm.model.compare : sameOsmSemantics;
 import transport.source : MemorySink, MemorySource;
 
