@@ -138,3 +138,24 @@ caller-owned input
 Queued whole-buffer jobs borrow Blob slices and do not duplicate compressed
 payload bytes. Materializing a compact editable store is a separate benchmark
 with its own memory target.
+
+
+## M6 compact-store targets
+
+ADR 0021 and `docs/design/compact-store-contract.md` define the M6 decision
+workloads. The primary layout decision uses the pinned `bremen-260901`
+city/editor-scale dataset.
+
+The production candidate is compared with a straightforward reference store
+that provides the **same primary and parent indexes**. The first architecture
+targets are:
+
+- final incremental RSS no more than 75% of that equivalent reference store;
+- Bremen final incremental RSS at or below 512 MiB excluding the identical
+  caller-owned PBF input buffer, with 384 MiB as a stretch target;
+- direct PBF construction peak incremental RSS no more than 1.5x final store
+  incremental RSS, again excluding the identical input buffer.
+
+These are engineering decision budgets, not public guarantees for arbitrary OSM
+datasets. Missing a target triggers investigation; it does not justify data
+loss, disabled integrity checks or benchmark-only representations.
