@@ -28,6 +28,7 @@ import osm :
     OwnedWayNode,
     PbfDocument,
     PbfReadStatus,
+    StoreMetadataView,
     StoreNodeView,
     StoreRelationView,
     StoreStatus,
@@ -340,7 +341,7 @@ private void mixMetadata(ref ulong hash, scope ref const OwnedMetadata value)
     if (value.hasVisibility) mix(hash, value.visible);
 }
 
-private void mixMetadata(ref ulong hash, scope ref const typeof(StoreNodeView.init.metadata) value)
+private void mixMetadata(ref ulong hash, scope ref const StoreMetadataView value)
     @safe pure nothrow @nogc
 {
     mix(hash, value.hasVersion);
@@ -563,7 +564,7 @@ private Timing measureLookupReference(
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({
+        samples[round] = elapsedNs(() {
             uint slot;
             foreach (id; queries)
             {
@@ -595,7 +596,7 @@ private Timing measureLookupCompact(
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({
+        samples[round] = elapsedNs(() {
             OsmHandle handle;
             foreach (id; queries)
             {
@@ -626,7 +627,7 @@ private Timing measureNodeParents(
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({
+        samples[round] = elapsedNs(() {
             foreach (id; queries)
             {
                 const values = parents.waysForNode(id);
@@ -655,7 +656,7 @@ private Timing measureRelationParents(
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({
+        samples[round] = elapsedNs(() {
             foreach (key; queries)
             {
                 const values = parents.relationsFor(key.type, key.id);
@@ -709,7 +710,7 @@ private Timing measureTraversalReference(scope ref const OwnedDataset data) @saf
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({ hash = traverseReference(data); });
+        samples[round] = elapsedNs(() { hash = traverseReference(data); });
         if (round == 0) expected = hash; else assert(hash == expected);
     }
     sort(samples[]);
@@ -723,7 +724,7 @@ private Timing measureTraversalCompact(OsmStore store) @safe
     foreach (round; 0 .. rounds)
     {
         ulong hash;
-        samples[round] = elapsedNs({ hash = traverseCompact(store); });
+        samples[round] = elapsedNs(() { hash = traverseCompact(store); });
         if (round == 0) expected = hash; else assert(hash == expected);
     }
     sort(samples[]);
@@ -823,7 +824,7 @@ private long measureSourceDecode(
     out PbfDocument document) @safe
 {
     PbfReadStatus status;
-    long elapsed = elapsedNs({
+    long elapsed = elapsedNs(() {
         if (!readPbfDocument(input, document, status))
         {
             stderr.writefln(
@@ -874,7 +875,7 @@ int main(string[] args)
     const processStartRss = currentRssKiB();
     auto storage = cast(ubyte[])read(filename);
     const inputBytes = storage.length;
-    const input = cast(const(ubyte)[])storage;
+    const(ubyte)[] input = cast(const(ubyte)[])storage;
 
     PbfDocument document;
     const sourceDecodeNs = measureSourceDecode(input, document);
@@ -893,7 +894,7 @@ int main(string[] args)
         makeRelationParentQueries(document.data, 100_000);
 
     ParentIndexes parents;
-    long parentBuildNs = elapsedNs({ parents.build(document.data); });
+    long parentBuildNs = elapsedNs(() { parents.build(document.data); });
 
     long layoutBuildNs;
     size_t ownedBytes;
@@ -910,7 +911,7 @@ int main(string[] args)
         OwnedDataset moved = document.data;
         document.data = OwnedDataset.init;
 
-        layoutBuildNs = elapsedNs({ reference = new ReferenceStore(moved); });
+        layoutBuildNs = elapsedNs(() { reference = new ReferenceStore(moved); });
         ownedBytes = reference.estimatedOwnedBytes + parents.logicalBytes;
 
         document = PbfDocument.init;
@@ -928,7 +929,7 @@ int main(string[] args)
     else
     {
         StoreStatus status;
-        layoutBuildNs = elapsedNs({
+        layoutBuildNs = elapsedNs(() {
             if (!OsmStore.build(document.data, compact, status))
             {
                 stderr.writefln(
