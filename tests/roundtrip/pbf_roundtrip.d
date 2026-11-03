@@ -139,8 +139,33 @@ private bool roundTrip(
     return true;
 }
 
+private bool malformedRetentionSelfTest()
+{
+    // BlobHeader length=1 followed by a truncated protobuf varint.
+    const(ubyte)[] malformed = [0x00, 0x00, 0x00, 0x01, 0x80];
+
+    PbfDocument document;
+    PbfReadStatus status;
+    if (readPbfDocument(malformed, document, status))
+    {
+        stderr.writeln("malformed input unexpectedly decoded");
+        return false;
+    }
+
+    if (document.preservation.source.bytes != malformed)
+    {
+        stderr.writeln("malformed input raw-source retention mismatch");
+        return false;
+    }
+
+    return true;
+}
+
 private int selfTest()
 {
+    if (!malformedRetentionSelfTest())
+        return 1;
+
     auto source = makeEdgeDocument();
 
     ubyte[] encoded;
