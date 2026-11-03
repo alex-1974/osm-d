@@ -70,9 +70,34 @@ struct PbfHeader
     /** Duplicate mutable feature arrays; immutable byte strings may share. */
     PbfHeader deepCopy() const @safe
     {
-        PbfHeader result = this;
-        result.requiredFeatures = requiredFeatures.dup;
-        result.optionalFeatures = optionalFeatures.dup;
+        PbfHeader result;
+        result.hasBBox = hasBBox;
+        if (hasBBox)
+        {
+            result.bbox.left = bbox.left;
+            result.bbox.right = bbox.right;
+            result.bbox.top = bbox.top;
+            result.bbox.bottom = bbox.bottom;
+        }
+
+        result.requiredFeatures.length = requiredFeatures.length;
+        foreach (i, value; requiredFeatures)
+            result.requiredFeatures[i] = value;
+
+        result.optionalFeatures.length = optionalFeatures.length;
+        foreach (i, value; optionalFeatures)
+            result.optionalFeatures[i] = value;
+
+        result.hasWritingProgram = hasWritingProgram;
+        result.writingProgram = writingProgram;
+        result.hasSource = hasSource;
+        result.source = source;
+        result.hasReplicationTimestamp = hasReplicationTimestamp;
+        result.replicationTimestamp = replicationTimestamp;
+        result.hasReplicationSequenceNumber = hasReplicationSequenceNumber;
+        result.replicationSequenceNumber = replicationSequenceNumber;
+        result.hasReplicationBaseUrl = hasReplicationBaseUrl;
+        result.replicationBaseUrl = replicationBaseUrl;
         return result;
     }
 }
@@ -102,9 +127,13 @@ struct PbfDocument
     /** Duplicate all mutable semantic/header arrays. */
     PbfDocument deepCopy() const @safe
     {
-        PbfDocument result = this;
+        PbfDocument result;
         result.header = header.deepCopy();
         result.data = data.deepCopy();
+        result.preservation.source.bytes = preservation.source.bytes;
+        result.preservation.reason = preservation.reason;
+        result.preservation.firstSensitiveOffset =
+            preservation.firstSensitiveOffset;
         return result;
     }
 }
