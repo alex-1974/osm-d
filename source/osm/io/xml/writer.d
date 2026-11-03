@@ -167,6 +167,11 @@ bool writeCore(
             : "osm-d";
         xml.writeAttr("generator", encodeAttr(generator));
 
+        if (info.hasUploadPolicy)
+            xml.writeAttr(
+                "upload",
+                encodeAttr(cast(string) info.uploadPolicy));
+
         if (info.hasCopyright)
             xml.writeAttr(
                 "copyright",
