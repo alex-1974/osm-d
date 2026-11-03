@@ -508,6 +508,25 @@ private struct StringPool
         count = 1;
     }
 
+    void prepare(size_t maximumEntries, size_t maximumBytes) @safe
+    {
+        if (entries.length == 0)
+            initialize();
+
+        entries.reserve(maximumEntries + 1);
+        bytes.reserve(maximumBytes);
+
+        size_t capacity = 16;
+        while (capacity * 7 < (maximumEntries + 1) * 10)
+            capacity *= 2;
+
+        if (capacity > buckets.length)
+        {
+            buckets = new uint[capacity];
+            count = entries.length;
+        }
+    }
+
     uint intern(scope const(ubyte)[] value) @safe
     {
         if (entries.length == 0)
@@ -603,6 +622,18 @@ private struct IdIndex
             return;
         keys.length = 16;
         values.length = 16;
+    }
+
+    void prepare(size_t expectedEntries) @safe
+    {
+        size_t capacity = 16;
+        while (capacity * 7 < expectedEntries * 10)
+            capacity *= 2;
+
+        keys = new OsmId[capacity];
+        values = new uint[capacity];
+        count = 0;
+        deleted = 0;
     }
 
     bool find(OsmId id, out uint slot) const @safe nothrow @nogc
@@ -732,6 +763,17 @@ private struct MetadataColumns
     uint[] usernames;
     ubyte[] visible;
 
+    void reserve(size_t count) @safe
+    {
+        flags.reserve(count);
+        versions.reserve(count);
+        timestamps.reserve(count);
+        changesets.reserve(count);
+        userIds.reserve(count);
+        usernames.reserve(count);
+        visible.reserve(count);
+    }
+
     void append(scope ref const OwnedMetadata value, ref StringPool strings)
         @safe
     {
@@ -834,6 +876,16 @@ private struct CommonColumns
     Span32[] tags;
     MetadataColumns metadata;
 
+    void reserve(size_t count) @safe
+    {
+        ids.reserve(count);
+        states.reserve(count);
+        deletedFrom.reserve(count);
+        generations.reserve(count);
+        tags.reserve(count);
+        metadata.reserve(count);
+    }
+
     void append(
         OsmId id,
         StoreElementState state,
@@ -895,6 +947,77 @@ private bool sameBytes(
             return false;
     }
     return true;
+}
+
+private struct BuildPlan
+{
+    size_t nodes;
+    size_t ways;
+    size_t relations;
+    size_t tags;
+    size_t wayRefs;
+    size_t wayLocations;
+    size_t relationMembers;
+    size_t stringOccurrences;
+    size_t stringBytes;
+}
+
+private BuildPlan makeBuildPlan(scope ref const OwnedDataset data)
+    @safe pure nothrow @nogc
+{
+    BuildPlan plan;
+    plan.nodes = data.nodes.length;
+    plan.ways = data.ways.length;
+    plan.relations = data.relations.length;
+
+    foreach (ref const node; data.nodes)
+    {
+        plan.tags += node.tags.length;
+        plan.stringOccurrences += node.tags.length * 2;
+        foreach (ref const tag; node.tags)
+            plan.stringBytes += tag.key.length + tag.value.length;
+        if (node.metadata.hasUsername)
+        {
+            ++plan.stringOccurrences;
+            plan.stringBytes += node.metadata.username.length;
+        }
+    }
+
+    foreach (ref const way; data.ways)
+    {
+        plan.tags += way.tags.length;
+        plan.wayRefs += way.nodes.length;
+        plan.stringOccurrences += way.tags.length * 2;
+        foreach (ref const tag; way.tags)
+            plan.stringBytes += tag.key.length + tag.value.length;
+        foreach (ref const node; way.nodes)
+            if (node.hasLocation)
+                ++plan.wayLocations;
+        if (way.metadata.hasUsername)
+        {
+            ++plan.stringOccurrences;
+            plan.stringBytes += way.metadata.username.length;
+        }
+    }
+
+    foreach (ref const relation; data.relations)
+    {
+        plan.tags += relation.tags.length;
+        plan.relationMembers += relation.members.length;
+        plan.stringOccurrences +=
+            relation.tags.length * 2 + relation.members.length;
+        foreach (ref const tag; relation.tags)
+            plan.stringBytes += tag.key.length + tag.value.length;
+        foreach (ref const member; relation.members)
+            plan.stringBytes += member.role.length;
+        if (relation.metadata.hasUsername)
+        {
+            ++plan.stringOccurrences;
+            plan.stringBytes += relation.metadata.username.length;
+        }
+    }
+
+    return plan;
 }
 
 /**
@@ -1073,6 +1196,9 @@ public:
         status = StoreStatus.init;
 
         auto candidate = new OsmStore();
+        const plan = makeBuildPlan(data);
+        candidate.prepareForBuild(plan);
+
         OsmHandle ignored;
 
         foreach (ref const value; data.nodes)
@@ -1707,6 +1833,33 @@ public:
     }
 
 private:
+    void prepareForBuild(scope ref const BuildPlan plan) @safe
+    {
+        _strings.prepare(plan.stringOccurrences, plan.stringBytes);
+
+        _nodes.reserve(plan.nodes);
+        _nodeLatitudes.reserve(plan.nodes);
+        _nodeLongitudes.reserve(plan.nodes);
+
+        _ways.reserve(plan.ways);
+        _wayRefs.reserve(plan.ways);
+        _wayLocationSpans.reserve(plan.ways);
+
+        _relations.reserve(plan.relations);
+        _relationMembers.reserve(plan.relations);
+
+        _tags.reserve(plan.tags);
+        _wayRefIds.reserve(plan.wayRefs);
+        _wayLocations.reserve(plan.wayLocations);
+        _relationMemberIds.reserve(plan.relationMembers);
+        _relationMemberRoles.reserve(plan.relationMembers);
+        _relationMemberTypes.reserve(plan.relationMembers);
+
+        _nodeIndex.prepare(plan.nodes);
+        _wayIndex.prepare(plan.ways);
+        _relationIndex.prepare(plan.relations);
+    }
+
     Span32 _lastWayLocationSpan;
 
     @property Span32 lastWayLocationSpan() const @safe pure nothrow @nogc
