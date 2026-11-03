@@ -1545,6 +1545,8 @@ unittest // representative OSM XML fixture
     assert(cast(string) document.info.versionText == "0.6");
     assert(document.info.hasGenerator);
     assert(cast(string) document.info.generator == "JOSM");
+    assert(document.info.hasUploadPolicy);
+    assert(cast(string) document.info.uploadPolicy == "never");
     assert(document.info.bounds.length == 1);
     assert(document.info.bounds[0].minimum.latitudeNanodegrees ==
         48_200_000_000L);
