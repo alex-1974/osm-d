@@ -41,7 +41,7 @@ import osm.view.element : ElementType, OsmId;
 import std.conv : to;
 import std.datetime.systime : SysTime;
 import std.datetime.timezone : UTC;
-import std.utf : UnicodeException;
+import std.utf : UTFException;
 import transport.source :
     ByteSink,
     WriteError;
@@ -184,7 +184,7 @@ struct OsmXmlWriter
             status.error = OsmXmlWriteError.invalidText;
             return false;
         }
-        catch (UnicodeException)
+        catch (UTFException)
         {
             status.error = OsmXmlWriteError.invalidText;
             return false;
