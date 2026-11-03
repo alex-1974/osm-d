@@ -264,12 +264,12 @@ private final class ReferenceStore
     this(OwnedDataset source) @safe
     {
         data = source;
-        foreach (uint i, ref const value; data.nodes)
-            nodeIndex[value.id] = i;
-        foreach (uint i, ref const value; data.ways)
-            wayIndex[value.id] = i;
-        foreach (uint i, ref const value; data.relations)
-            relationIndex[value.id] = i;
+        foreach (i, ref const value; data.nodes)
+            nodeIndex[value.id] = cast(uint)i;
+        foreach (i, ref const value; data.ways)
+            wayIndex[value.id] = cast(uint)i;
+        foreach (i, ref const value; data.relations)
+            relationIndex[value.id] = cast(uint)i;
     }
 
     bool find(ElementType type, OsmId id, out uint slot) @safe nothrow
@@ -545,7 +545,7 @@ private OsmId[] makeQueries(scope const(OsmId)[] existing, size_t count) @safe
     return result;
 }
 
-private long elapsedNs(void delegate() @safe operation) @safe
+private long elapsedNs(void delegate() operation) @trusted
 {
     StopWatch sw = StopWatch(AutoStart.yes);
     operation();
@@ -777,7 +777,7 @@ private size_t ownedDatasetBytes(scope ref const OwnedDataset data)
     return result;
 }
 
-private size_t currentRssKiB() @safe
+private size_t currentRssKiB() @trusted
 {
     auto status = File("/proc/self/status", "r");
     foreach (line; status.byLine())
@@ -796,7 +796,7 @@ private size_t currentRssKiB() @safe
     return 0;
 }
 
-private size_t peakRssKiB() @safe
+private size_t peakRssKiB() @trusted
 {
     auto status = File("/proc/self/status", "r");
     foreach (line; status.byLine())
