@@ -355,6 +355,44 @@ invent a missing version or changeset on deletes. Whether an otherwise
 representable change is valid for an OSM API upload is a stronger validation
 contract handled separately by the modification-validation layer.
 
+## Upload validation
+
+Parsing and upload readiness are separate contracts. Use `osm.validate` when
+an `OwnedChangeSequence` is intended for an OSM API-style upload:
+
+```d
+import osm.validate;
+
+CapabilityProfile target;
+target.maximumWayNodes = 2_000; // supply values from target-server policy
+
+UploadValidationIssue issue;
+if (!validateUploadChanges(changes, target, issue))
+{
+    // issue identifies the first invalid entry and, when relevant,
+    // the offending tag/reference/member.
+}
+```
+
+The validator checks complete create/modify state, signed ID policy, required
+changeset/version metadata, exact 1e-7 upload coordinate precision, tag
+UTF-8/length/duplicate-key rules, target capability limits, and dependency-safe
+negative placeholder references. It validates the supplied order; it does not
+silently reorder or repair a sequence.
+
+Positive references need not resolve in the local sequence. Negative/local
+references must resolve to an earlier create entry of the correct element type.
+The validator uses a temporary hash index proportional to the number of created
+placeholders. The changeset element capability applies to the supplied
+sequence/request; a caller spanning one changeset across several requests must
+also account for prior uploads.
+
+Editor qualification uses independently authored JOSM-/iD-compatible fixtures.
+They are semantic compatibility fixtures, not claimed byte-for-byte exports
+from either editor. XML whitespace, quote style, attribute order, action-group
+layout, and writer generator strings may legitimately differ after a round
+trip.
+
 ## Status
 
 The first substantial PBF implementation slice is in place. Implemented
@@ -391,9 +429,10 @@ behind one concrete semantic `NodeView`. Bounded block-parallel validation and
 summary decoding are implemented through `PbfParallelReader`; generic ordered
 parallel delivery of worker-borrowed element views is intentionally not part of
 Phase 3 (ADR 0017). Loss-aware PBF writing, ordinary streaming OSM XML,
-and streaming osmChange read/write support are now implemented. Complete edit
-validation/editor interoperability qualification and the compact editable store
-remain future work.
+streaming osmChange read/write support, and deterministic upload validation are
+now implemented. Editor interoperability is backed by semantic compatibility
+fixtures; literal JOSM-export provenance remains a separate evidence claim.
+The compact editable store remains future work.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package now use
