@@ -122,6 +122,56 @@ struct OsmXmlWriter
     }
 }
 
+
+package(osm):
+
+bool semanticXmlValidLocation(long lat, long lon)
+    @safe pure nothrow @nogc
+{
+    return validLocation(lat, lon);
+}
+
+void writeSemanticXmlNode(W)(
+    ref W xml,
+    ref const OwnedNode node,
+    ref OsmXmlWriteStatus status)
+{
+    writeNode(xml, node, status);
+}
+
+void writeSemanticXmlWay(W)(
+    ref W xml,
+    ref const OwnedWay way,
+    ref OsmXmlWriteStatus status)
+{
+    writeWay(xml, way, status);
+}
+
+void writeSemanticXmlRelation(W)(
+    ref W xml,
+    ref const OwnedRelation relation,
+    ref OsmXmlWriteStatus status)
+{
+    writeRelation(xml, relation, status);
+}
+
+void writeSemanticXmlMetadata(W)(
+    ref W xml,
+    ref const OwnedMetadata metadata)
+{
+    writeMetadata(xml, metadata);
+}
+
+string formatSemanticXmlNanodegrees(long value) @safe
+{
+    return formatNanodegrees(value);
+}
+
+string formatSemanticXmlTimestampMilliseconds(long value) @safe
+{
+    return formatTimestampMilliseconds(value);
+}
+
 private:
 
 bool writeCore(

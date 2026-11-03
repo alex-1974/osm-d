@@ -1,0 +1,8 @@
+name "osm-d-osmchange-consumer"
+description "External consumer compile probe for osm-d osmChange API"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../../.."

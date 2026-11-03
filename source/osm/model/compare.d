@@ -17,6 +17,10 @@
 module osm.model.compare;
 
 import osm.io.pbf.document : PbfDocument, PbfHeader;
+import osm.model.change :
+    ChangeObjectState,
+    OwnedChangeEntry,
+    OwnedChangeSequence;
 import osm.model.owned :
     OwnedDataset,
     OwnedMetadata,
@@ -203,6 +207,99 @@ bool sameOsmSemantics(
     foreach (i; 0 .. a.relations.length)
         if (!sameRelation(a.relations[i], b.relations[i]))
             return false;
+
+    return true;
+}
+
+/** Compare ordered format-independent OSM change semantics exactly. */
+bool sameChangeSemantics(
+    ref const OwnedChangeSequence a,
+    ref const OwnedChangeSequence b)
+    @safe pure nothrow @nogc
+{
+    if (a.entries.length != b.entries.length)
+        return false;
+
+    foreach (i; 0 .. a.entries.length)
+    {
+        ref const left = a.entries[i];
+        ref const right = b.entries[i];
+
+        if (left.action != right.action ||
+            left.type != right.type ||
+            left.objectState != right.objectState ||
+            left.deleteIfUnused != right.deleteIfUnused ||
+            left.id != right.id ||
+            !sameMetadata(left.metadata, right.metadata))
+        {
+            return false;
+        }
+
+        if (left.objectState == ChangeObjectState.identityOnly)
+            continue;
+
+        final switch (left.type)
+        {
+            case ElementType.node:
+                if (left.location.latitudeNanodegrees !=
+                        right.location.latitudeNanodegrees ||
+                    left.location.longitudeNanodegrees !=
+                        right.location.longitudeNanodegrees ||
+                    !sameTags(left.tags, right.tags))
+                {
+                    return false;
+                }
+                break;
+
+            case ElementType.way:
+                if (!sameTags(left.tags, right.tags) ||
+                    left.wayNodes.length != right.wayNodes.length)
+                {
+                    return false;
+                }
+
+                foreach (j; 0 .. left.wayNodes.length)
+                {
+                    ref const ln = left.wayNodes[j];
+                    ref const rn = right.wayNodes[j];
+                    if (ln.id != rn.id ||
+                        ln.hasLocation != rn.hasLocation)
+                    {
+                        return false;
+                    }
+                    if (ln.hasLocation &&
+                        (ln.location.latitudeNanodegrees !=
+                            rn.location.latitudeNanodegrees ||
+                         ln.location.longitudeNanodegrees !=
+                            rn.location.longitudeNanodegrees))
+                    {
+                        return false;
+                    }
+                }
+                break;
+
+            case ElementType.relation:
+                if (!sameTags(left.tags, right.tags) ||
+                    left.relationMembers.length !=
+                        right.relationMembers.length)
+                {
+                    return false;
+                }
+
+                foreach (j; 0 .. left.relationMembers.length)
+                {
+                    ref const lm = left.relationMembers[j];
+                    ref const rm = right.relationMembers[j];
+                    if (lm.type != rm.type ||
+                        lm.id != rm.id ||
+                        lm.role != rm.role)
+                    {
+                        return false;
+                    }
+                }
+                break;
+        }
+    }
 
     return true;
 }
