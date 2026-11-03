@@ -348,6 +348,18 @@ struct StoreRelationView
     StoreElementState state;
 }
 
+package(osm) struct KnownWayRefRewrite
+{
+    OsmHandle parent;
+    uint index;
+}
+
+package(osm) struct KnownRelationMemberRewrite
+{
+    OsmHandle parent;
+    uint index;
+}
+
 /** Deterministic live Node range in slot/insertion order. */
 struct StoreNodeRange
 {
@@ -1390,6 +1402,211 @@ public:
         return true;
     }
 
+    /**
+     * Revert one edited loaded element to its lazy baseline.
+     *
+     * Reverting a still-local created element cancels it by tombstoning it.
+     */
+    bool revert(OsmHandle handle, out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        if (!validateHandle(handle, status))
+            return false;
+
+        if (stateAt(handle) == StoreElementState.clean)
+            return true;
+
+        if (stateAt(handle) == StoreElementState.created)
+            return remove(handle, status);
+
+        if (stateAt(handle) == StoreElementState.deleted)
+        {
+            final switch (handle.type)
+            {
+                case ElementType.node:
+                    if (_nodes.deletedFrom[handle._slot] ==
+                        StoreElementState.created)
+                        return true;
+                    break;
+                case ElementType.way:
+                    if (_ways.deletedFrom[handle._slot] ==
+                        StoreElementState.created)
+                        return true;
+                    break;
+                case ElementType.relation:
+                    if (_relations.deletedFrom[handle._slot] ==
+                        StoreElementState.created)
+                        return true;
+                    break;
+            }
+
+            if (!restore(handle, status))
+                return false;
+        }
+
+        final switch (handle.type)
+        {
+            case ElementType.node:
+                if (auto baseline = handle._slot in _nodeBaselines)
+                {
+                    const saved = baseline.deepCopy();
+                    if (!replace(handle, saved, status))
+                        return false;
+                    _nodes.states[handle._slot] = StoreElementState.clean;
+                    _nodeBaselines.remove(handle._slot);
+                }
+                break;
+
+            case ElementType.way:
+                if (auto baseline = handle._slot in _wayBaselines)
+                {
+                    const saved = baseline.deepCopy();
+                    if (!replace(handle, saved, status))
+                        return false;
+                    _ways.states[handle._slot] = StoreElementState.clean;
+                    _wayBaselines.remove(handle._slot);
+                }
+                break;
+
+            case ElementType.relation:
+                if (auto baseline = handle._slot in _relationBaselines)
+                {
+                    const saved = baseline.deepCopy();
+                    if (!replace(handle, saved, status))
+                        return false;
+                    _relations.states[handle._slot] = StoreElementState.clean;
+                    _relationBaselines.remove(handle._slot);
+                }
+                break;
+        }
+
+        return true;
+    }
+
+    /**
+     * Apply an authoritative local-ID mapping when inbound locations are known.
+     *
+     * This is package-internal layout machinery for #62 qualification. The
+     * public #63 operation will discover these inbound locations through the
+     * production parent indexes rather than asking a caller to provide them.
+     */
+    package(osm) bool remapKnown(
+        OsmHandle handle,
+        OsmId newId,
+        int newVersion,
+        scope const(KnownWayRefRewrite)[] wayRefs,
+        scope const(KnownRelationMemberRewrite)[] relationMembers,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        if (!validateLiveHandle(handle, handle.type, status))
+            return false;
+
+        const oldId = idAt(handle);
+        status.type = handle.type;
+        status.id = oldId;
+
+        if (oldId >= 0 || newId <= 0)
+        {
+            status.error = StoreError.invalidId;
+            return false;
+        }
+
+        OsmHandle duplicate;
+        if (find(handle.type, newId, duplicate))
+        {
+            status.error = StoreError.duplicateId;
+            status.id = newId;
+            return false;
+        }
+
+        foreach (ref const rewrite; wayRefs)
+        {
+            StoreStatus parentStatus;
+            if (!validateLiveHandle(
+                    rewrite.parent, ElementType.way, parentStatus))
+            {
+                status = parentStatus;
+                return false;
+            }
+
+            const span = _wayRefs[rewrite.parent._slot];
+            if (rewrite.index >= span.length ||
+                _wayRefIds[span.offset + rewrite.index] != oldId ||
+                handle.type != ElementType.node)
+            {
+                status.error = StoreError.invalidHandle;
+                return false;
+            }
+        }
+
+        foreach (ref const rewrite; relationMembers)
+        {
+            StoreStatus parentStatus;
+            if (!validateLiveHandle(
+                    rewrite.parent, ElementType.relation, parentStatus))
+            {
+                status = parentStatus;
+                return false;
+            }
+
+            const span = _relationMembers[rewrite.parent._slot];
+            if (rewrite.index >= span.length)
+            {
+                status.error = StoreError.invalidHandle;
+                return false;
+            }
+
+            const i = span.offset + rewrite.index;
+            if (_relationMemberIds[i] != oldId ||
+                cast(ElementType)_relationMemberTypes[i] != handle.type)
+            {
+                status.error = StoreError.invalidHandle;
+                return false;
+            }
+        }
+
+        final switch (handle.type)
+        {
+            case ElementType.node:
+                assert(_nodeIndex.insert(newId, handle._slot));
+                assert(_nodeIndex.remove(oldId));
+                _nodes.ids[handle._slot] = newId;
+                setAuthoritativeVersion(_nodes, handle._slot, newVersion);
+                _nodes.states[handle._slot] = StoreElementState.clean;
+                break;
+            case ElementType.way:
+                assert(_wayIndex.insert(newId, handle._slot));
+                assert(_wayIndex.remove(oldId));
+                _ways.ids[handle._slot] = newId;
+                setAuthoritativeVersion(_ways, handle._slot, newVersion);
+                _ways.states[handle._slot] = StoreElementState.clean;
+                break;
+            case ElementType.relation:
+                assert(_relationIndex.insert(newId, handle._slot));
+                assert(_relationIndex.remove(oldId));
+                _relations.ids[handle._slot] = newId;
+                setAuthoritativeVersion(
+                    _relations, handle._slot, newVersion);
+                _relations.states[handle._slot] = StoreElementState.clean;
+                break;
+        }
+
+        foreach (ref const rewrite; wayRefs)
+        {
+            const span = _wayRefs[rewrite.parent._slot];
+            _wayRefIds[span.offset + rewrite.index] = newId;
+        }
+
+        foreach (ref const rewrite; relationMembers)
+        {
+            const span = _relationMembers[rewrite.parent._slot];
+            _relationMemberIds[span.offset + rewrite.index] = newId;
+        }
+
+        return true;
+    }
+
     /** Deterministic live Node iteration. */
     @property StoreNodeRange nodes() @safe nothrow @nogc
     {
@@ -1851,6 +2068,15 @@ private:
     {
         if (columns.states[slot] == StoreElementState.clean)
             columns.states[slot] = StoreElementState.modified;
+    }
+
+    static void setAuthoritativeVersion(
+        ref CommonColumns columns,
+        uint slot,
+        int versionNumber) @safe nothrow @nogc
+    {
+        columns.metadata.flags[slot] |= 1;
+        columns.metadata.versions[slot] = versionNumber;
     }
 
     bool validateHandle(
