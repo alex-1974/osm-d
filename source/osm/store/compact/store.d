@@ -17,6 +17,9 @@
 module osm.store.compact.store;
 
 import core.atomic : atomicOp;
+import core.exception : onArrayIndexError, onArraySliceError, onOutOfMemoryError;
+import core.stdc.stdlib : free, realloc;
+import core.stdc.string : memcpy;
 import osm.model.owned :
     OwnedBytes,
     OwnedDataset,
@@ -29,6 +32,166 @@ import osm.model.owned :
     OwnedWayNode;
 import osm.view.element : ElementType, OsmId;
 import osm.view.location : LocationView;
+
+
+/**
+ * Small internal owner for trivially-copyable store columns.
+ *
+ * Allocation and pointer arithmetic are confined here. Public store methods
+ * remain @safe and expose only bounds-checked values or borrowed slices whose
+ * invalidation follows the documented store mutation contract.
+ */
+private struct ManualArray(T)
+{
+private:
+    T* _ptr;
+    size_t _length;
+    size_t _capacity;
+
+public:
+    @disable this(this);
+
+    ~this() @trusted nothrow @nogc
+    {
+        if (_ptr !is null)
+            free(_ptr);
+        _ptr = null;
+        _length = 0;
+        _capacity = 0;
+    }
+
+    @property size_t length() const @safe pure nothrow @nogc
+    {
+        return _length;
+    }
+
+    @property void length(size_t value) @trusted
+    {
+        if (value > _capacity)
+            reserve(value);
+
+        foreach (i; _length .. value)
+            _ptr[i] = T.init;
+
+        _length = value;
+    }
+
+    void reserve(size_t requested) @trusted
+    {
+        if (requested <= _capacity)
+            return;
+
+        if (T.sizeof != 0 && requested > size_t.max / T.sizeof)
+            onOutOfMemoryError();
+
+        auto memory = realloc(
+            cast(void*)_ptr,
+            requested * T.sizeof);
+        if (memory is null)
+            onOutOfMemoryError();
+
+        _ptr = cast(T*)memory;
+        _capacity = requested;
+    }
+
+    void append(T value) @trusted
+    {
+        ensureAppendCapacity(1);
+        _ptr[_length++] = value;
+    }
+
+    void append(scope const(T)[] values) @trusted
+    {
+        if (values.length == 0)
+            return;
+
+        ensureAppendCapacity(values.length);
+        memcpy(
+            cast(void*)(_ptr + _length),
+            cast(const(void)*)values.ptr,
+            values.length * T.sizeof);
+        _length += values.length;
+    }
+
+    ref ManualArray opOpAssign(string op : "~")(T value) @trusted
+    {
+        append(value);
+        return this;
+    }
+
+    ref ManualArray opOpAssign(string op : "~")(scope const(T)[] values)
+        @trusted
+    {
+        append(values);
+        return this;
+    }
+
+    ref T opIndex(size_t index) @trusted
+    {
+        if (index >= _length)
+            onArrayIndexError(index, _length);
+        return _ptr[index];
+    }
+
+    ref const(T) opIndex(size_t index) const @trusted
+    {
+        if (index >= _length)
+            onArrayIndexError(index, _length);
+        return _ptr[index];
+    }
+
+    T[] opSlice(size_t lower, size_t upper) @trusted
+    {
+        if (lower > upper || upper > _length)
+            onArraySliceError(lower, upper, _length);
+        return _ptr[lower .. upper];
+    }
+
+    const(T)[] opSlice(size_t lower, size_t upper) const @trusted
+    {
+        if (lower > upper || upper > _length)
+            onArraySliceError(lower, upper, _length);
+        return _ptr[lower .. upper];
+    }
+
+    void swap(ref ManualArray other) @trusted nothrow @nogc
+    {
+        auto p = _ptr;
+        _ptr = other._ptr;
+        other._ptr = p;
+
+        auto n = _length;
+        _length = other._length;
+        other._length = n;
+
+        auto cap = _capacity;
+        _capacity = other._capacity;
+        other._capacity = cap;
+    }
+
+private:
+    void ensureAppendCapacity(size_t additional) @trusted
+    {
+        if (additional > size_t.max - _length)
+            onOutOfMemoryError();
+
+        const required = _length + additional;
+        if (required <= _capacity)
+            return;
+
+        size_t next = _capacity == 0 ? 16 : _capacity;
+        while (next < required)
+        {
+            if (next > size_t.max / 2)
+            {
+                next = required;
+                break;
+            }
+            next *= 2;
+        }
+        reserve(next);
+    }
+}
 
 /** Lifecycle state retained by the editable store. */
 enum StoreElementState : ubyte
@@ -494,9 +657,9 @@ private struct StringEntry
 
 private struct StringPool
 {
-    ubyte[] bytes;
-    StringEntry[] entries;
-    uint[] buckets;
+    ManualArray!ubyte bytes;
+    ManualArray!StringEntry entries;
+    ManualArray!uint buckets;
     size_t count;
 
     void initialize() @safe
@@ -522,7 +685,9 @@ private struct StringPool
 
         if (capacity > buckets.length)
         {
-            buckets = new uint[capacity];
+            ManualArray!uint replacement;
+            replacement.length = capacity;
+            buckets.swap(replacement);
             count = entries.length;
         }
     }
@@ -582,23 +747,21 @@ private struct StringPool
         while (capacity < requested)
             capacity *= 2;
 
-        auto oldEntries = entries;
-        auto oldBytes = bytes;
-
-        buckets = new uint[capacity];
-        entries = oldEntries;
-        bytes = oldBytes;
+        ManualArray!uint replacement;
+        replacement.length = capacity;
 
         foreach (uint id; 1 .. cast(uint)entries.length)
         {
             const value = get(id);
             const hash = hashBytes(value);
-            size_t mask = buckets.length - 1;
+            size_t mask = replacement.length - 1;
             size_t pos = cast(size_t)hash & mask;
-            while (buckets[pos] != 0)
+            while (replacement[pos] != 0)
                 pos = (pos + 1) & mask;
-            buckets[pos] = id + 1;
+            replacement[pos] = id + 1;
         }
+
+        buckets.swap(replacement);
     }
 
     @property size_t logicalBytes() const @safe pure nothrow @nogc
@@ -611,8 +774,8 @@ private struct StringPool
 
 private struct IdIndex
 {
-    OsmId[] keys;
-    uint[] values;
+    ManualArray!OsmId keys;
+    ManualArray!uint values;
     size_t count;
     size_t deleted;
 
@@ -630,8 +793,12 @@ private struct IdIndex
         while (capacity * 7 < expectedEntries * 10)
             capacity *= 2;
 
-        keys = new OsmId[capacity];
-        values = new uint[capacity];
+        ManualArray!OsmId newKeys;
+        ManualArray!uint newValues;
+        newKeys.length = capacity;
+        newValues.length = capacity;
+        keys.swap(newKeys);
+        values.swap(newValues);
         count = 0;
         deleted = 0;
     }
@@ -731,20 +898,33 @@ private struct IdIndex
         while (capacity < requested)
             capacity *= 2;
 
-        auto oldKeys = keys;
-        auto oldValues = values;
+        ManualArray!OsmId newKeys;
+        ManualArray!uint newValues;
+        newKeys.length = capacity;
+        newValues.length = capacity;
 
-        keys = new OsmId[capacity];
-        values = new uint[capacity];
-        count = 0;
-        deleted = 0;
-
-        foreach (i, encoded; oldValues)
+        size_t liveCount;
+        foreach (i; 0 .. values.length)
         {
+            const encoded = values[i];
             if (encoded == 0 || encoded == uint.max)
                 continue;
-            insert(oldKeys[i], encoded - 1);
+
+            const id = keys[i];
+            size_t mask = newValues.length - 1;
+            size_t pos = cast(size_t)hashId(id) & mask;
+            while (newValues[pos] != 0)
+                pos = (pos + 1) & mask;
+
+            newKeys[pos] = id;
+            newValues[pos] = encoded;
+            ++liveCount;
         }
+
+        keys.swap(newKeys);
+        values.swap(newValues);
+        count = liveCount;
+        deleted = 0;
     }
 
     @property size_t logicalBytes() const @safe pure nothrow @nogc
@@ -755,13 +935,13 @@ private struct IdIndex
 
 private struct MetadataColumns
 {
-    ubyte[] flags;
-    int[] versions;
-    long[] timestamps;
-    long[] changesets;
-    int[] userIds;
-    uint[] usernames;
-    ubyte[] visible;
+    ManualArray!ubyte flags;
+    ManualArray!int versions;
+    ManualArray!long timestamps;
+    ManualArray!long changesets;
+    ManualArray!int userIds;
+    ManualArray!uint usernames;
+    ManualArray!ubyte visible;
 
     void reserve(size_t count) @safe
     {
@@ -869,11 +1049,11 @@ private struct MetadataColumns
 
 private struct CommonColumns
 {
-    OsmId[] ids;
-    StoreElementState[] states;
-    StoreElementState[] deletedFrom;
-    uint[] generations;
-    Span32[] tags;
+    ManualArray!OsmId ids;
+    ManualArray!StoreElementState states;
+    ManualArray!StoreElementState deletedFrom;
+    ManualArray!uint generations;
+    ManualArray!Span32 tags;
     MetadataColumns metadata;
 
     void reserve(size_t count) @safe
@@ -1039,22 +1219,22 @@ private:
     StringPool _strings;
 
     CommonColumns _nodes;
-    long[] _nodeLatitudes;
-    long[] _nodeLongitudes;
+    ManualArray!long _nodeLatitudes;
+    ManualArray!long _nodeLongitudes;
 
     CommonColumns _ways;
-    Span32[] _wayRefs;
-    Span32[] _wayLocationSpans;
+    ManualArray!Span32 _wayRefs;
+    ManualArray!Span32 _wayLocationSpans;
 
     CommonColumns _relations;
-    Span32[] _relationMembers;
+    ManualArray!Span32 _relationMembers;
 
-    CompactTag[] _tags;
-    OsmId[] _wayRefIds;
-    SparseWayLocation[] _wayLocations;
-    OsmId[] _relationMemberIds;
-    uint[] _relationMemberRoles;
-    ubyte[] _relationMemberTypes;
+    ManualArray!CompactTag _tags;
+    ManualArray!OsmId _wayRefIds;
+    ManualArray!SparseWayLocation _wayLocations;
+    ManualArray!OsmId _relationMemberIds;
+    ManualArray!uint _relationMemberRoles;
+    ManualArray!ubyte _relationMemberTypes;
 
     IdIndex _nodeIndex;
     IdIndex _wayIndex;
