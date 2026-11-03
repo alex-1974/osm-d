@@ -39,7 +39,8 @@ import osm :
 
 import osm.store.compact.store :
     KnownRelationMemberRewrite,
-    KnownWayRefRewrite;
+    KnownWayRefRewrite,
+    ManualArray;
 
 import std.algorithm.sorting : sort;
 import std.datetime.stopwatch : AutoStart, StopWatch;
@@ -112,12 +113,12 @@ private ulong hashKey(ParentKey key) @safe pure nothrow @nogc
  */
 private struct PackedParentIndex
 {
-    ParentKey[] keys;
-    ParentSpan[] spans;
-    OsmId[] parents;
-    uint[] buckets;
+    ManualArray!ParentKey keys;
+    ManualArray!ParentSpan spans;
+    ManualArray!OsmId parents;
+    ManualArray!uint buckets;
 
-    void build(ParentEdge[] edges) @safe
+    void build(ref ManualArray!ParentEdge edges) @safe
     {
         if (edges.length == 0)
         {
@@ -131,7 +132,7 @@ private struct PackedParentIndex
             if (a.key.id != b.key.id)
                 return a.key.id < b.key.id;
             return a.parent < b.parent;
-        })(edges);
+        })(edges[]);
 
         size_t begin;
         while (begin < edges.length)
@@ -212,8 +213,8 @@ private struct ParentIndexes
 
     void build(scope ref const OwnedDataset data) @safe
     {
-        ParentEdge[] nodeWayEdges;
-        ParentEdge[] relationEdges;
+        ManualArray!ParentEdge nodeWayEdges;
+        ManualArray!ParentEdge relationEdges;
 
         foreach (ref const way; data.ways)
         {
@@ -237,6 +238,51 @@ private struct ParentIndexes
                 edge.parent = relation.id;
                 relationEdges ~= edge;
             }
+        }
+
+        nodeWays.build(nodeWayEdges);
+        elementRelations.build(relationEdges);
+    }
+
+
+    void build(OsmStore store) @safe
+    {
+        ManualArray!ParentEdge nodeWayEdges;
+        ManualArray!ParentEdge relationEdges;
+
+        auto ways = store.ways;
+        while (!ways.empty)
+        {
+            auto way = ways.front;
+            auto nodes = way.nodes;
+            while (!nodes.empty)
+            {
+                ParentEdge edge;
+                edge.key.type = ElementType.node;
+                edge.key.id = nodes.front.id;
+                edge.parent = way.id;
+                nodeWayEdges ~= edge;
+                nodes.popFront();
+            }
+            ways.popFront();
+        }
+
+        auto relations = store.relations;
+        while (!relations.empty)
+        {
+            auto relation = relations.front;
+            auto members = relation.members;
+            while (!members.empty)
+            {
+                const member = members.front;
+                ParentEdge edge;
+                edge.key.type = member.type;
+                edge.key.id = member.id;
+                edge.parent = relation.id;
+                relationEdges ~= edge;
+                members.popFront();
+            }
+            relations.popFront();
         }
 
         nodeWays.build(nodeWayEdges);
@@ -925,6 +971,59 @@ private void releaseDocument(ref PbfDocument document) @trusted
     document = PbfDocument.init;
 }
 
+
+private struct DirectStoreHandler
+{
+    OsmStore store;
+    StoreStatus status;
+    bool failed;
+
+    void node(Node)(scope ref Node value) @safe nothrow @nogc
+    {
+        if (!failed && !store.addBorrowedNode(value, status))
+            failed = true;
+    }
+
+    void way(Way)(scope ref Way value) @safe nothrow @nogc
+    {
+        if (!failed && !store.addBorrowedWay(value, status))
+            failed = true;
+    }
+
+    void relation(Relation)(scope ref Relation value) @safe nothrow @nogc
+    {
+        if (!failed && !store.addBorrowedRelation(value, status))
+            failed = true;
+    }
+}
+
+private long measureDirectStoreBuild(
+    scope const(ubyte)[] input,
+    out OsmStore store,
+    out PbfReadSummary summary,
+    out StoreStatus storeStatus) @safe
+{
+    store = new OsmStore();
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfReadStatus readStatus;
+    DirectStoreHandler handler;
+    handler.store = store;
+
+    const elapsed = elapsedNs(() {
+        if (!reader.read(input, workspace, handler, summary, readStatus))
+            throw new Exception("direct PBF reader failed");
+    });
+
+    storeStatus = handler.status;
+    if (handler.failed)
+        throw new Exception("borrowed store ingest failed");
+
+    // Reader scratch is not retained by the store.
+    workspace = PbfReaderWorkspace.init;
+    return elapsed;
+}
+
 private long measureSourceDecode(
     scope const(ubyte)[] input,
     out PbfDocument document) @safe
@@ -1014,6 +1113,64 @@ private EditSelection makeEditSelection(scope ref const OwnedDataset data) @safe
             result.relationMembers ~= relation.id;
         if (result.deleteRelations.length < 100)
             result.deleteRelations ~= relation.id;
+    }
+
+    assert(result.nodeTags.length == 3_000);
+    assert(result.wayTags.length == 800);
+    assert(result.relationTags.length == 200);
+    assert(result.nodeCoordinates.length == 2_000);
+    assert(result.wayReferences.length == 1_500);
+    assert(result.relationMembers.length == 500);
+    assert(result.deleteNodes.length == 200);
+    assert(result.deleteWays.length == 200);
+    assert(result.deleteRelations.length == 100);
+    return result;
+}
+
+
+private EditSelection makeEditSelection(OsmStore store) @safe nothrow @nogc
+{
+    EditSelection result;
+
+    auto nodes = store.nodes;
+    while (!nodes.empty)
+    {
+        const node = nodes.front;
+        if (result.nodeTags.length < 3_000)
+            result.nodeTags ~= node.id;
+        if (result.nodeCoordinates.length < 2_000)
+            result.nodeCoordinates ~= node.id;
+        if (result.deleteNodes.length < 200)
+            result.deleteNodes ~= node.id;
+        nodes.popFront();
+    }
+
+    auto ways = store.ways;
+    while (!ways.empty)
+    {
+        const way = ways.front;
+        if (result.wayTags.length < 800)
+            result.wayTags ~= way.id;
+        if (result.wayReferences.length < 1_500 &&
+            way.nodes.length >= 2)
+            result.wayReferences ~= way.id;
+        if (result.deleteWays.length < 200)
+            result.deleteWays ~= way.id;
+        ways.popFront();
+    }
+
+    auto relations = store.relations;
+    while (!relations.empty)
+    {
+        const relation = relations.front;
+        if (result.relationTags.length < 200)
+            result.relationTags ~= relation.id;
+        if (result.relationMembers.length < 500 &&
+            relation.members.length >= 2)
+            result.relationMembers ~= relation.id;
+        if (result.deleteRelations.length < 100)
+            result.deleteRelations ~= relation.id;
+        relations.popFront();
     }
 
     assert(result.nodeTags.length == 3_000);
