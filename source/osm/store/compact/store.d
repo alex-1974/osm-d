@@ -3767,3 +3767,239 @@ unittest
     members.popFront();
     assert(members.front.id == 101);
 }
+
+
+unittest
+{
+    // Parent navigation is typed, distinct by parent and works for unresolved
+    // positive targets in partial extracts.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = 1;
+    node.location = LocationView(1, 2);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = 10;
+    OwnedWayNode a;
+    a.id = 1;
+    way.nodes ~= a;
+    way.nodes ~= a;
+    OwnedWayNode missing;
+    missing.id = 999;
+    way.nodes ~= missing;
+
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation relation;
+    relation.id = 20;
+
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = 1;
+    relation.members ~= nodeMember;
+    relation.members ~= nodeMember;
+
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = 10;
+    relation.members ~= wayMember;
+
+    OwnedRelationMember missingRelation;
+    missingRelation.type = ElementType.relation;
+    missingRelation.id = 777;
+    relation.members ~= missingRelation;
+
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+
+    auto parentWays = store.parentWays(1);
+    assert(!parentWays.empty);
+    assert(parentWays.front.id == 10);
+    parentWays.popFront();
+    assert(parentWays.empty);
+
+    auto unresolvedWays = store.parentWays(999);
+    assert(!unresolvedWays.empty);
+    assert(unresolvedWays.front.id == 10);
+    unresolvedWays.popFront();
+    assert(unresolvedWays.empty);
+
+    auto nodeRelations =
+        store.parentRelations(ElementType.node, 1);
+    assert(!nodeRelations.empty);
+    assert(nodeRelations.front.id == 20);
+    nodeRelations.popFront();
+    assert(nodeRelations.empty);
+
+    auto wayRelations =
+        store.parentRelations(ElementType.way, 10);
+    assert(!wayRelations.empty);
+    assert(wayRelations.front.id == 20);
+
+    auto unresolvedRelations =
+        store.parentRelations(ElementType.relation, 777);
+    assert(!unresolvedRelations.empty);
+    assert(unresolvedRelations.front.id == 20);
+}
+
+unittest
+{
+    // Replace/delete/restore/revert keep reverse indexes coherent.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedWay way;
+    way.id = 10;
+    OwnedWayNode one;
+    one.id = 1;
+    way.nodes ~= one;
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+    assert(!store.parentWays(1).empty);
+
+    auto editedWay = way.deepCopy();
+    editedWay.nodes[0].id = 2;
+    assert(store.replace(wayHandle, editedWay, status));
+    assert(store.parentWays(1).empty);
+    assert(!store.parentWays(2).empty);
+
+    assert(store.remove(wayHandle, status));
+    assert(store.parentWays(2).empty);
+    assert(store.restore(wayHandle, status));
+    assert(!store.parentWays(2).empty);
+
+    assert(store.revert(wayHandle, status));
+    assert(!store.parentWays(1).empty);
+    assert(store.parentWays(2).empty);
+
+    OwnedRelation relation;
+    relation.id = 20;
+    OwnedRelationMember member;
+    member.type = ElementType.node;
+    member.id = 1;
+    relation.members ~= member;
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+    assert(!store.parentRelations(ElementType.node, 1).empty);
+
+    auto editedRelation = relation.deepCopy();
+    editedRelation.members[0].id = 3;
+    assert(store.replace(relationHandle, editedRelation, status));
+    assert(store.parentRelations(ElementType.node, 1).empty);
+    assert(!store.parentRelations(ElementType.node, 3).empty);
+
+    assert(store.remove(relationHandle, status));
+    assert(store.parentRelations(ElementType.node, 3).empty);
+    assert(store.restore(relationHandle, status));
+    assert(!store.parentRelations(ElementType.node, 3).empty);
+
+    assert(store.revert(relationHandle, status));
+    assert(!store.parentRelations(ElementType.node, 1).empty);
+    assert(store.parentRelations(ElementType.node, 3).empty);
+}
+
+unittest
+{
+    // Server remap discovers inbound occurrences itself, including current
+    // references held by tombstoned parents, while preserving stable handles.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(1, 2);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = -2;
+    OwnedWayNode nodeRef;
+    nodeRef.id = -1;
+    way.nodes ~= nodeRef;
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation relation;
+    relation.id = -3;
+
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = -1;
+    relation.members ~= nodeMember;
+
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    relation.members ~= wayMember;
+
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+
+    assert(store.remove(relationHandle, status));
+    assert(store.applyServerIdentity(nodeHandle, 101, 1, status));
+    assert(store.applyServerIdentity(wayHandle, 102, 1, status));
+
+    OsmHandle found;
+    assert(store.find(ElementType.node, 101, found));
+    assert(found == nodeHandle);
+    assert(store.find(ElementType.way, 102, found));
+    assert(found == wayHandle);
+
+    StoreWayView wayView;
+    assert(store.way(wayHandle, wayView, status));
+    assert(wayView.nodes.front.id == 101);
+    assert(!store.parentWays(101).empty);
+    assert(store.parentWays(-1).empty);
+
+    // The deleted relation is not returned as a live parent but its current
+    // members were still rewritten.
+    assert(store.parentRelations(ElementType.node, 101).empty);
+    assert(store.parentRelations(ElementType.way, 102).empty);
+
+    assert(store.restore(relationHandle, status));
+    StoreRelationView relationView;
+    assert(store.relation(relationHandle, relationView, status));
+    auto members = relationView.members;
+    assert(members.front.id == 101);
+    members.popFront();
+    assert(members.front.id == 102);
+
+    auto nodeParents =
+        store.parentRelations(ElementType.node, 101);
+    assert(!nodeParents.empty);
+    assert(nodeParents.front.handle == relationHandle);
+
+    auto wayParents =
+        store.parentRelations(ElementType.way, 102);
+    assert(!wayParents.empty);
+    assert(wayParents.front.handle == relationHandle);
+}
+
+unittest
+{
+    // Failed mutations leave parent navigation unchanged.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedWay way;
+    way.id = 10;
+    OwnedWayNode refValue;
+    refValue.id = 1;
+    way.nodes ~= refValue;
+
+    OsmHandle handle;
+    assert(store.add(way, handle, status));
+
+    auto invalid = way.deepCopy();
+    invalid.id = 11;
+    invalid.nodes[0].id = 2;
+    assert(!store.replace(handle, invalid, status));
+    assert(status.error == StoreError.idMismatch);
+    assert(!store.parentWays(1).empty);
+    assert(store.parentWays(2).empty);
+}
