@@ -2520,7 +2520,8 @@ public:
                 _nodes.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_nodes, handle._slot, newVersion);
                 _nodes.states[handle._slot] = StoreElementState.clean;
-                assert(_nodeIndex.remove(oldId));
+                const removed = _nodeIndex.remove(oldId);
+                assert(removed);
                 break;
 
             case ElementType.way:
@@ -2529,7 +2530,8 @@ public:
                 _ways.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_ways, handle._slot, newVersion);
                 _ways.states[handle._slot] = StoreElementState.clean;
-                assert(_wayIndex.remove(oldId));
+                const removed = _wayIndex.remove(oldId);
+                assert(removed);
                 break;
 
             case ElementType.relation:
@@ -2539,7 +2541,8 @@ public:
                 setAuthoritativeVersion(
                     _relations, handle._slot, newVersion);
                 _relations.states[handle._slot] = StoreElementState.clean;
-                assert(_relationIndex.remove(oldId));
+                const removed = _relationIndex.remove(oldId);
+                assert(removed);
                 break;
         }
 
@@ -2986,12 +2989,11 @@ private:
         OsmId oldId,
         OsmId newId) @safe nothrow @nogc
     {
-        auto index = &relationParentIndex(childType);
-        auto current = index.head(oldId);
+        auto current = relationParentIndex(childType).head(oldId);
 
         while (current != 0)
         {
-            const edge = index.edge(current);
+            const edge = relationParentIndex(childType).edge(current);
             const next = edge.next;
 
             bool belongsToCurrentState;
@@ -3013,8 +3015,9 @@ private:
 
             if (belongsToCurrentState)
             {
-                index.insert(newId, edge.parentSlot, edge.active);
-                index.deactivateEncoded(current);
+                relationParentIndex(childType).insert(
+                    newId, edge.parentSlot, edge.active);
+                relationParentIndex(childType).deactivateEncoded(current);
             }
 
             current = next;
