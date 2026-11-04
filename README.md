@@ -407,24 +407,28 @@ trip.
 
 ## Release status
 
-v0.1.0 is the first deliberately qualified standalone release line. Its
-supported high-level capabilities are:
+v0.2.0 is the current qualified consumer contract. Its high-level capabilities
+include:
 
 - validated borrowed and parallel-summary PBF reading;
-- durable/loss-aware PBF document read and write;
+- durable/loss-aware PBF document read and write through `osm.pbf`;
 - streaming OSM XML and osmChange read/write;
 - deterministic upload-readiness validation;
-- compact editable `OsmStore` with primary and parent indexes;
-- direct transactional PBF-to-store construction.
+- compact editable `OsmStore` with typed lookup, stable handles and parent
+  indexes;
+- direct transactional PBF-to-store construction;
+- deterministic store-edit materialization and authoritative diff-upload result
+  reconciliation.
 
-The release does not freeze low-level wire/codec implementation modules, a
-persistent store format, concurrent store mutation, rendering, spatial
-indexing, or transport policy. See `docs/API_STABILITY.md` for the exact
-compatibility boundary and `docs/RELEASE_BASELINE.md` for the evidence behind
-release claims.
+The v0.2.x patch line freezes the supported high-level facade/import surface,
+parameter names, ownership/lifetime and failure contracts described in
+`docs/API_STABILITY.md`. It does not freeze low-level wire/codec/store
+implementation modules, a persistent store format, concurrent store mutation,
+rendering, spatial indexing, network/OAuth policy or changeset lifecycle.
+`docs/RELEASE_BASELINE.md` records the evidence behind release claims.
 
 Literal JOSM-export provenance remains tracked separately in #85 as evidence
-hardening; it is not a semantic/API blocker for v0.1.0.
+hardening; it is not a semantic/API blocker for v0.2.0.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package use the
