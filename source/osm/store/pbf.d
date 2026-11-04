@@ -12,8 +12,6 @@
  */
 module osm.store.pbf;
 
-import core.lifetime : destroy;
-
 import osm.io.pbf.reader :
     PbfReadStatus,
     PbfReadSummary,
@@ -113,8 +111,7 @@ bool readPbfStore(
 
     if (!pbfOk || sink.failed)
     {
-        // Release the deterministic high-volume store buffers immediately.
-        destroy(candidate);
+        // The partial candidate never escapes this call.
         candidate = null;
         return false;
     }
