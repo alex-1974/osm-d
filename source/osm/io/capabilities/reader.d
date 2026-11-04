@@ -972,3 +972,46 @@ unittest // duplicate projected capability is an explicit structure error
     assert(!readEditingApiCapabilities(source, document, status));
     assert(status.error == ApiCapabilitiesReadError.invalidStructure);
 }
+
+
+unittest // invalid service state and malformed XML fail explicitly
+{
+    import transport.source : MemorySource;
+
+    {
+        enum xml =
+            "<osm version=\"0.6\"><api>" ~
+            "<version minimum=\"0.6\" maximum=\"0.6\"/>" ~
+            "<waynodes maximum=\"2000\"/>" ~
+            "<relationmembers maximum=\"32000\"/>" ~
+            "<changesets maximum_elements=\"10000\"/>" ~
+            "<status database=\"online\" api=\"maintenance\" gpx=\"online\"/>" ~
+            "</api></osm>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        EditingApiCapabilitiesDocument document;
+        ApiCapabilitiesReadStatus status;
+
+        assert(!readEditingApiCapabilities(source, document, status));
+        assert(status.error == ApiCapabilitiesReadError.invalidAttribute);
+        assert(document == EditingApiCapabilitiesDocument.init);
+    }
+
+    {
+        enum xml =
+            "<osm version=\"0.6\"><api>" ~
+            "<version minimum=\"0.6\" maximum=\"0.6\"/>" ~
+            "<waynodes maximum=\"2000\"/>" ~
+            "<relationmembers maximum=\"32000\"/>" ~
+            "<changesets maximum_elements=\"10000\"/>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        EditingApiCapabilitiesDocument document;
+        ApiCapabilitiesReadStatus status;
+
+        assert(!readEditingApiCapabilities(source, document, status));
+        assert(status.error == ApiCapabilitiesReadError.malformedXml ||
+               status.error == ApiCapabilitiesReadError.invalidStructure);
+        assert(document == EditingApiCapabilitiesDocument.init);
+    }
+}
