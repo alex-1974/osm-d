@@ -5,12 +5,12 @@
  * editable store workflows. Format-specialized loss-aware PBF document/write
  * facilities live in `osm.pbf`; XML, osmChange and upload validation use
  * their corresponding focused facades.
-
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
  * Copyright: Copyright © 2026 Alexander Bernardi
- * License: MIT */
+ * License: MIT
+ */
 module osm;
 
 public import osm.view.element :
