@@ -1,12 +1,13 @@
 # Getting started with osm-d
 
-The latest published release is v0.1.0. Current `develop` is preparing the
-v0.2 consumer API described in `API_V0_2.md`.
+This guide targets the v0.2.0 consumer API. The v0.1 -> v0.2 migration is
+summarized in `API_V0_2.md`; the supported v0.2.x compatibility contract is
+`API_STABILITY.md`.
 
-## Add the published dependency
+## Add the dependency
 
 ```sdl
-dependency "osm-d" version="~>0.1.0"
+dependency "osm-d" version="~>0.2.0"
 ```
 
 The current release floor is D frontend 2.111 and DUB 1.40.0.
@@ -217,5 +218,5 @@ A Way contains Node references. v0.2 therefore uses `NodeRefView` and
 `OwnedNodeRef` rather than the v0.1 `WayNodeView`/`OwnedWayNode` names.
 
 See `API_V0_2.md` for the complete migration table and workspace-library
-reuse decisions. The immutable v0.1.x contract remains in
-`API_STABILITY.md`.
+reuse decisions. `API_STABILITY.md` defines the supported v0.2.x patch-line
+contract.
