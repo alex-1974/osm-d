@@ -3415,7 +3415,7 @@ private:
 
     StoreElementState stateAtSlot(
         ElementType type,
-        uint slot) @safe nothrow @nogc
+        uint slot) @safe nothrow
     {
         final switch (type)
         {
@@ -3634,7 +3634,7 @@ private:
     void setAcknowledgedChangeset(
         ElementType type,
         uint slot,
-        scope ref const OwnedMetadata uploaded) @safe nothrow @nogc
+        scope ref const OwnedMetadata uploaded) @safe nothrow
     {
         assert(uploaded.hasChangeset && uploaded.changesetId > 0);
 
