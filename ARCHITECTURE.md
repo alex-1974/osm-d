@@ -129,8 +129,15 @@ There is no implicit materialization of every parsed element.
 | `store/compact/*` | allocation-controlled, cache-oriented |
 
 `@system` or `@trusted` code must not spread through the library. Unsafe or
-trusted transitions are isolated, audited and fuzzed. The current production
-`@trusted` island is the bounded zlib C-API bridge in `io/pbf/decompress.d`.
+trusted transitions are isolated and audited. The current production
+`@trusted` islands are:
+
+- the bounded zlib C-API bridge in `io/pbf/decompress.d`;
+- the narrow direct-PBF-store adapter in `store/pbf.d`, which bridges the
+  older generic reader signature to a scoped public input. Its safety argument
+  is that `PbfReader.read` is synchronous and `StoreSink` copies every
+  accepted semantic value into store-owned storage before the callback returns.
+  The external DIP1000 store-consumer probe exercises this public boundary.
 
 ## Validation stages
 
