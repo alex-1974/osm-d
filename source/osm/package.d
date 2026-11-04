@@ -58,6 +58,8 @@ public import osm.store :
     StoreNodeView,
     StoreWayView,
     StoreRelationView,
+    StoreParentWayRange,
+    StoreParentRelationRange,
     StoreNodeRange,
     StoreWayRange,
     StoreRelationRange;

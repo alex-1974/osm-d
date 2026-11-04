@@ -29,6 +29,8 @@ public import osm.store.compact.store :
     StoreNodeView,
     StoreWayView,
     StoreRelationView,
+    StoreParentWayRange,
+    StoreParentRelationRange,
     StoreNodeRange,
     StoreWayRange,
     StoreRelationRange;

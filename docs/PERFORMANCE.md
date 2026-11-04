@@ -159,3 +159,26 @@ targets are:
 These are engineering decision budgets, not public guarantees for arbitrary OSM
 datasets. Missing a target triggers investigation; it does not justify data
 loss, disabled integrity checks or benchmark-only representations.
+
+
+## M6 production parent-index qualification — 2026-11-04
+
+ADR 0023 replaces the #62 benchmark-only reverse index on the compact side
+with the production incremental indexes. On pinned Bremen with LDC 1.41.0
+release/allAtOnce:
+
+- production parent-index logical bytes: **73,415,112** versus **78,577,608**
+  for the static packed reference;
+- Node -> Way: 64.680 ms p50 for 250,000 queries versus 31.746 ms static;
+- typed element -> Relation: 3.461 ms p50 for 100,000 queries versus 2.952 ms;
+- 10,000 representative edits including reverse-index maintenance: 29.210 ms;
+- static-reference full parent rebuild after the same edits: 396.032 ms;
+- production store parent rebuild after edits: **none**;
+- final compact RSS: **351,324 KiB (343.090 MiB)**;
+- total logical compact bytes: **308,976,077**.
+
+The linked mutable index deliberately trades some read-only Node-parent
+locality for incremental edit coherence. The static packed reference is faster
+for pure parent lookup but cannot remain coherent after edits without a
+whole-store rebuild. The production result retains the <=75% reference-RSS,
+<=512 MiB, and <=384 MiB M6 memory gates.
