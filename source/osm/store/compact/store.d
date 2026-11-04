@@ -539,7 +539,7 @@ private:
         while (_edge != 0)
         {
             const edge = _store._nodeWayParents.edge(_edge);
-            if (edge.parentSlot != uint.max &&
+            if (edge.active &&
                 edge.parentSlot < _store._ways.states.length &&
                 _store._ways.states[edge.parentSlot] !=
                     StoreElementState.deleted)
@@ -592,7 +592,7 @@ private:
         while (_edge != 0)
         {
             const edge = _store.relationParentEdge(_childType, _edge);
-            if (edge.parentSlot != uint.max &&
+            if (edge.active &&
                 edge.parentSlot < _store._relations.states.length &&
                 _store._relations.states[edge.parentSlot] !=
                     StoreElementState.deleted)
@@ -1039,10 +1039,46 @@ private struct IdIndex
 
 private struct ParentEdge
 {
-    /// Parent element slot, or uint.max when this historical edge is inactive.
-    uint parentSlot;
+private:
+    enum inactiveMask = 0x8000_0000u;
+
+public:
+    /// Parent slot with the high bit reserved as the active-state marker.
+    uint parentState;
     /// Encoded next edge index: zero means end, otherwise index + 1.
     uint next;
+
+    @property bool active() const @safe pure nothrow @nogc
+    {
+        return (parentState & inactiveMask) == 0;
+    }
+
+    @property uint parentSlot() const @safe pure nothrow @nogc
+    {
+        return parentState & ~inactiveMask;
+    }
+
+    void deactivate() @safe pure nothrow @nogc
+    {
+        parentState |= inactiveMask;
+    }
+
+    void activate() @safe pure nothrow @nogc
+    {
+        parentState &= ~inactiveMask;
+    }
+
+    static ParentEdge make(
+        uint parentSlot,
+        uint next,
+        bool active = true) @safe pure nothrow @nogc
+    {
+        assert(parentSlot < inactiveMask);
+        ParentEdge result;
+        result.parentState = parentSlot | (active ? 0 : inactiveMask);
+        result.next = next;
+        return result;
+    }
 }
 
 private struct ParentIndex
@@ -1083,7 +1119,10 @@ private struct ParentIndex
         }
     }
 
-    uint insert(OsmId id, uint parentSlot) @safe nothrow @nogc
+    uint insert(
+        OsmId id,
+        uint parentSlot,
+        bool active = true) @safe nothrow @nogc
     {
         assert(id != 0);
         if (heads.length == 0)
@@ -1113,16 +1152,17 @@ private struct ParentIndex
             {
                 const value = edge(current);
                 if (value.parentSlot == parentSlot)
+                {
+                    if (active)
+                        edges[current - 1].activate();
                     return current;
+                }
                 current = value.next;
             }
         }
 
         assert(edges.length < uint.max);
-        ParentEdge value;
-        value.parentSlot = parentSlot;
-        value.next = heads[bucket];
-        edges ~= value;
+        edges ~= ParentEdge.make(parentSlot, heads[bucket], active);
         const encoded = cast(uint)edges.length;
         heads[bucket] = encoded;
         return encoded;
@@ -1134,9 +1174,10 @@ private struct ParentIndex
         while (current != 0)
         {
             const index = cast(size_t)(current - 1);
-            if (edges[index].parentSlot == parentSlot)
+            if (edges[index].parentSlot == parentSlot &&
+                edges[index].active)
             {
-                edges[index].parentSlot = uint.max;
+                edges[index].deactivate();
                 return true;
             }
             current = edges[index].next;
@@ -1150,7 +1191,7 @@ private struct ParentIndex
             return;
         const index = cast(size_t)(encoded - 1);
         assert(index < edges.length);
-        edges[index].parentSlot = uint.max;
+        edges[index].deactivate();
     }
 
     ParentEdge edge(uint encoded) const @safe nothrow @nogc
@@ -1168,7 +1209,7 @@ private struct ParentIndex
         while (current != 0)
         {
             const value = edge(current);
-            if (value.parentSlot != uint.max)
+            if (value.active)
                 ++result;
             current = value.next;
         }
