@@ -21,6 +21,7 @@ public import osm.model.change :
     ChangeObjectState,
     OwnedChangeEntry,
     OwnedChangeSequence,
+    UploadResultEffect,
     UploadResultEntry,
     UploadResult;
 

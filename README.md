@@ -61,7 +61,7 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `ARCHITECTURE.md` — module boundaries and data flow
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
-- `docs/RELEASE_BASELINE.md` — v0.2.0 release qualification baseline
+- `docs/RELEASE_BASELINE.md` — v0.2.x release qualification baseline
 - `docs/API_STABILITY.md` — supported v0.2.x API and compatibility policy
 - `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
@@ -107,7 +107,7 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package remains pre-1.0. v0.2.0 freezes the current high-level consumer
+The package remains pre-1.0. v0.2.x preserves the current high-level consumer
 surface for the v0.2.x patch line: `import osm;` stays focused on common
 OSM/PBF-traversal/store workflows, loss-aware PBF document/write/parallel
 facilities live in `osm.pbf`, and XML, osmChange, comparison and upload
@@ -407,7 +407,7 @@ trip.
 
 ## Release status
 
-v0.2.0 is the current qualified consumer contract. Its high-level capabilities
+v0.2.1 is the current qualified v0.2.x patch release. Its high-level capabilities
 include:
 
 - validated borrowed and parallel-summary PBF reading;
@@ -428,7 +428,7 @@ rendering, spatial indexing, network/OAuth policy or changeset lifecycle.
 `docs/RELEASE_BASELINE.md` records the evidence behind release claims.
 
 Literal JOSM-export provenance remains tracked separately in #85 as evidence
-hardening; it is not a semantic/API blocker for v0.2.0.
+hardening; it is not a semantic/API blocker for v0.2.x.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package use the
