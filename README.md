@@ -61,9 +61,9 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `ARCHITECTURE.md` — module boundaries and data flow
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
-- `docs/RELEASE_BASELINE.md` — v0.1.0 compatibility/performance baseline
-- `docs/API_STABILITY.md` — published v0.1.x API and compatibility policy
-- `docs/API_V0_2.md` — current v0.2 API direction and migration
+- `docs/RELEASE_BASELINE.md` — v0.2.0 release qualification baseline
+- `docs/API_STABILITY.md` — supported v0.2.x API and compatibility policy
+- `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -79,10 +79,10 @@ only `.workspace/`.
 
 ## Install and build
 
-Add the first standalone release to a DUB package:
+Add the current standalone release line to a DUB package:
 
 ```sdl
-dependency "osm-d" version="~>0.1.0"
+dependency "osm-d" version="~>0.2.0"
 ```
 
 Then build normally:
@@ -107,13 +107,12 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package is pre-1.0 and the first deliberate standalone release is v0.1.0.
-Current `develop` prepares the v0.2 consumer API: `import osm;` stays
-focused on common OSM/PBF-traversal/store workflows, while loss-aware PBF
-document/write/parallel facilities live in `osm.pbf`. XML, osmChange and
-upload validation use `osm.xml`, `osm.osmchange` and `osm.validate`.
-The immutable v0.1.x promise is in `docs/API_STABILITY.md`; the v0.2 migration
-is in `docs/API_V0_2.md`.
+The package remains pre-1.0. v0.2.0 freezes the current high-level consumer
+surface for the v0.2.x patch line: `import osm;` stays focused on common
+OSM/PBF-traversal/store workflows, loss-aware PBF document/write/parallel
+facilities live in `osm.pbf`, and XML, osmChange, comparison and upload
+validation use focused facades. The exact v0.2.x promise is in
+`docs/API_STABILITY.md`; v0.1 -> v0.2 migration is in `docs/API_V0_2.md`.
 
 ## Reading an in-memory PBF
 
