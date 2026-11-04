@@ -105,11 +105,11 @@ replacement semantics as the compact candidate.
 `final_incremental_rss_kib` is sampled after the common input buffer and
 temporary decode/materialization state have been released.
 
-For the compact variant the benchmark feeds the selected layout from validated
-borrowed semantic reader views. This is **qualification machinery only**: it
-exists so #62 can measure the retained layout instead of obsolete M4
-materialization heap pages. Production public direct PBF construction remains
-#64.
+For the compact variant the benchmark now calls the public
+`readPbfStore` API. Validated borrowed semantic reader views feed the durable
+production store directly, without a `PbfDocument`/`OwnedDataset`
+intermediate. The `compact-owned` variant retains that materialized route only
+as a comparison baseline.
 
 `owned_bytes` is logical owned representation size and is reported separately
 from allocator-inclusive RSS.
@@ -148,3 +148,25 @@ The GitHub workflow
 uploads the three raw result files plus the decision summary as an artifact.
 
 Large PBF inputs and raw result files remain uncommitted.
+
+
+## Direct-construction qualification
+
+The M6 workflow also runs `--variant=direct-parity` on pinned Monaco and
+Liechtenstein before the full Bremen workload. It compares the complete
+materialized-reference semantic checksum with the public direct-store checksum.
+
+Accepted 2026-11-04 result:
+
+- Monaco checksum: **18144549377310145839**;
+- Liechtenstein checksum: **4453202522050253806**;
+- Bremen checksum: **16194738168706093294**;
+- Bremen direct build: **2,268.417 ms**;
+- Bremen materialized decode + compact build: **5,185.137 ms**;
+- materialized/direct wall-time ratio: **2.285795x**;
+- direct peak/final incremental RSS ratio: **1.070398x**;
+- <=1.5x direct peak target: **PASS**.
+
+The selected production path has one reusable serial reader workspace and no
+worker/queue or block-local staging-store memory. ADR 0024 records why M6 does
+not add a parallel owned-staging API without a measured need.
