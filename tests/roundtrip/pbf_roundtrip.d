@@ -1,6 +1,7 @@
 module osm.tests.pbf_roundtrip;
 
 import osm;
+import osm.pbf;
 
 import std.file : read, write;
 import std.stdio : stderr, writeln;
@@ -67,15 +68,15 @@ private PbfDocument makeEdgeDocument()
     way.metadata.hasVisibility = true;
     way.metadata.visible = false;
     way.tags ~= OwnedTag(bytes("highway"), bytes("service"));
-    way.nodes ~= OwnedWayNode(
+    way.nodes ~= OwnedNodeRef(
         101,
         true,
         LocationView(48_208_174_301L, 16_373_818_909L));
-    way.nodes ~= OwnedWayNode(
+    way.nodes ~= OwnedNodeRef(
         101,
         true,
         LocationView(48_208_174_301L, 16_373_818_909L));
-    way.nodes ~= OwnedWayNode(
+    way.nodes ~= OwnedNodeRef(
         102,
         true,
         LocationView(-12_345_678_901L, 179_999_999_999L));
