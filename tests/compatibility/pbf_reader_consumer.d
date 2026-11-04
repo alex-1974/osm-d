@@ -1,6 +1,7 @@
 module pbf_reader_consumer;
 
 import osm;
+import osm.pbf;
 
 private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
 {
@@ -123,7 +124,7 @@ struct Consumer
         auto nodes = value.nodes;
         while (!nodes.empty)
         {
-            WayNodeView node = nodes.front;
+            NodeRefView node = nodes.front;
             OsmId nodeId = node.id;
             assert(nodeId == node.id);
 
@@ -172,18 +173,22 @@ struct Consumer
 
 void compileConsumer()
 {
-    PbfReader reader;
-    PbfReaderWorkspace workspace;
     Consumer consumer;
-    PbfReadSummary summary;
-    PbfReadStatus status;
     const(ubyte)[] input;
 
+    const result = readPbf(input, consumer);
+    assert(!result.ok);
+    assert(result.status.error == PbfReadError.missingHeader);
+
+    // Advanced callers can still retain a workspace explicitly.
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfReadSummary summary;
+    PbfReadStatus status;
     const ok = reader.read(input, workspace, consumer, summary, status);
     assert(!ok);
-    assert(status.error == PbfReadError.missingHeader);
 
-    auto nodes = reader.nodes(input);
+    auto nodes = pbfNodes(input);
     foreach (scope ref NodeView node; nodes)
     {
         OsmId id = node.id;
