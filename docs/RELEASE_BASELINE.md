@@ -13,6 +13,27 @@ Absolute timings are environment-specific. Durable claims are semantic parity,
 bounded-memory behavior, the supported compiler matrix, source/lifetime
 contracts and the measured performance class on the recorded runners.
 
+## Publication record
+
+v0.2.0 was promoted by release PR #103 with a merge commit:
+
+- `main` release commit:
+  `5bc4572452f1d68ff126d6bc5a8c734b59baeb6a`;
+- annotated tag object:
+  `4bd66459b985f208074ad7832f4ed3cbd53e26e6`;
+- tag `v0.2.0` resolves exactly to the release commit above;
+- Publish release run: 41855719421 — PASS;
+- post-promotion Release Gate run: 41855719445 — PASS across all six compiler
+  jobs, metadata and Monaco I/O;
+- release archive: `osm-d-0.2.0.tar.gz`, 324,437 bytes;
+- published archive digest:
+  `sha256:a39c30037445529c48b345548ea098c4ef92adf9a14cbb0e1a04682bfa729d91`;
+- checksum asset: `osm-d-0.2.0.tar.gz.sha256`.
+
+The automated tag is annotated but unsigned. Workspace policy recommends
+signed final release tags but does not make signing a release-gate requirement;
+v0.1.0 used the same publication mechanism.
+
 ## Supported toolchain and platform
 
 Source-compatibility floor:
