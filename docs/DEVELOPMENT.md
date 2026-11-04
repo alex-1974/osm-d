@@ -64,7 +64,7 @@ keeps expensive cross-generation qualification out of ordinary `develop`
 commits while requiring it before release promotion. `main` remains the
 release line; normal development targets `develop`.
 
-## Public module surface during pre-1.0
+## Public module surface and v0.1.x compatibility
 
 D module visibility and package support are separate concerns. A source module
 being directly importable does not by itself make every declaration in that
@@ -157,10 +157,10 @@ provenance boundary. Construction-controlled invariants must rely on actual
 representation/construction control rather than on a caller being outside a D
 package namespace.
 
-Before a stable API freeze, this classification must be reviewed against real
-consumers. Stable direct imports, callable parameter names, template
-instantiability, and representative named-argument forms must then be protected
-by external-consumer compile tests across the supported compiler matrix.
+For v0.1.x this classification is frozen by `docs/API_STABILITY.md` and the
+external release-consumer compile probe. Supported direct imports, callable
+parameter names, representative named-argument forms, ownership/lifetime
+semantics, and failure-state contracts are release compatibility surface.
 
 The element-specific foreach boundaries have additional executable lifetime
 checks. External `@safe` consumer compilation verifies normal Node, Way, and

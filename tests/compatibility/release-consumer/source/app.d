@@ -1,0 +1,153 @@
+module app;
+
+import osm;
+import osm.osmchange;
+import osm.validate;
+import osm.xml;
+import transport.source : MemorySink, MemorySource;
+
+@safe void compileRootAndNamedArguments()
+{
+    static assert(is(OsmId == long));
+    static assert(OsmHandle.init.valid == false);
+    static assert(LocationView.init.latitudeNanodegrees == 0);
+    static assert(LocationView.init.longitudeNanodegrees == 0);
+    static assert(PbfReadStatus.init.ok);
+    static assert(PbfWriteStatus.init.ok);
+    static assert(PbfStoreReadStatus.init.ok);
+    static assert(StoreStatus.init.ok);
+
+    const(ubyte)[] input;
+
+    PbfDocument document;
+    PbfReadStatus pbfStatus;
+    const readOk = readPbfDocument(
+        input: input,
+        document: document,
+        status: pbfStatus);
+    assert(!readOk);
+
+    OsmStore store;
+    PbfReadSummary summary;
+    PbfStoreReadStatus storeReadStatus;
+    const storeOk = readPbfStore(
+        input: input,
+        store: store,
+        summary: summary,
+        status: storeReadStatus);
+    assert(!storeOk);
+    assert(store is null);
+
+    auto editable = new OsmStore();
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(1, 2);
+
+    OsmHandle handle;
+    StoreStatus status;
+    assert(editable.add(
+        value: node,
+        handle: handle,
+        status: status));
+
+    OsmHandle found;
+    assert(editable.find(
+        type: ElementType.node,
+        id: -1,
+        handle: found));
+    assert(found == handle);
+
+    assert(editable.remapId(
+        handle: handle,
+        newId: 1001,
+        newVersion: 1,
+        status: status));
+
+    auto parentWays = editable.parentWays(nodeId: 1001);
+    auto parentRelations = editable.parentRelations(
+        type: ElementType.node,
+        id: 1001);
+    assert(parentWays.empty);
+    assert(parentRelations.empty);
+
+    PbfWriter writer;
+    PbfWriteOptions writeOptions;
+    PbfWriteStatus writeStatus;
+    ubyte[] output;
+    document = PbfDocument.create();
+    assert(writer.write(
+        document: document,
+        output: output,
+        status: writeStatus,
+        options: writeOptions));
+}
+
+@safe void compileXmlFacade()
+{
+    enum xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" ~
+        "<osm version=\"0.6\" generator=\"release-consumer\"></osm>";
+
+    auto source = new MemorySource(cast(const(ubyte)[])xml);
+    OsmXmlDocument document;
+    OsmXmlReadStatus readStatus;
+    OsmXmlReadOptions readOptions;
+
+    assert(readOsmXmlDocument(
+        source: source,
+        document: document,
+        status: readStatus,
+        options: readOptions));
+
+    auto sink = new MemorySink();
+    OsmXmlWriter writer;
+    OsmXmlWriteStatus writeStatus;
+    OsmXmlWriteOptions writeOptions;
+    assert(writer.write(
+        document: document,
+        sink: sink,
+        status: writeStatus,
+        options: writeOptions));
+}
+
+@safe void compileOsmChangeAndValidationFacade()
+{
+    OwnedChangeSequence changes;
+
+    CapabilityProfile capabilities;
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(
+        changes: changes,
+        capabilities: capabilities,
+        issue: issue));
+
+    OsmChangeDocument document;
+    document.changes = changes;
+
+    auto sink = new MemorySink();
+    OsmChangeWriter writer;
+    OsmChangeWriteStatus writeStatus;
+    OsmChangeWriteOptions writeOptions;
+    assert(writer.write(
+        document: document,
+        sink: sink,
+        status: writeStatus,
+        options: writeOptions));
+
+    auto source = new MemorySource(sink.data);
+    OsmChangeDocument reread;
+    OsmChangeReadStatus readStatus;
+    OsmChangeReadOptions readOptions;
+    assert(readOsmChangeDocument(
+        source: source,
+        document: reread,
+        status: readStatus,
+        options: readOptions));
+}
+
+@safe void main()
+{
+    compileRootAndNamedArguments();
+    compileXmlFacade();
+    compileOsmChangeAndValidationFacade();
+}
