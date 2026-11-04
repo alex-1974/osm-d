@@ -18,6 +18,12 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
   regression coverage and an external parser -> `OsmStore.applyUploadResult`
   consumer probe.
 
+### Fixed
+
+- Correct the v0.2.x API inventory to list `UploadResultEffect`, which became
+  part of the public root surface with the v0.2.1 request-aware
+  `UploadResultEntry.effectFor` correction.
+
 ## 0.2.1 - 2026-11-04
 
 ### Fixed
