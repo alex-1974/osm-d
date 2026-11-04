@@ -54,6 +54,14 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler upload validation DUB consumer compile"
 
+    echo "=== UPLOAD RESULT DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/upload-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler diffResult upload consumer compile"
+
     echo "=== RELEASE API DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/release-consumer" \
