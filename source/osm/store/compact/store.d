@@ -533,7 +533,6 @@ struct StoreParentWayRange
 private:
     OsmStore _store;
     uint _edge;
-    uint _lastParentSlot = uint.max;
 
     void skipUnavailable() @safe nothrow @nogc
     {
@@ -541,7 +540,6 @@ private:
         {
             const edge = _store._nodeWayParents.edge(_edge);
             if (edge.parentSlot != uint.max &&
-                edge.parentSlot != _lastParentSlot &&
                 edge.parentSlot < _store._ways.states.length &&
                 _store._ways.states[edge.parentSlot] !=
                     StoreElementState.deleted)
@@ -571,7 +569,6 @@ public:
         if (_edge == 0)
             return;
         const edge = _store._nodeWayParents.edge(_edge);
-        _lastParentSlot = edge.parentSlot;
         _edge = edge.next;
         skipUnavailable();
     }
@@ -589,7 +586,6 @@ private:
     OsmStore _store;
     ElementType _childType;
     uint _edge;
-    uint _lastParentSlot = uint.max;
 
     void skipUnavailable() @safe nothrow @nogc
     {
@@ -597,7 +593,6 @@ private:
         {
             const edge = _store.relationParentEdge(_childType, _edge);
             if (edge.parentSlot != uint.max &&
-                edge.parentSlot != _lastParentSlot &&
                 edge.parentSlot < _store._relations.states.length &&
                 _store._relations.states[edge.parentSlot] !=
                     StoreElementState.deleted)
@@ -627,7 +622,6 @@ public:
         if (_edge == 0)
             return;
         const edge = _store.relationParentEdge(_childType, _edge);
-        _lastParentSlot = edge.parentSlot;
         _edge = edge.next;
         skipUnavailable();
     }
@@ -1047,8 +1041,6 @@ private struct ParentEdge
 {
     /// Parent element slot, or uint.max when this historical edge is inactive.
     uint parentSlot;
-    /// Absolute index in the current or historical child pool.
-    uint childIndex;
     /// Encoded next edge index: zero means end, otherwise index + 1.
     uint next;
 }
@@ -1091,20 +1083,20 @@ private struct ParentIndex
         }
     }
 
-    uint insert(
-        OsmId id,
-        uint parentSlot,
-        uint childIndex) @safe nothrow @nogc
+    uint insert(OsmId id, uint parentSlot) @safe nothrow @nogc
     {
         assert(id != 0);
         if (heads.length == 0)
             initialize();
 
-        if ((keyCount + 1) * 10 >= heads.length * 7 &&
-            findBucket(id) == size_t.max)
-            rehash(heads.length * 2);
-
         size_t bucket = findBucket(id);
+        if (bucket == size_t.max &&
+            (keyCount + 1) * 10 >= heads.length * 7)
+        {
+            rehash(heads.length * 2);
+            bucket = findBucket(id);
+        }
+
         if (bucket == size_t.max)
         {
             size_t mask = heads.length - 1;
@@ -1114,23 +1106,49 @@ private struct ParentIndex
             keys[bucket] = id;
             ++keyCount;
         }
+        else
+        {
+            auto current = heads[bucket];
+            while (current != 0)
+            {
+                const value = edge(current);
+                if (value.parentSlot == parentSlot)
+                    return current;
+                current = value.next;
+            }
+        }
 
         assert(edges.length < uint.max);
-        ParentEdge edge;
-        edge.parentSlot = parentSlot;
-        edge.childIndex = childIndex;
-        edge.next = heads[bucket];
-        edges ~= edge;
+        ParentEdge value;
+        value.parentSlot = parentSlot;
+        value.next = heads[bucket];
+        edges ~= value;
         const encoded = cast(uint)edges.length;
         heads[bucket] = encoded;
         return encoded;
     }
 
-    void deactivate(uint encoded) @safe nothrow @nogc
+    bool deactivate(OsmId id, uint parentSlot) @safe nothrow @nogc
+    {
+        auto current = head(id);
+        while (current != 0)
+        {
+            const index = cast(size_t)(current - 1);
+            if (edges[index].parentSlot == parentSlot)
+            {
+                edges[index].parentSlot = uint.max;
+                return true;
+            }
+            current = edges[index].next;
+        }
+        return false;
+    }
+
+    void deactivateEncoded(uint encoded) @safe nothrow @nogc
     {
         if (encoded == 0)
             return;
-        auto index = cast(size_t)(encoded - 1);
+        const index = cast(size_t)(encoded - 1);
         assert(index < edges.length);
         edges[index].parentSlot = uint.max;
     }
@@ -1604,8 +1622,6 @@ private:
     ParentIndex _nodeRelationParents;
     ParentIndex _wayRelationParents;
     ParentIndex _relationRelationParents;
-    ManualArray!uint _wayParentEdges;
-    ManualArray!uint _relationParentEdges;
 
     size_t _liveNodes;
     size_t _liveWays;
@@ -2087,7 +2103,7 @@ public:
         const newRefs = appendWayNodes(value.nodes, handle._slot);
         const newLocations = lastWayLocationSpan;
 
-        deactivateWayParents(oldRefs);
+        deactivateWayParents(oldRefs, handle._slot);
         _ways.tags[handle._slot] = newTags;
         _wayRefs[handle._slot] = newRefs;
         _wayLocationSpans[handle._slot] = newLocations;
@@ -2123,7 +2139,7 @@ public:
         const newMembers =
             appendRelationMembers(value.members, handle._slot);
 
-        deactivateRelationParents(oldMembers);
+        deactivateRelationParents(oldMembers, handle._slot);
         _relations.tags[handle._slot] = newTags;
         _relationMembers[handle._slot] = newMembers;
         markModified(_relations, handle._slot);
@@ -2157,7 +2173,7 @@ public:
                 break;
             case ElementType.way:
                 captureWayBaseline(handle._slot);
-                deactivateWayParents(_wayRefs[handle._slot]);
+                deactivateWayParents(_wayRefs[handle._slot], handle._slot);
                 _ways.deletedFrom[handle._slot] = _ways.states[handle._slot];
                 _ways.states[handle._slot] = StoreElementState.deleted;
                 const removed = _wayIndex.remove(_ways.ids[handle._slot]);
@@ -2167,7 +2183,8 @@ public:
             case ElementType.relation:
                 captureRelationBaseline(handle._slot);
                 deactivateRelationParents(
-                    _relationMembers[handle._slot]);
+                    _relationMembers[handle._slot],
+                    handle._slot);
                 _relations.deletedFrom[handle._slot] =
                     _relations.states[handle._slot];
                 _relations.states[handle._slot] = StoreElementState.deleted;
@@ -2533,9 +2550,7 @@ public:
             _nodeWayParents.logicalBytes +
             _nodeRelationParents.logicalBytes +
             _wayRelationParents.logicalBytes +
-            _relationRelationParents.logicalBytes +
-            _wayParentEdges.length * uint.sizeof +
-            _relationParentEdges.length * uint.sizeof;
+            _relationRelationParents.logicalBytes;
 
         foreach (slot, ref value; _nodeBaselines)
             result.editBaselines += ownedNodeBytes(value);
@@ -2569,8 +2584,6 @@ private:
         _relationMemberIds.reserve(plan.relationMembers);
         _relationMemberRoles.reserve(plan.relationMembers);
         _relationMemberTypes.reserve(plan.relationMembers);
-        _wayParentEdges.reserve(plan.wayRefs);
-        _relationParentEdges.reserve(plan.relationMembers);
 
         _nodeWayParents.reserveEdges(plan.wayRefs);
         _nodeRelationParents.reserveEdges(plan.relationNodeMembers);
@@ -2797,12 +2810,15 @@ private:
         }
     }
 
-    void deactivateWayParents(Span32 refs) @safe nothrow @nogc
+    void deactivateWayParents(Span32 refs, uint parentSlot)
+        @safe nothrow @nogc
     {
         foreach (i; 0 .. refs.length)
         {
             const childIndex = refs.offset + i;
-            _nodeWayParents.deactivate(_wayParentEdges[childIndex]);
+            _nodeWayParents.deactivate(
+                _wayRefIds[childIndex],
+                parentSlot);
         }
     }
 
@@ -2812,15 +2828,13 @@ private:
         foreach (i; 0 .. refs.length)
         {
             const childIndex = refs.offset + i;
-            const edge = _nodeWayParents.insert(
+            _nodeWayParents.insert(
                 _wayRefIds[childIndex],
-                parentSlot,
-                childIndex);
-            _wayParentEdges[childIndex] = edge;
+                parentSlot);
         }
     }
 
-    void deactivateRelationParents(Span32 members)
+    void deactivateRelationParents(Span32 members, uint parentSlot)
         @safe nothrow @nogc
     {
         foreach (i; 0 .. members.length)
@@ -2829,7 +2843,8 @@ private:
             const type =
                 cast(ElementType)_relationMemberTypes[childIndex];
             relationParentIndex(type).deactivate(
-                _relationParentEdges[childIndex]);
+                _relationMemberIds[childIndex],
+                parentSlot);
         }
     }
 
@@ -2841,11 +2856,9 @@ private:
             const childIndex = members.offset + i;
             const type =
                 cast(ElementType)_relationMemberTypes[childIndex];
-            const edge = relationParentIndex(type).insert(
+            relationParentIndex(type).insert(
                 _relationMemberIds[childIndex],
-                parentSlot,
-                childIndex);
-            _relationParentEdges[childIndex] = edge;
+                parentSlot);
         }
     }
 
@@ -2922,11 +2935,8 @@ private:
         while (!source.empty)
         {
             const value = source.front;
-            const childIndex = cast(uint)_wayRefIds.length;
             _wayRefIds ~= value.id;
-            const parentEdge =
-                _nodeWayParents.insert(value.id, parentSlot, childIndex);
-            _wayParentEdges ~= parentEdge;
+            _nodeWayParents.insert(value.id, parentSlot);
             ++refs.length;
 
             if (value.hasLocation)
@@ -2959,15 +2969,12 @@ private:
         while (!source.empty)
         {
             const value = source.front;
-            const childIndex = cast(uint)_relationMemberIds.length;
             _relationMemberIds ~= value.id;
             _relationMemberTypes ~= cast(ubyte)value.type;
             _relationMemberRoles ~= _strings.intern(value.role);
-            const parentEdge = relationParentIndex(value.type).insert(
+            relationParentIndex(value.type).insert(
                 value.id,
-                parentSlot,
-                childIndex);
-            _relationParentEdges ~= parentEdge;
+                parentSlot);
             ++result.length;
             source.popFront();
         }
@@ -3014,11 +3021,8 @@ private:
 
         foreach (i, ref const value; values)
         {
-            const childIndex = cast(uint)_wayRefIds.length;
             _wayRefIds ~= value.id;
-            const parentEdge =
-                _nodeWayParents.insert(value.id, parentSlot, childIndex);
-            _wayParentEdges ~= parentEdge;
+            _nodeWayParents.insert(value.id, parentSlot);
 
             if (value.hasLocation)
             {
@@ -3051,15 +3055,12 @@ private:
 
         foreach (ref const value; values)
         {
-            const childIndex = cast(uint)_relationMemberIds.length;
             _relationMemberIds ~= value.id;
             _relationMemberTypes ~= cast(ubyte)value.type;
             _relationMemberRoles ~= _strings.intern(value.role);
-            const parentEdge = relationParentIndex(value.type).insert(
+            relationParentIndex(value.type).insert(
                 value.id,
-                parentSlot,
-                childIndex);
-            _relationParentEdges ~= parentEdge;
+                parentSlot);
         }
 
         return result;
