@@ -1481,6 +1481,9 @@ private struct BuildPlan
     size_t wayRefs;
     size_t wayLocations;
     size_t relationMembers;
+    size_t relationNodeMembers;
+    size_t relationWayMembers;
+    size_t relationRelationMembers;
     size_t stringOccurrences;
     size_t stringBytes;
 }
@@ -1532,7 +1535,21 @@ private BuildPlan makeBuildPlan(scope ref const OwnedDataset data)
         foreach (ref const tag; relation.tags)
             plan.stringBytes += tag.key.length + tag.value.length;
         foreach (ref const member; relation.members)
+        {
             plan.stringBytes += member.role.length;
+            final switch (member.type)
+            {
+                case ElementType.node:
+                    ++plan.relationNodeMembers;
+                    break;
+                case ElementType.way:
+                    ++plan.relationWayMembers;
+                    break;
+                case ElementType.relation:
+                    ++plan.relationRelationMembers;
+                    break;
+            }
+        }
         if (relation.metadata.hasUsername)
         {
             ++plan.stringOccurrences;
@@ -1662,10 +1679,9 @@ public:
             return false;
 
         const tagSpan = appendTags(value.tags);
-        const refSpan = appendWayNodes(value.nodes);
-        const locationSpan = lastWayLocationSpan;
-
         const slot = cast(uint)_ways.ids.length;
+        const refSpan = appendWayNodes(value.nodes, slot);
+        const locationSpan = lastWayLocationSpan;
         const lifecycle = value.id < 0 ?
             StoreElementState.created : StoreElementState.clean;
 
@@ -1698,9 +1714,8 @@ public:
             return false;
 
         const tagSpan = appendTags(value.tags);
-        const memberSpan = appendRelationMembers(value.members);
-
         const slot = cast(uint)_relations.ids.length;
+        const memberSpan = appendRelationMembers(value.members, slot);
         const lifecycle = value.id < 0 ?
             StoreElementState.created : StoreElementState.clean;
 
@@ -1784,9 +1799,9 @@ public:
             return false;
 
         const tagSpan = appendBorrowedTags(value.tags);
-        const refSpan = appendBorrowedWayNodes(value.nodes);
-        const locationSpan = lastWayLocationSpan;
         const slot = cast(uint)_ways.ids.length;
+        const refSpan = appendBorrowedWayNodes(value.nodes, slot);
+        const locationSpan = lastWayLocationSpan;
         auto metadata = value.metadata;
 
         _ways.appendBorrowed(
@@ -1833,8 +1848,9 @@ public:
             return false;
 
         const tagSpan = appendBorrowedTags(value.tags);
-        const memberSpan = appendBorrowedRelationMembers(value.members);
         const slot = cast(uint)_relations.ids.length;
+        const memberSpan =
+            appendBorrowedRelationMembers(value.members, slot);
         auto metadata = value.metadata;
 
         _relations.appendBorrowed(
@@ -2065,10 +2081,16 @@ public:
             return false;
 
         captureWayBaseline(handle._slot);
-        _ways.tags[handle._slot] = appendTags(value.tags);
+        const oldRefs = _wayRefs[handle._slot];
+        const newTags = appendTags(value.tags);
         _ways.metadata.set(handle._slot, value.metadata, _strings);
-        _wayRefs[handle._slot] = appendWayNodes(value.nodes);
-        _wayLocationSpans[handle._slot] = lastWayLocationSpan;
+        const newRefs = appendWayNodes(value.nodes, handle._slot);
+        const newLocations = lastWayLocationSpan;
+
+        deactivateWayParents(oldRefs);
+        _ways.tags[handle._slot] = newTags;
+        _wayRefs[handle._slot] = newRefs;
+        _wayLocationSpans[handle._slot] = newLocations;
         markModified(_ways, handle._slot);
         return true;
     }
@@ -2095,10 +2117,15 @@ public:
             return false;
 
         captureRelationBaseline(handle._slot);
-        _relations.tags[handle._slot] = appendTags(value.tags);
+        const oldMembers = _relationMembers[handle._slot];
+        const newTags = appendTags(value.tags);
         _relations.metadata.set(handle._slot, value.metadata, _strings);
-        _relationMembers[handle._slot] =
-            appendRelationMembers(value.members);
+        const newMembers =
+            appendRelationMembers(value.members, handle._slot);
+
+        deactivateRelationParents(oldMembers);
+        _relations.tags[handle._slot] = newTags;
+        _relationMembers[handle._slot] = newMembers;
         markModified(_relations, handle._slot);
         return true;
     }
@@ -2130,6 +2157,7 @@ public:
                 break;
             case ElementType.way:
                 captureWayBaseline(handle._slot);
+                deactivateWayParents(_wayRefs[handle._slot]);
                 _ways.deletedFrom[handle._slot] = _ways.states[handle._slot];
                 _ways.states[handle._slot] = StoreElementState.deleted;
                 const removed = _wayIndex.remove(_ways.ids[handle._slot]);
@@ -2138,6 +2166,8 @@ public:
                 break;
             case ElementType.relation:
                 captureRelationBaseline(handle._slot);
+                deactivateRelationParents(
+                    _relationMembers[handle._slot]);
                 _relations.deletedFrom[handle._slot] =
                     _relations.states[handle._slot];
                 _relations.states[handle._slot] = StoreElementState.deleted;
@@ -2185,6 +2215,8 @@ public:
                     status.id = _ways.ids[handle._slot];
                     return false;
                 }
+                reactivateWayParents(
+                    _wayRefs[handle._slot], handle._slot);
                 _ways.states[handle._slot] =
                     _ways.deletedFrom[handle._slot];
                 if (_ways.states[handle._slot] == StoreElementState.clean)
@@ -2200,6 +2232,8 @@ public:
                     status.id = _relations.ids[handle._slot];
                     return false;
                 }
+                reactivateRelationParents(
+                    _relationMembers[handle._slot], handle._slot);
                 _relations.states[handle._slot] =
                     _relations.deletedFrom[handle._slot];
                 if (_relations.states[handle._slot] == StoreElementState.clean)
@@ -2495,6 +2529,14 @@ public:
             _wayIndex.logicalBytes +
             _relationIndex.logicalBytes;
 
+        result.parentIndexes =
+            _nodeWayParents.logicalBytes +
+            _nodeRelationParents.logicalBytes +
+            _wayRelationParents.logicalBytes +
+            _relationRelationParents.logicalBytes +
+            _wayParentEdges.length * uint.sizeof +
+            _relationParentEdges.length * uint.sizeof;
+
         foreach (slot, ref value; _nodeBaselines)
             result.editBaselines += ownedNodeBytes(value);
         foreach (slot, ref value; _wayBaselines)
@@ -2527,6 +2569,13 @@ private:
         _relationMemberIds.reserve(plan.relationMembers);
         _relationMemberRoles.reserve(plan.relationMembers);
         _relationMemberTypes.reserve(plan.relationMembers);
+        _wayParentEdges.reserve(plan.wayRefs);
+        _relationParentEdges.reserve(plan.relationMembers);
+
+        _nodeWayParents.reserveEdges(plan.wayRefs);
+        _nodeRelationParents.reserveEdges(plan.relationNodeMembers);
+        _wayRelationParents.reserveEdges(plan.relationWayMembers);
+        _relationRelationParents.reserveEdges(plan.relationRelationMembers);
 
         _nodeIndex.prepare(plan.nodes);
         _wayIndex.prepare(plan.ways);
