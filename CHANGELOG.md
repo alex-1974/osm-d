@@ -168,6 +168,10 @@ stable release.
   RSS/owned bytes, build cost, primary and parent lookup, full traversal,
   10,000 representative edits, parent-index rebuild, revert and local-ID
   remapping. ADR 0022 records the accepted #62 trade-off and evidence.
+- Add production incremental parent indexes to `OsmStore`: distinct
+  Node-to-Way and typed element-to-Relation navigation, coherent maintenance
+  across add/replace/delete/restore/revert, and authoritative local-ID remap
+  through `remapId`. ADR 0023 records the representation and Bremen trade-off.
 
 - Initial repository structure.
 - Data-integrity contract.
