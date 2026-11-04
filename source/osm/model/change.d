@@ -463,20 +463,6 @@ struct UploadResultEntry
         }
     }
 
-    /**
-     * Legacy context-free shape guess retained for v0.2.x source compatibility.
-     *
-     * Do not use this property to correlate a generic diffResult with its
-     * request: conditional delete-if-unused can have the same raw shape as a
-     * modify. Prefer effectFor when the uploaded entry is available.
-     */
-    @property ChangeAction action() const @safe pure nothrow @nogc
-    in (shapeValid)
-    {
-        if (!hasNewId)
-            return ChangeAction.deleteObject;
-        return oldId < 0 ? ChangeAction.create : ChangeAction.modify;
-    }
 }
 
 /**
@@ -597,7 +583,6 @@ unittest // v0.2.1: diffResult interpretation requires request context
         UploadResultEffect effect;
         assert(retained.effectFor(conditional, effect));
         assert(effect == UploadResultEffect.deleteRetained);
-        assert(retained.action == ChangeAction.modify);
 
         const alreadyDeleted = UploadResultEntry.modified(type, 42, 8);
         assert(alreadyDeleted.effectFor(conditional, effect));
@@ -614,7 +599,6 @@ unittest // v0.2.1: diffResult interpretation requires request context
 
     const placeholderDelete = UploadResultEntry.deleted(ElementType.node, -1);
     assert(placeholderDelete.shapeValid);
-    assert(placeholderDelete.action == ChangeAction.deleteObject);
 
     UploadResult repeated;
     repeated.entries ~= UploadResultEntry.created(ElementType.node, -1, 101, 1);
