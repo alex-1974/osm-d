@@ -22,22 +22,24 @@ import osm :
     OwnedRelationMember,
     OwnedTag,
     OwnedWay,
-    OwnedWayNode,
-    PbfDocument,
+    OwnedNodeRef,
     PbfReadStatus,
     PbfReadSummary,
     PbfStoreReadStatus,
     StoreCounts,
-    StoreMetadataView,
+    MetadataView,
     StoreElementState,
     StoreNodeView,
     StoreRelationView,
     StoreStatus,
     StoreWayView,
     ownBytes,
-    readPbfDocument,
     readPbfStore;
 
+
+import osm.pbf :
+    PbfDocument,
+    readPbfDocument;
 
 import osm.store.compact.store : ManualArray;
 
@@ -517,7 +519,7 @@ private void mixMetadata(ref ulong hash, scope ref const OwnedMetadata value)
     if (value.hasVisibility) mix(hash, value.visible);
 }
 
-private void mixMetadata(ref ulong hash, scope ref const StoreMetadataView value)
+private void mixMetadata(ref ulong hash, scope ref const MetadataView value)
     @safe pure nothrow @nogc
 {
     mix(hash, value.hasVersion);
@@ -1020,7 +1022,7 @@ private size_t ownedWayBytes(scope ref const OwnedWay value)
     @safe pure nothrow @nogc
 {
     size_t result = OwnedWay.sizeof + ownedMetadataBytes(value.metadata);
-    result += value.nodes.length * OwnedWayNode.sizeof;
+    result += value.nodes.length * OwnedNodeRef.sizeof;
     foreach (ref const tag; value.tags)
         result += ownedTagBytes(tag);
     return result;
@@ -1060,7 +1062,7 @@ private size_t ownedDatasetBytes(scope ref const OwnedDataset data)
         result += way.tags.length * OwnedTag.sizeof;
         foreach (ref const tag; way.tags)
             result += tag.key.length + tag.value.length;
-        result += way.nodes.length * OwnedWayNode.sizeof;
+        result += way.nodes.length * OwnedNodeRef.sizeof;
     }
 
     foreach (ref const relation; data.relations)
@@ -1451,9 +1453,9 @@ private OwnedWay[] makeCreatedWays() @safe
     {
         value.id = -1_001 - cast(long)i;
 
-        OwnedWayNode a;
+        OwnedNodeRef a;
         a.id = -1 - cast(long)((i * 2) % 800);
-        OwnedWayNode b;
+        OwnedNodeRef b;
         b.id = -1 - cast(long)((i * 2 + 1) % 800);
         value.nodes = [a, b];
     }
@@ -1883,7 +1885,7 @@ private RemapMetrics runReferenceRemap() @safe
 
     OwnedWay way;
     way.id = -2;
-    way.nodes ~= OwnedWayNode(-1, false, typeof(node.location).init);
+    way.nodes ~= OwnedNodeRef(-1, false, typeof(node.location).init);
     data.ways ~= way;
 
     OwnedRelation relation;
@@ -1940,7 +1942,7 @@ private RemapMetrics runCompactRemap() @safe
 
     OwnedWay way;
     way.id = -2;
-    way.nodes ~= OwnedWayNode(-1, false, typeof(node.location).init);
+    way.nodes ~= OwnedNodeRef(-1, false, typeof(node.location).init);
     OsmHandle wayHandle;
     require(store.add(way, wayHandle, status), "compact remap way create failed");
 
