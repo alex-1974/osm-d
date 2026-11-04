@@ -1,0 +1,158 @@
+name: Store Layout Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "source/osm/store/**"
+      - "source/osm/package.d"
+      - "benchmark/store/**"
+      - "benchmark/dub.sdl"
+      - ".github/workflows/store-layout-qualification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bremen-layout:
+    name: Bremen compact-store layout
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned Bremen workload
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch bremen-260901; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
+
+      - name: Build layout benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=store-layout \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run straightforward reference
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-store-layout \
+            --variant=reference \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            | tee benchmark/store/reference-bremen.txt
+
+      - name: Run compact build from materialized dataset
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-store-layout \
+            --variant=compact-owned \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            | tee benchmark/store/compact-owned-bremen.txt
+
+      - name: Run compact candidate
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-store-layout \
+            --variant=compact \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            | tee benchmark/store/compact-bremen.txt
+
+      - name: Compare semantic and memory results
+        shell: bash
+        run: |
+          get_value() {
+            local key="$1"
+            local file="$2"
+            awk -F= -v key="$key" '$1 == key { print $2 }' "$file"
+          }
+
+          ref="benchmark/store/reference-bremen.txt"
+          cmp="benchmark/store/compact-bremen.txt"
+
+          for key in semantic_checksum edit_checksum revert_checksum remap_checksum; do
+            rv="$(get_value "$key" "$ref")"
+            cv="$(get_value "$key" "$cmp")"
+            test -n "$rv"
+            test "$rv" = "$cv"
+            echo "PASS: $key=$rv"
+          done
+
+          materialized="benchmark/store/compact-owned-bremen.txt"
+          mv="$(get_value semantic_checksum "$materialized")"
+          rv="$(get_value semantic_checksum "$ref")"
+          test -n "$mv"
+          test "$mv" = "$rv"
+          echo "PASS: compact-owned semantic_checksum=$mv"
+
+          test "$(get_value integrity "$ref")" = "pass"
+          test "$(get_value integrity "$cmp")" = "pass"
+
+          ref_rss="$(get_value final_incremental_rss_kib "$ref")"
+          cmp_rss="$(get_value final_incremental_rss_kib "$cmp")"
+          ref_owned="$(get_value owned_bytes "$ref")"
+          cmp_owned="$(get_value owned_bytes "$cmp")"
+
+          awk -v r="$ref_rss" -v c="$cmp_rss" 'BEGIN {
+            if (r <= 0) {
+              print "rss_ratio=unavailable";
+            } else {
+              printf "rss_ratio=%.6f\n", c / r;
+              printf "rss_reduction_percent=%.3f\n", 100.0 * (1.0 - c / r);
+            }
+          }' | tee benchmark/store/bremen-decision.txt
+
+          awk -v r="$ref_owned" -v c="$cmp_owned" 'BEGIN {
+            if (r > 0) {
+              printf "owned_ratio=%.6f\n", c / r;
+              printf "owned_reduction_percent=%.3f\n", 100.0 * (1.0 - c / r);
+            }
+          }' | tee -a benchmark/store/bremen-decision.txt
+
+          awk -v c="$cmp_rss" 'BEGIN {
+            printf "compact_final_incremental_rss_mib=%.3f\n", c / 1024.0;
+            print "low_end_512_mib_target=" (c <= 512 * 1024 ? "PASS" : "FAIL");
+            print "stretch_384_mib_target=" (c <= 384 * 1024 ? "PASS" : "FAIL");
+          }' | tee -a benchmark/store/bremen-decision.txt
+
+          awk -v r="$ref_rss" -v c="$cmp_rss" 'BEGIN {
+            if (r > 0)
+              print "reference_75_percent_target=" (c <= 0.75 * r ? "PASS" : "FAIL");
+            else
+              print "reference_75_percent_target=UNAVAILABLE";
+          }' | tee -a benchmark/store/bremen-decision.txt
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: store-layout-bremen-${{ github.sha }}
+          path: |
+            benchmark/store/reference-bremen.txt
+            benchmark/store/compact-owned-bremen.txt
+            benchmark/store/compact-bremen.txt
+            benchmark/store/bremen-decision.txt
+          if-no-files-found: error

@@ -24,6 +24,12 @@ for compiler in "${compilers[@]}"; do
         -of="$object"
     echo "PASS: $compiler external consumer compile"
 
+    store_object="$TMPDIR/store-consumer-$(basename "$compiler").o"
+    echo "=== STORE CONSUMER COMPILE: $compiler ==="
+    "$compiler" -preview=dip1000 -c -I"$ROOT/source" \
+        "$ROOT/tests/compatibility/store_consumer.d" -of="$store_object"
+    echo "PASS: $compiler store consumer compile"
+
     echo "=== XML DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/xml-consumer" \

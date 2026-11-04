@@ -159,6 +159,16 @@ stable release.
 
 ### Added
 
+- Add the M6 compact editable `OsmStore` with stable opaque handles,
+  deterministic per-type traversal, typed expected-O(1) ID lookup,
+  create/replace/delete/restore/revert lifecycle support, lazy edit baselines,
+  pooled variable children, shared string interning, compact primary indexes,
+  and deterministic ownership for the high-volume store core.
+- Add reproducible pinned-Bremen store-layout qualification covering retained
+  RSS/owned bytes, build cost, primary and parent lookup, full traversal,
+  10,000 representative edits, parent-index rebuild, revert and local-ID
+  remapping. ADR 0022 records the accepted #62 trade-off and evidence.
+
 - Initial repository structure.
 - Data-integrity contract.
 - Performance and benchmark contracts.

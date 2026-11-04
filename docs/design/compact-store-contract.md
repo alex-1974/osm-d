@@ -293,3 +293,36 @@ containing at least:
 
 Monaco or Liechtenstein is used for fast iteration; Bremen decides the layout.
 Austria is reserved for later stress/direct-build qualification when practical.
+
+
+## #62 selected representation
+
+#62 selected the production compact layout recorded in ADR 0022:
+
+- columnar fixed-width element fields;
+- compact append-only pools for tags, Way children and Relation members;
+- one shared interned string pool;
+- separate open-addressed typed primary ID indexes;
+- stable opaque slot/generation/store handles;
+- deterministic non-GC ownership for the high-volume compact core;
+- lazy owned baselines only for edited loaded elements.
+
+The selected layout does **not** add a `mir.ndslice` dependency. The consumer
+API remains semantic `OsmStore`; representation vocabulary stays internal.
+
+On the pinned Bremen decision workload, the selected layout used 345,208 KiB
+final incremental RSS versus 950,452 KiB for the equivalent straightforward
+reference, a 63.680% reduction. Logical owned bytes including the identical
+benchmark parent index fell from 693,270,944 to 316,034,245 (54.414%).
+
+Primary typed-ID lookup was faster in all three element families. Full semantic
+traversal and edit/revert were slower than the straightforward object graph;
+the accepted trade-off is documented in ADR 0022. The 10,000-operation compact
+edit batch remained 19.130 ms on the qualification runner.
+
+The parent index used for this decision is benchmark-only and identical on both
+sides. Production parent-index layout and incremental coherence remain #63.
+
+The borrowed semantic ingest used to isolate retained-store RSS is
+package-internal qualification machinery. Public production PBF-to-store
+construction remains #64.

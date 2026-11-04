@@ -40,6 +40,27 @@ public import osm.model.change :
     ChangeObjectState,
     OwnedChangeEntry,
     OwnedChangeSequence;
+public import osm.store :
+    OsmHandle,
+    OsmStore,
+    StoreElementState,
+    StoreError,
+    StoreStatus,
+    StoreCounts,
+    StoreMemoryUsage,
+    StoreMetadataView,
+    StoreTagView,
+    StoreTagRange,
+    StoreWayNodeView,
+    StoreWayNodeRange,
+    StoreRelationMemberView,
+    StoreRelationMemberRange,
+    StoreNodeView,
+    StoreWayView,
+    StoreRelationView,
+    StoreNodeRange,
+    StoreWayRange,
+    StoreRelationRange;
 public import osm.raw.pbf :
     PbfPreservationReason,
     PbfRawFile,

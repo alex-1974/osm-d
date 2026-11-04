@@ -95,7 +95,7 @@ Tracked by M5: #45.
 Tracked by M6: #46.
 
 - [x] City-scale random-access store contract and workloads. #61
-- [ ] Select and implement compact element storage layout. #62
+- [x] Select and implement compact element storage layout. #62
 - [ ] Node/way/relation lookup and parent indexes. #63
 - [ ] Direct PBF-to-store construction and city-scale qualification. #64
 
