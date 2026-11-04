@@ -375,15 +375,25 @@ bool parseApi(R)(
 
         if (equal(xml.front.name.save, "version"))
         {
-            if (seenVersion ||
-                !parseVersion(xml, result, status))
+            if (seenVersion)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseVersion(xml, result, status))
                 return false;
             seenVersion = true;
         }
         else if (equal(xml.front.name.save, "waynodes"))
         {
-            if (seenWayNodes ||
-                !parseLimitElement(
+            if (seenWayNodes)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseLimitElement(
                     xml,
                     "maximum",
                     result.uploadLimits.maximumWayNodes,
@@ -393,8 +403,13 @@ bool parseApi(R)(
         }
         else if (equal(xml.front.name.save, "relationmembers"))
         {
-            if (seenRelationMembers ||
-                !parseLimitElement(
+            if (seenRelationMembers)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseLimitElement(
                     xml,
                     "maximum",
                     result.uploadLimits.maximumRelationMembers,
@@ -404,8 +419,13 @@ bool parseApi(R)(
         }
         else if (equal(xml.front.name.save, "changesets"))
         {
-            if (seenChangesets ||
-                !parseLimitElement(
+            if (seenChangesets)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseLimitElement(
                     xml,
                     "maximum_elements",
                     result.uploadLimits.maximumChangesetElements,
@@ -415,15 +435,25 @@ bool parseApi(R)(
         }
         else if (equal(xml.front.name.save, "timeout"))
         {
-            if (seenTimeout ||
-                !parseTimeout(xml, result, status))
+            if (seenTimeout)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseTimeout(xml, result, status))
                 return false;
             seenTimeout = true;
         }
         else if (equal(xml.front.name.save, "status"))
         {
-            if (seenStatus ||
-                !parseStatus(xml, result, status))
+            if (seenStatus)
+            {
+                setPosition(status, xml.front);
+                status.error = ApiCapabilitiesReadError.invalidStructure;
+                return false;
+            }
+            if (!parseStatus(xml, result, status))
                 return false;
             seenStatus = true;
         }
@@ -919,4 +949,26 @@ unittest // ignored subtree work is bounded
 
     assert(!readEditingApiCapabilities(source, document, status, options));
     assert(status.error == ApiCapabilitiesReadError.resourceLimit);
+}
+
+
+unittest // duplicate projected capability is an explicit structure error
+{
+    import transport.source : MemorySource;
+
+    enum xml =
+        "<osm version=\"0.6\"><api>" ~
+        "<version minimum=\"0.6\" maximum=\"0.6\"/>" ~
+        "<waynodes maximum=\"2000\"/>" ~
+        "<waynodes maximum=\"3000\"/>" ~
+        "<relationmembers maximum=\"32000\"/>" ~
+        "<changesets maximum_elements=\"10000\"/>" ~
+        "</api></osm>";
+
+    auto source = new MemorySource(cast(const(ubyte)[]) xml);
+    EditingApiCapabilitiesDocument document;
+    ApiCapabilitiesReadStatus status;
+
+    assert(!readEditingApiCapabilities(source, document, status));
+    assert(status.error == ApiCapabilitiesReadError.invalidStructure);
 }
