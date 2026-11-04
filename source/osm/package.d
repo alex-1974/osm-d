@@ -38,7 +38,9 @@ public import osm.model.change :
     ChangeAction,
     ChangeObjectState,
     OwnedChangeEntry,
-    OwnedChangeSequence;
+    OwnedChangeSequence,
+    UploadResultEntry,
+    UploadResult;
 
 public import osm.store :
     OsmHandle,
