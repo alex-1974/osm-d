@@ -1,6 +1,7 @@
 module io_baseline;
 
 import osm;
+import osm.pbf;
 import osm.model.compare : sameOsmSemantics;
 import osm.xml;
 import std.algorithm.sorting : sort;
