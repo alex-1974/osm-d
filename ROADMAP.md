@@ -207,12 +207,12 @@ Tracked by M13: #121.
   ambiguous v0.2-only `UploadResultEntry.action` compatibility guess.
 - [x] Freeze the v0.3.x source contract and v0.2 -> v0.3 migration guidance.
 - [x] Prepare v0.3.0 version intent, changelog, consumer docs and release notes.
-- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
-- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
-- [ ] Promote `release/0.3` to `main` with a merge commit.
-- [ ] Verify the annotated v0.3.0 tag, GitHub Release, archive/checksum and
+- [x] Pass the full six-compiler Release Gate and package/archive smoke.
+- [x] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [x] Promote `release/0.3` to `main` with a merge commit.
+- [x] Verify the annotated v0.3.0 tag, GitHub Release, archive/checksum and
   post-release qualification.
-- [ ] Forward-integrate the release result to `develop`.
+- [x] Forward-integrate the release result to `develop`.
 
 M11/M12 are the complete feature set for v0.3.0. No HTTP/OAuth client,
 changeset lifecycle, JSON capability codec or other new feature family is
