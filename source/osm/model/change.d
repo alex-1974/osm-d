@@ -410,7 +410,13 @@ struct UploadResultEntry
      * delete-if-unused, or already-deleted conditional delete depending on the
      * request context.
      *
-     * Returns false when the raw result cannot acknowledge uploaded.
+     * Params:
+     *   uploaded = Exact semantic change entry sent to the server.
+     *   effect = Receives the request-context interpretation on success, or
+     *            UploadResultEffect.none on failure.
+     *
+     * Returns:
+     *   true when this raw result can acknowledge uploaded; false otherwise.
      */
     bool effectFor(
         scope ref const OwnedChangeEntry uploaded,
@@ -599,6 +605,9 @@ unittest // v0.2.1: diffResult interpretation requires request context
 
     const placeholderDelete = UploadResultEntry.deleted(ElementType.node, -1);
     assert(placeholderDelete.shapeValid);
+
+    // v0.3 deliberately removes the ambiguous context-free action guess.
+    static assert(!__traits(compiles, placeholderDelete.action));
 
     UploadResult repeated;
     repeated.entries ~= UploadResultEntry.created(ElementType.node, -1, 101, 1);
