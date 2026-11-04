@@ -540,7 +540,7 @@ private:
         while (_edge != 0)
         {
             const edge = _store._nodeWayParents.edge(_edge);
-            if (edge.parentSlot != uint.max &&
+            if (_store._nodeWayParents.isActive(_edge) &&
                 edge.parentSlot != _lastParentSlot &&
                 edge.parentSlot < _store._ways.states.length &&
                 _store._ways.states[edge.parentSlot] !=
@@ -596,7 +596,7 @@ private:
         while (_edge != 0)
         {
             const edge = _store.relationParentEdge(_childType, _edge);
-            if (edge.parentSlot != uint.max &&
+            if (_store.relationParentActive(_childType, _edge) &&
                 edge.parentSlot != _lastParentSlot &&
                 edge.parentSlot < _store._relations.states.length &&
                 _store._relations.states[edge.parentSlot] !=
@@ -631,6 +631,18 @@ public:
         _edge = edge.next;
         skipUnavailable();
     }
+}
+
+package(osm) struct KnownWayRefRewrite
+{
+    OsmHandle parent;
+    uint index;
+}
+
+package(osm) struct KnownRelationMemberRewrite
+{
+    OsmHandle parent;
+    uint index;
 }
 
 /** Deterministic live Node range in slot/insertion order. */
@@ -1058,6 +1070,7 @@ private struct ParentIndex
     ManualArray!OsmId keys;
     ManualArray!uint heads;
     ManualArray!ParentEdge edges;
+    ManualArray!ubyte active;
     size_t keyCount;
 
     void initialize() @safe nothrow @nogc
@@ -1121,6 +1134,7 @@ private struct ParentIndex
         edge.childIndex = childIndex;
         edge.next = heads[bucket];
         edges ~= edge;
+        active ~= 1;
         const encoded = cast(uint)edges.length;
         heads[bucket] = encoded;
         return encoded;
@@ -1130,9 +1144,27 @@ private struct ParentIndex
     {
         if (encoded == 0)
             return;
-        auto index = cast(size_t)(encoded - 1);
-        assert(index < edges.length);
-        edges[index].parentSlot = uint.max;
+        const index = cast(size_t)(encoded - 1);
+        assert(index < active.length);
+        active[index] = 0;
+    }
+
+    void reactivate(uint encoded) @safe nothrow @nogc
+    {
+        if (encoded == 0)
+            return;
+        const index = cast(size_t)(encoded - 1);
+        assert(index < active.length);
+        active[index] = 1;
+    }
+
+    bool isActive(uint encoded) const @safe nothrow @nogc
+    {
+        if (encoded == 0)
+            return false;
+        const index = cast(size_t)(encoded - 1);
+        assert(index < active.length);
+        return active[index] != 0;
     }
 
     ParentEdge edge(uint encoded) const @safe nothrow @nogc
@@ -1150,7 +1182,7 @@ private struct ParentIndex
         while (current != 0)
         {
             const value = edge(current);
-            if (value.parentSlot != uint.max)
+            if (isActive(current))
                 ++result;
             current = value.next;
         }
@@ -1186,7 +1218,8 @@ private struct ParentIndex
     {
         return keys.length * OsmId.sizeof +
                heads.length * uint.sizeof +
-               edges.length * ParentEdge.sizeof;
+               edges.length * ParentEdge.sizeof +
+               active.length * ubyte.sizeof;
     }
 
 private:
