@@ -35,10 +35,18 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Install D compiler
+        id: setup-dlang
+        continue-on-error: ${{ startsWith(matrix.compiler, 'dmd-') }}
         uses: dlang-community/setup-dlang@v2
         with:
           compiler: ${{ matrix.compiler }}
           dub: 1.40.0
+
+      - name: Fallback to official D installer for DMD
+        if: startsWith(matrix.compiler, 'dmd-') && steps.setup-dlang.outcome == 'failure'
+        shell: bash
+        run: |
+          bash tools/setup-dmd-ci.sh "${{ matrix.compiler }}" 1.40.0
 
       - name: Compiler versions
         shell: bash
