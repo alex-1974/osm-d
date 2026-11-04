@@ -18,6 +18,7 @@ Use:
 - `import osm.pbf;` for loss-aware PBF documents, preservation, PBF writing,
   parallel summary decoding and PBF-specific semantic comparison;
 - `import osm.store;` for the editable store facade;
+- `import osm.compare;` for serialization-independent OSM/change comparisons;
 - `import osm.xml;` for ordinary OSM XML;
 - `import osm.osmchange;` for osmChange;
 - `import osm.validate;` for upload-readiness validation.
@@ -127,8 +128,9 @@ root and into `import osm.pbf;`:
 - `PbfParallelReader`;
 - PBF-specific semantic comparison helpers.
 
-Generic comparison helpers such as `sameChangeSemantics` remain in
-`osm.model.compare`.
+Generic semantic comparison helpers such as `sameOsmSemantics` and
+`sameChangeSemantics` use the focused `osm.compare` facade. The underlying
+`osm.model.compare` module remains available for v0.1 direct-import compatibility.
 
 ## Exact text bytes
 

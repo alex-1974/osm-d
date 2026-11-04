@@ -77,6 +77,7 @@ Preferred v0.2 facades:
 - `osm.pbf`: PBF-specific document preservation, writer, parallel summary and
   PBF semantic-comparison facilities;
 - `osm.store`: editable store facade;
+- `osm.compare`: serialization-independent OSM/change semantic comparison;
 - `osm.xml`: ordinary OSM XML;
 - `osm.osmchange`: osmChange;
 - `osm.validate`: upload-readiness validation.

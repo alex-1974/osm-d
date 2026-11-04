@@ -17,8 +17,8 @@ v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
 - Add one-shot `readPbf` and `pbfNodes/pbfWays/pbfRelations` convenience
   entry points while preserving the reusable-workspace `PbfReader.read` hot
   path.
-- Add the focused `osm.pbf` facade for loss-aware PBF documents, writing,
-  preservation, parallel summary decoding and PBF-specific comparison; slim
+- Add focused `osm.pbf` and `osm.compare` facades for PBF-specialized and
+  serialization-independent semantic comparison workflows respectively; slim
   `import osm;` to ordinary semantic/PBF-traversal/store concepts.
 - Audit workspace reuse: retain transport-d as the byte-resource boundary;
   defer containers-d queue reuse because its producer-admission contract does
