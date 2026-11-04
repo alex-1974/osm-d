@@ -41,6 +41,20 @@ void compileStoreSurface()
     assert(state == StoreElementState.deleted);
     assert(store.restore(handle, status));
 
+    StoreParentWayRange wayParents = store.parentWays(1);
+    StoreParentRelationRange relationParents =
+        store.parentRelations(ElementType.node, 1);
+    assert(wayParents.empty);
+    assert(relationParents.empty);
+
+    auto local = new OsmStore();
+    OwnedNode localNode;
+    localNode.id = -1;
+    localNode.location = LocationView(1, 2);
+    OsmHandle localHandle;
+    assert(local.add(localNode, localHandle, status));
+    assert(local.remapId(localHandle, 1001, 1, status));
+
     StoreMemoryUsage usage = store.memoryUsage;
     StoreCounts counts = store.counts;
     assert(usage.totalOwnedBytes > 0);
