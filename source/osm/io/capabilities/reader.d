@@ -693,7 +693,7 @@ bool consumeEmptyElement(R)(
 
     if (xml.empty ||
         xml.front.type != XmlEntityType.elementEnd ||
-        !equal(xml.front.name.save, elementName))
+        !equal(xml.front.name.save, name))
     {
         if (!xml.empty)
             setPosition(status, xml.front);
