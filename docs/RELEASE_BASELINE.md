@@ -161,20 +161,33 @@ These are regression/reference measurements, not cross-host latency SLAs.
 
 ## Release I/O evidence
 
-The release gate builds and runs the pinned Monaco semantic PBF-write and OSM
-XML read/write probe under LDC 1.41.0. The final v0.2.0 artifact values are
-recorded here before promotion to `main`.
+The v0.2 release branch was measured on the pinned Monaco workload under
+LDC 1.41.0, Ubuntu 24.04, release/allAtOnce.
 
-The v0.1.0 historical reference was:
+Evidence source:
 
-| Operation | v0.1.0 p50 |
-| --- | ---: |
-| semantic PBF write | 136.201 ms |
-| OSM XML write | 273.119 ms |
-| materializing OSM XML read | 1,113.736 ms |
+- release branch commit `4568d0db8a5add4ad0c813f00ae2a062e5f60546`;
+- Release Gate run 41853554192;
+- artifact `release-io-monaco-4568d0db8a5add4ad0c813f00ae2a062e5f60546`;
+- artifact digest
+  `sha256:47f0629149d6a1ad3c4dd9e0ef0ffbe905800c7689f543e617131deeca479228`.
 
-Generated formats are read back and compared semantically to the source
-`OwnedDataset`; the release gate fails if parity is lost.
+The input contained 41,703 Nodes, 6,249 Ways and 348 Relations.
+Generated sizes were 2,496,211 bytes for semantic PBF and 11,584,269 bytes
+for OSM XML.
+
+| Operation | v0.1.0 reference p50 | v0.2.0 release-branch p50 |
+| --- | ---: | ---: |
+| semantic PBF write | 136.201 ms | **104.310 ms** |
+| OSM XML write | 273.119 ms | **211.524 ms** |
+| materializing OSM XML read | 1,113.736 ms | **772.839 ms** |
+
+`semantic_parity=pass`: both generated formats were read back and compared
+semantically to the source `OwnedDataset`.
+
+The cross-run timing improvement is reported as observed release evidence, not
+as a causal performance claim: GitHub-hosted runner hardware and load are not
+controlled across the v0.1 and v0.2 measurements.
 
 ## Release interpretation
 
