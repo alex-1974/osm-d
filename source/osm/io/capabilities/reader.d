@@ -395,6 +395,7 @@ bool parseApi(R)(
             }
             if (!parseLimitElement(
                     xml,
+                    "waynodes",
                     "maximum",
                     result.uploadLimits.maximumWayNodes,
                     status))
@@ -411,6 +412,7 @@ bool parseApi(R)(
             }
             if (!parseLimitElement(
                     xml,
+                    "relationmembers",
                     "maximum",
                     result.uploadLimits.maximumRelationMembers,
                     status))
@@ -427,6 +429,7 @@ bool parseApi(R)(
             }
             if (!parseLimitElement(
                     xml,
+                    "changesets",
                     "maximum_elements",
                     result.uploadLimits.maximumChangesetElements,
                     status))
@@ -529,6 +532,7 @@ bool parseVersion(R)(
 
 bool parseLimitElement(R)(
     ref R xml,
+    string elementName,
     string attributeName,
     out size_t value,
     ref ApiCapabilitiesReadStatus status)
@@ -567,14 +571,13 @@ bool parseLimitElement(R)(
         return false;
     }
 
-    const name = entity.name.save;
     xml.popFront();
     while (!xml.empty && semanticXmlWhitespace(xml.front))
         xml.popFront();
 
     if (xml.empty ||
         xml.front.type != XmlEntityType.elementEnd ||
-        !equal(xml.front.name.save, name))
+        !equal(xml.front.name.save, elementName))
     {
         if (!xml.empty)
             setPosition(status, xml.front);
@@ -592,7 +595,8 @@ bool parseTimeout(R)(
     ref ApiCapabilitiesReadStatus status)
 {
     size_t seconds;
-    if (!parseLimitElement(xml, "seconds", seconds, status))
+    if (!parseLimitElement(
+            xml, "timeout", "seconds", seconds, status))
         return false;
 
     result.hasTimeout = true;
