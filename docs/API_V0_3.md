@@ -99,3 +99,45 @@ root stays focused on ordinary semantic/store/PBF traversal work.
 Further v0.3 work must not silently broaden this facade into an HTTP/account
 client. A future network abstraction requires a separate responsibility/API
 decision.
+
+
+## Editing API capability discovery
+
+M12 adds another focused facade:
+
+```d
+import osm.capabilities;
+```
+
+It projects the XML response from `GET /api/0.6/capabilities` onto the
+editing/upload policy that osm-d actually consumes.
+
+```d
+EditingApiCapabilitiesDocument document;
+ApiCapabilitiesReadStatus status;
+
+if (!readEditingApiCapabilities(source, document, status))
+    return;
+
+CapabilityProfile target = document.capabilities.validationProfile;
+
+UploadValidationIssue issue;
+if (!validateUploadChanges(changes, target, issue))
+    return;
+```
+
+The projection maps the server-provided maximum Way nodes, Relation members and
+Changeset elements directly into the existing `CapabilityProfile`.
+API minimum/maximum version, optional timeout and database/API/GPX service state
+remain available for editing consumers.
+
+This is intentionally not a full server-capability model. Map/Notes/GPX query
+limits, imagery policy and future unrelated siblings are boundedly skipped
+under a documented projection policy. Projected fields remain fail-closed.
+
+The capability values are dynamic server policy. Example openstreetmap.org
+values are never compiled into validation defaults.
+
+The XML form is implemented first because it reuses osm-d's existing bounded
+transport-d/dxml boundary. JSON capability support remains additive future work
+only if a consumer requires it.
