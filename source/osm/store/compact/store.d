@@ -218,6 +218,7 @@ enum StoreError : ubyte
     none,
     invalidId,
     duplicateId,
+    invalidVersion,
     invalidHandle,
     wrongElementType,
     deletedElement,
@@ -1219,6 +1220,18 @@ private struct ParentIndex
     void reserveAdditionalEdges(size_t count) @safe nothrow @nogc
     {
         edges.reserve(edges.length + count);
+    }
+
+    size_t edgeCount(OsmId id) const @safe nothrow @nogc
+    {
+        size_t result;
+        auto current = head(id);
+        while (current != 0)
+        {
+            ++result;
+            current = edge(current).next;
+        }
+        return result;
     }
 
     void ensureKey(OsmId id) @safe nothrow @nogc
@@ -2385,18 +2398,55 @@ public:
     }
 
     /**
-     * Apply an authoritative local-ID mapping when inbound locations are known.
+     * Return distinct live Ways that currently reference nodeId.
      *
-     * This is package-internal layout machinery for #62 qualification. The
-     * public #63 operation will discover these inbound locations through the
-     * production parent indexes rather than asking a caller to provide them.
+     * The referenced Node itself need not be present; partial extracts may
+     * therefore still expose parents for an unresolved positive ID.
      */
-    package(osm) bool remapKnown(
+    StoreParentWayRange parentWays(OsmId nodeId) @safe nothrow @nogc
+    {
+        StoreParentWayRange result;
+        result._store = this;
+        result._edge = _nodeWayParents.head(nodeId);
+        result.skipUnavailable();
+        return result;
+    }
+
+    /**
+     * Return distinct live Relations that reference one typed OSM identity.
+     *
+     * The referenced child itself need not be present. Element type is part of
+     * the identity, so equal numeric Node/Way/Relation IDs stay independent.
+     */
+    StoreParentRelationRange parentRelations(
+        ElementType type,
+        OsmId id) @safe nothrow @nogc
+    {
+        StoreParentRelationRange result;
+        result._store = this;
+        result._childType = type;
+        result._edge = relationParentHead(type, id);
+        result.skipUnavailable();
+        return result;
+    }
+
+    /**
+     * Apply an authoritative server ID/version to one local element.
+     *
+     * The element must currently have a negative local ID. newId must be
+     * positive and unused in the same element namespace; newVersion must be
+     * positive. All current Way/Relation references, including references held
+     * by tombstoned parents, are rewritten coherently. Reverse indexes and the
+     * primary index are updated in the same single-writer mutation. The
+     * element handle remains stable.
+     *
+     * On a reported validation failure no visible element/reference/index
+     * state changes.
+     */
+    bool remapId(
         OsmHandle handle,
         OsmId newId,
         int newVersion,
-        scope const(KnownWayRefRewrite)[] wayRefs,
-        scope const(KnownRelationMemberRewrite)[] relationMembers,
         out StoreStatus status) @safe
     {
         status = StoreStatus.init;
@@ -2413,6 +2463,12 @@ public:
             return false;
         }
 
+        if (newVersion <= 0)
+        {
+            status.error = StoreError.invalidVersion;
+            return false;
+        }
+
         OsmHandle duplicate;
         if (find(handle.type, newId, duplicate))
         {
@@ -2421,97 +2477,73 @@ public:
             return false;
         }
 
-        foreach (ref const rewrite; wayRefs)
+        // Reserve/establish all reverse-index destination state before the
+        // first visible semantic rewrite. These operations can allocate but do
+        // not expose a parent until an edge is inserted below.
+        final switch (handle.type)
         {
-            StoreStatus parentStatus;
-            if (!validateLiveHandle(
-                    rewrite.parent, ElementType.way, parentStatus))
-            {
-                status = parentStatus;
-                return false;
-            }
-
-            const span = _wayRefs[rewrite.parent._slot];
-            if (rewrite.index >= span.length ||
-                _wayRefIds[span.offset + rewrite.index] != oldId ||
-                handle.type != ElementType.node)
-            {
-                status.error = StoreError.invalidHandle;
-                return false;
-            }
+            case ElementType.node:
+                prepareParentMove(_nodeWayParents, oldId, newId);
+                prepareParentMove(_nodeRelationParents, oldId, newId);
+                break;
+            case ElementType.way:
+                prepareParentMove(_wayRelationParents, oldId, newId);
+                break;
+            case ElementType.relation:
+                prepareParentMove(_relationRelationParents, oldId, newId);
+                break;
         }
 
-        foreach (ref const rewrite; relationMembers)
+        // The new primary key is also installed before reference mutation.
+        // Duplicate rejection above makes this expected to succeed.
+        bool inserted;
+        final switch (handle.type)
         {
-            StoreStatus parentStatus;
-            if (!validateLiveHandle(
-                    rewrite.parent, ElementType.relation, parentStatus))
-            {
-                status = parentStatus;
-                return false;
-            }
-
-            const span = _relationMembers[rewrite.parent._slot];
-            if (rewrite.index >= span.length)
-            {
-                status.error = StoreError.invalidHandle;
-                return false;
-            }
-
-            const i = span.offset + rewrite.index;
-            if (_relationMemberIds[i] != oldId ||
-                cast(ElementType)_relationMemberTypes[i] != handle.type)
-            {
-                status.error = StoreError.invalidHandle;
-                return false;
-            }
+            case ElementType.node:
+                inserted = _nodeIndex.insert(newId, handle._slot);
+                break;
+            case ElementType.way:
+                inserted = _wayIndex.insert(newId, handle._slot);
+                break;
+            case ElementType.relation:
+                inserted = _relationIndex.insert(newId, handle._slot);
+                break;
         }
+        assert(inserted);
 
         final switch (handle.type)
         {
             case ElementType.node:
-                const inserted = _nodeIndex.insert(newId, handle._slot);
-                assert(inserted);
-                const removed = _nodeIndex.remove(oldId);
-                assert(removed);
+                moveWayParentKey(oldId, newId);
+                moveRelationParentKey(
+                    ElementType.node, oldId, newId);
                 _nodes.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_nodes, handle._slot, newVersion);
                 _nodes.states[handle._slot] = StoreElementState.clean;
+                assert(_nodeIndex.remove(oldId));
                 break;
+
             case ElementType.way:
-                const inserted = _wayIndex.insert(newId, handle._slot);
-                assert(inserted);
-                const removed = _wayIndex.remove(oldId);
-                assert(removed);
+                moveRelationParentKey(
+                    ElementType.way, oldId, newId);
                 _ways.ids[handle._slot] = newId;
                 setAuthoritativeVersion(_ways, handle._slot, newVersion);
                 _ways.states[handle._slot] = StoreElementState.clean;
+                assert(_wayIndex.remove(oldId));
                 break;
+
             case ElementType.relation:
-                const inserted =
-                    _relationIndex.insert(newId, handle._slot);
-                assert(inserted);
-                const removed = _relationIndex.remove(oldId);
-                assert(removed);
+                moveRelationParentKey(
+                    ElementType.relation, oldId, newId);
                 _relations.ids[handle._slot] = newId;
                 setAuthoritativeVersion(
                     _relations, handle._slot, newVersion);
                 _relations.states[handle._slot] = StoreElementState.clean;
+                assert(_relationIndex.remove(oldId));
                 break;
         }
 
-        foreach (ref const rewrite; wayRefs)
-        {
-            const span = _wayRefs[rewrite.parent._slot];
-            _wayRefIds[span.offset + rewrite.index] = newId;
-        }
-
-        foreach (ref const rewrite; relationMembers)
-        {
-            const span = _relationMembers[rewrite.parent._slot];
-            _relationMemberIds[span.offset + rewrite.index] = newId;
-        }
-
+        status.id = newId;
         return true;
     }
 
@@ -2900,6 +2932,92 @@ private:
             relationParentIndex(type).insert(
                 _relationMemberIds[childIndex],
                 parentSlot);
+        }
+    }
+
+    static void prepareParentMove(
+        ref ParentIndex index,
+        OsmId oldId,
+        OsmId newId) @safe nothrow @nogc
+    {
+        index.reserveAdditionalEdges(index.edgeCount(oldId));
+        index.ensureKey(newId);
+    }
+
+    void moveWayParentKey(OsmId oldId, OsmId newId)
+        @safe nothrow @nogc
+    {
+        auto current = _nodeWayParents.head(oldId);
+        while (current != 0)
+        {
+            const edge = _nodeWayParents.edge(current);
+            const next = edge.next;
+
+            bool belongsToCurrentState;
+            if (edge.parentSlot < _wayRefs.length)
+            {
+                const span = _wayRefs[edge.parentSlot];
+                foreach (i; 0 .. span.length)
+                {
+                    const childIndex = span.offset + i;
+                    if (_wayRefIds[childIndex] == oldId)
+                    {
+                        _wayRefIds[childIndex] = newId;
+                        belongsToCurrentState = true;
+                    }
+                }
+            }
+
+            if (belongsToCurrentState)
+            {
+                _nodeWayParents.insert(
+                    newId,
+                    edge.parentSlot,
+                    edge.active);
+                _nodeWayParents.deactivateEncoded(current);
+            }
+
+            current = next;
+        }
+    }
+
+    void moveRelationParentKey(
+        ElementType childType,
+        OsmId oldId,
+        OsmId newId) @safe nothrow @nogc
+    {
+        auto index = &relationParentIndex(childType);
+        auto current = index.head(oldId);
+
+        while (current != 0)
+        {
+            const edge = index.edge(current);
+            const next = edge.next;
+
+            bool belongsToCurrentState;
+            if (edge.parentSlot < _relationMembers.length)
+            {
+                const span = _relationMembers[edge.parentSlot];
+                foreach (i; 0 .. span.length)
+                {
+                    const childIndex = span.offset + i;
+                    if (_relationMemberIds[childIndex] == oldId &&
+                        cast(ElementType)_relationMemberTypes[childIndex] ==
+                            childType)
+                    {
+                        _relationMemberIds[childIndex] = newId;
+                        belongsToCurrentState = true;
+                    }
+                }
+            }
+
+            if (belongsToCurrentState)
+            {
+                index.insert(newId, edge.parentSlot, edge.active);
+                index.deactivateEncoded(current);
+            }
+
+            current = next;
         }
     }
 
