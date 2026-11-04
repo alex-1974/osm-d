@@ -1,0 +1,8 @@
+name "osm-d-example-xml-roundtrip"
+description "OSM XML round trip with osm-d"
+authors "osm-d examples"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
