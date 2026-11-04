@@ -1,17 +1,17 @@
 # Public API and compatibility policy
 
-> **v0.2.x contract.** This document defines the supported source-level
-> compatibility surface for the osm-d v0.2 release line. The v0.1.0 tag keeps
-> the immutable v0.1.x contract that applied to the first release.
+> **v0.3.x contract.** This document defines the supported source-level
+> compatibility surface for the osm-d v0.3 release line. Earlier release tags
+> keep the immutable contracts that applied to those published states.
 
 ## Release line
 
-The current supported release line is **v0.2.x**.
+The current supported release line is **v0.3.x**.
 
-osm-d remains pre-1.0. v0.2.0 intentionally contains the documented API
-cleanup from v0.1.0, but patch releases within v0.2.x preserve this supported
-source contract unless a security or correctness defect makes preservation
-impossible.
+osm-d remains pre-1.0. v0.3.0 adds focused Editing API response/capability
+facades and deliberately removes one misleading v0.2 compatibility property.
+Patch releases within v0.3.x preserve this supported source contract unless a
+security or correctness defect makes preservation impossible.
 
 The release compiler floor is D frontend **2.111** with DUB **1.40.0**.
 The qualified release matrix is:
@@ -20,12 +20,12 @@ The qualified release matrix is:
 - LDC 1.41.0, 1.42.0 and 1.43.0;
 - Ubuntu 24.04 x86_64.
 
-Other operating systems and architectures may work, but v0.2.0 makes no
+Other operating systems and architectures may work, but v0.3.0 makes no
 release-qualified portability claim for them.
 
 ## Compatibility promise
 
-Within v0.2.x, patch releases do not deliberately remove or rename supported
+Within v0.3.x, patch releases do not deliberately remove or rename supported
 symbols, change parameter order or supported parameter names, weaken
 ownership/lifetime contracts, change documented failure semantics, or narrow
 legal input solely for convenience.
@@ -37,7 +37,7 @@ For supported ordinary functions and methods, parameter names are part of the
 source contract because D named arguments can depend on them. Representative
 named-argument calls are compiled by the release consumer probe.
 
-A future v0.3.0 may contain deliberate pre-1.0 breaking changes. Such changes
+A future v0.4.0 may contain deliberate pre-1.0 breaking changes. Such changes
 must be documented and accompanied by migration guidance where practical.
 
 ## Preferred entry points
@@ -52,7 +52,10 @@ The supported high-level facades are:
 - `import osm.compare;` — serialization-independent OSM/change comparison;
 - `import osm.xml;` — ordinary OSM XML;
 - `import osm.osmchange;` — osmChange 0.6;
-- `import osm.validate;` — upload-readiness validation.
+- `import osm.validate;` — upload-readiness validation;
+- `import osm.upload;` — bounded OSM API diffResult response parsing;
+- `import osm.capabilities;` — Editing API capability discovery projected
+  into upload-validation policy.
 
 Low-level protobuf/wire, XML parser internals, validation implementation
 modules and compact-store representation modules are not part of this
@@ -69,8 +72,8 @@ compatibility surface.
   `OwnedNodeRef`, `OwnedRelationMember`, `OwnedNode`, `OwnedWay`,
   `OwnedRelation`, `OwnedDataset`, `ownBytes`;
 - change/upload values: `ChangeAction`, `ChangeObjectState`,
-  `OwnedChangeEntry`, `OwnedChangeSequence`, `UploadResultEntry`,
-  `UploadResult`;
+  `OwnedChangeEntry`, `OwnedChangeSequence`, `UploadResultEffect`,
+  `UploadResultEntry`, `UploadResult`;
 - editable store: `OsmStore`, `OsmHandle`, store views/ranges/status and
   counts/memory values, primary lookup, parent navigation, edit lifecycle,
   `collectChanges`, `applyUploadResult`, and `readPbfStore`;
@@ -81,6 +84,11 @@ compatibility surface.
 
 Loss-aware PBF documents/writing and parallel-summary facilities deliberately
 live in `osm.pbf` rather than the root.
+
+The v0.3 Editing API codecs deliberately remain focused imports:
+`osm.upload` parses successful diff-upload responses and `osm.capabilities`
+projects current server validation policy. Neither is re-exported from
+`import osm;`.
 
 ## Supported focused PBF facade
 
@@ -98,7 +106,7 @@ belong to `osm.compare`.
 
 ## Supported direct-import modules
 
-The following direct imports are supported on v0.2.x:
+The following direct imports are supported on v0.3.x:
 
 - `osm`;
 - `osm.pbf`;
@@ -107,6 +115,8 @@ The following direct imports are supported on v0.2.x:
 - `osm.xml`;
 - `osm.osmchange`;
 - `osm.validate`;
+- `osm.upload`;
+- `osm.capabilities`;
 - `osm.model.owned`;
 - `osm.model.change`;
 - `osm.model.compare`;
@@ -124,9 +134,10 @@ The following direct imports are supported on v0.2.x:
 - `osm.io.pbf.document_reader`;
 - `osm.io.pbf.writer`.
 
-The high-level XML, osmChange and upload-validation facades are the supported
-entry points for those families. Their underlying `osm.io.xml.*`,
-`osm.io.osmchange.*` and `osm.validation.*` modules are implementation
+The high-level XML, osmChange, upload-validation, upload-result and capability
+facades are the supported entry points for those families. Their underlying
+`osm.io.xml.*`, `osm.io.osmchange.*`, `osm.io.upload.*`,
+`osm.io.capabilities.*` and `osm.validation.*` modules are implementation
 organization, not an additional compatibility promise.
 
 Other `osm.io.pbf.*`, `osm.wire.*`, `osm.util.*`,
@@ -134,7 +145,7 @@ Other `osm.io.pbf.*`, `osm.wire.*`, `osm.util.*`,
 direct-import compatibility surfaces even if D makes declarations technically
 importable.
 
-## v0.1 migration compatibility
+## Earlier-line migration compatibility
 
 v0.2 uses Node-reference terminology because a Way stores references to Nodes,
 not embedded Node objects:
@@ -144,14 +155,19 @@ not embedded Node objects:
 - store Way-node leaf values -> `NodeRefView`.
 
 The direct module `osm.view.way_node`, alias `WayNodeView`, and alias
-`OwnedWayNode` remain available during v0.2.x migration. They are not
+`OwnedWayNode` remain available during v0.3.x migration. They are not
 re-exported from the preferred package root.
 
 PBF-specialized document/writer/parallel facilities that were root exports in
 v0.1 are reached through `osm.pbf` in v0.2. Generic comparison helpers are
 reached through `osm.compare`.
 
-See `API_V0_2.md` for the complete v0.1 -> v0.2 migration guide.
+See `API_V0_2.md` for the v0.1 -> v0.2 migration and `API_V0_3.md` for
+the v0.2 -> v0.3 migration.
+
+The only deliberate v0.2.x source break in v0.3.0 is removal of
+`UploadResultEntry.action`, which v0.2.1 already documented as an ambiguous
+legacy shape guess. Use request-aware `effectFor` instead.
 
 ## Editable store and upload reconciliation
 
@@ -183,9 +199,10 @@ result. `UploadResultEntry.effectFor` uses the exact uploaded entry as request
 context. A retained store deletion restores its pre-edit baseline as clean;
 an already-deleted acknowledgement finalizes the local tombstone.
 
-The legacy context-free `UploadResultEntry.action` property remains available
-throughout v0.2.x for source compatibility, but consumers must not use it to
-correlate arbitrary raw diffResult entries.
+v0.3 removes the legacy context-free `UploadResultEntry.action` shape guess.
+Consumers classify result effects only with
+`UploadResultEntry.effectFor(uploadedEntry, effect)`, because raw diffResult
+shape is not sufficient request context.
 
 The diff result does not carry complete server timestamp/user metadata; osm-d
 does not fabricate those fields.
@@ -212,8 +229,9 @@ a server-confirmed deleted object invalidates its former handle.
 `readPbfStore` borrows encoded PBF bytes only for the call. On success the
 returned store no longer depends on the input bytes.
 
-XML and osmChange readers/writers use transport-d `ByteSource`/`ByteSink`
-contracts. osm-d does not create a competing filesystem/network abstraction.
+XML, osmChange, diffResult and capability readers/writers use transport-d
+`ByteSource`/`ByteSink` contracts where applicable. osm-d does not create a
+competing filesystem/network abstraction.
 
 ## Failure and `.init` contract
 
@@ -231,6 +249,8 @@ Important meanings include:
 - `OwnedDataset.init`, `OwnedChangeSequence.init`, `UploadResult.init`:
   valid empty carriers;
 - `UploadResultEntry.init`: invalid diff-result entry because old ID is zero;
+- `UploadResultDocument.init` and `EditingApiCapabilitiesDocument.init`:
+  empty carrier/default projection values, not successful parsed documents;
 - owned element structs at `.init`: structurally representable carriers, not
   an assertion that ID zero is valid editable/upload state.
 
@@ -252,7 +272,7 @@ compatibility surface.
 
 ## Exact bytes and codec boundaries
 
-Tag keys/values, usernames and relation roles preserve exact bytes. v0.2 does
+Tag keys/values, usernames and relation roles preserve exact bytes. v0.3 does
 not invent an osm-specific text wrapper, normalization, repair or transcoding
 policy.
 
@@ -263,9 +283,9 @@ The loss-aware PBF document/raw-preservation family is an explicit advanced
 exception because callers may need to distinguish semantic rewriting from
 source preservation.
 
-## What is not promised in v0.2.x
+## What is not promised in v0.3.x
 
-v0.2.x does not promise:
+v0.3.x does not promise:
 
 - binary ABI stability;
 - persistent/mmap store format compatibility;
@@ -279,7 +299,7 @@ v0.2.x does not promise:
 
 ## Change review
 
-A change is breaking for the supported v0.2.x surface when it can require a
+A change is breaking for the supported v0.3.x surface when it can require a
 conforming consumer to change source or when it weakens a documented
 ownership, failure, data-integrity or lifetime guarantee.
 

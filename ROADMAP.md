@@ -14,6 +14,9 @@ criteria.
 - **M8 — API ergonomics and workspace primitive reuse:** #94
 - **M9 — Editable store ↔ change/upload bridge:** #100
 - **M10 — v0.2.0 release stabilization and API freeze:** #102
+- **M11 — OSM API diffResult codec:** #114
+- **M12 — Editing API capabilities discovery:** #119
+- **M13 — v0.3.0 API freeze and release qualification:** #121
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -154,11 +157,63 @@ Tracked by M10: #102.
   evidence baseline.
 - [x] Make release metadata checks derive the compatibility line from
   `RELEASE_VERSION`.
-- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
-- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
-- [ ] Promote `release/0.2` to `main` with a merge commit.
-- [ ] Verify the annotated v0.2.0 tag, GitHub Release, archive/checksum and
+- [x] Pass the full six-compiler Release Gate and package/archive smoke.
+- [x] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [x] Promote `release/0.2` to `main` with a merge commit.
+- [x] Verify the annotated v0.2.0 tag, GitHub Release, archive/checksum and
   post-release consumer state.
 
 Feature/API freeze checkpoints are immutable engineering evidence. The final
 release tag alone is the publication trigger.
+
+
+## Phase 11 — OSM API diffResult codec
+
+Tracked by M11: #114.
+
+- [x] Define the current OSM API diffResult wire contract and upstream evidence. #111
+- [x] Implement bounded streaming/materialized diffResult parsing and the
+  focused `osm.upload` facade. #112
+- [x] Qualify current server result shapes, duplicate placeholders,
+  conditional-delete semantics and parser -> store reconciliation. #113
+
+The codec ends at the successful OSM Editing API response body. HTTP,
+authentication/OAuth, changeset creation/closing, retry policy and
+application/editor state remain outside osm-d.
+
+
+## Phase 12 — Editing API capabilities discovery
+
+Tracked by M12: #119.
+
+- [x] Define the editing/upload capability projection and current server
+  evidence. #116
+- [x] Implement bounded XML capability parsing and direct
+  `CapabilityProfile` mapping. #117
+- [x] Qualify current Rails structure, service states, unrelated/future
+  capability siblings and capabilities -> upload validation. #118
+
+The projection consumes dynamic target-server policy without turning osm-d
+into an HTTP/account client. JSON capability responses remain additive future
+work only if a real consumer requires them.
+
+
+## Phase 13 — v0.3.0 API freeze and release qualification
+
+Tracked by M13: #121.
+
+- [x] Cut `release/0.3` from the exact post-M12 feature-freeze commit.
+- [x] Audit the v0.3 public facade/direct-import surface and remove the
+  ambiguous v0.2-only `UploadResultEntry.action` compatibility guess.
+- [x] Freeze the v0.3.x source contract and v0.2 -> v0.3 migration guidance.
+- [x] Prepare v0.3.0 version intent, changelog, consumer docs and release notes.
+- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
+- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [ ] Promote `release/0.3` to `main` with a merge commit.
+- [ ] Verify the annotated v0.3.0 tag, GitHub Release, archive/checksum and
+  post-release qualification.
+- [ ] Forward-integrate the release result to `develop`.
+
+M11/M12 are the complete feature set for v0.3.0. No HTTP/OAuth client,
+changeset lifecycle, JSON capability codec or other new feature family is
+admitted after this feature freeze.

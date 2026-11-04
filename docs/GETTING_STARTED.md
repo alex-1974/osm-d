@@ -1,13 +1,14 @@
 # Getting started with osm-d
 
-This guide targets the v0.2.x consumer API. The v0.1 -> v0.2 migration is
-summarized in `API_V0_2.md`; the supported v0.2.x compatibility contract is
+This guide targets the v0.3.x consumer API. The v0.1 -> v0.2 and
+v0.2 -> v0.3 migrations are summarized in `API_V0_2.md` and
+`API_V0_3.md`; the supported v0.3.x compatibility contract is
 `API_STABILITY.md`.
 
 ## Add the dependency
 
 ```sdl
-dependency "osm-d" version="~>0.2.0"
+dependency "osm-d" version="~>0.3.0"
 ```
 
 The current release floor is D frontend 2.111 and DUB 1.40.0.
@@ -116,12 +117,27 @@ Store leaf values use the same semantic vocabulary as PBF:
 
 ## Turn store edits into an upload
 
-The store exports OSM change semantics, not XML:
+The store exports OSM change semantics, not XML. Server policy is discovered
+through the focused capabilities facade rather than hardcoded:
 
 ```d
 import osm;
+import osm.capabilities;
 import osm.osmchange;
+import osm.upload;
 import osm.validate;
+
+EditingApiCapabilitiesDocument capabilityDocument;
+ApiCapabilitiesReadStatus capabilityStatus;
+
+if (!readEditingApiCapabilities(
+        capabilitiesResponseSource,
+        capabilityDocument,
+        capabilityStatus))
+    return;
+
+CapabilityProfile capabilities =
+    capabilityDocument.capabilities.validationProfile;
 
 OwnedChangeSequence changes;
 StoreStatus status;
@@ -150,22 +166,22 @@ if (!writer.writeChanges(changes, sink, writeStatus))
     return;
 ```
 
+The application remains responsible for obtaining the capabilities response,
+opening/closing the changeset, HTTP/OAuth and sending the generated body.
+
 `collectChanges` copies only pending edit state into a durable
 `OwnedChangeSequence`. It does not invent a changeset ID. Created local
 dependencies are ordered so ordinary Node -> Way -> Relation references are
 uploadable; circular local Relation placeholders fail explicitly.
 
-After a successful diff upload, represent the server response without coupling
-the store to XML/HTTP:
+After a successful diff upload, parse the server's XML response directly:
 
 ```d
 UploadResult result;
-result.entries ~= UploadResultEntry.created(
-    ElementType.node, -1, 101, 1);
-result.entries ~= UploadResultEntry.modified(
-    ElementType.way, 200, 7);
-result.entries ~= UploadResultEntry.deleted(
-    ElementType.relation, 300);
+UploadResultReadStatus resultStatus;
+
+if (!readUploadResult(uploadResponseSource, result, resultStatus))
+    return;
 
 if (!store.applyUploadResult(changes, result, status))
 {
@@ -173,6 +189,11 @@ if (!store.applyUploadResult(changes, result, status))
     // not match the request. No acknowledgement was partially applied.
 }
 ```
+
+Raw diffResult shape does not reliably identify create/modify/delete. When
+individual result semantics are needed, call
+`UploadResultEntry.effectFor(uploadedEntry, effect)` with the exact request
+entry.
 
 Create and modify acknowledgements preserve the element handle. Create also
 remaps inbound references to the authoritative server ID. A confirmed delete
@@ -208,15 +229,21 @@ Use `osm.xml` and `osm.osmchange`. They accept transport-d
 `ByteSource`/`ByteSink` resources; osm-d does not duplicate file/network
 transport abstractions.
 
-Before an `OwnedChangeSequence` is used for an OSM API-style upload, run
-`validateUploadChanges` from `osm.validate` with the target
-`CapabilityProfile`.
+Before an `OwnedChangeSequence` is used for an OSM API-style upload, read the
+target policy with `osm.capabilities` when online and run
+`validateUploadChanges` from `osm.validate` with the resulting
+`CapabilityProfile`. Offline consumers may still supply an explicit local
+policy or use `CapabilityProfile.unbounded()` when only semantic validation is
+wanted.
 
 ## Naming and migration
 
-A Way contains Node references. v0.2 therefore uses `NodeRefView` and
+A Way contains Node references. v0.2 introduced `NodeRefView` and
 `OwnedNodeRef` rather than the v0.1 `WayNodeView`/`OwnedWayNode` names.
 
-See `API_V0_2.md` for the complete migration table and workspace-library
-reuse decisions. `API_STABILITY.md` defines the supported v0.2.x patch-line
-contract.
+v0.3 adds `osm.upload` and `osm.capabilities` and removes the ambiguous
+v0.2-only `UploadResultEntry.action` compatibility property. Use
+`effectFor` with the matching uploaded request entry.
+
+See `API_V0_2.md` and `API_V0_3.md` for migration guidance.
+`API_STABILITY.md` defines the supported v0.3.x patch-line contract.

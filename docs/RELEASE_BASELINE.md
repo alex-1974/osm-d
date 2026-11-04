@@ -1,17 +1,141 @@
-# osm-d v0.2.0 release baseline
-
-**Feature-freeze date:** 2026-11-04  
-**Feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
-
-This document condenses the evidence relevant to the v0.2.0 release. v0.2 is
-primarily a consumer-API and editable-store workflow release, not a parser
-algorithm rewrite. Evidence is therefore split between unchanged v0.1
-performance/reference baselines and v0.2-specific requalification of the
-changed API/store surface.
+# osm-d release baseline
 
 Absolute timings are environment-specific. Durable claims are semantic parity,
 bounded-memory behavior, the supported compiler matrix, source/lifetime
 contracts and the measured performance class on the recorded runners.
+
+## v0.3.0 release candidate
+
+**Feature-freeze date:** 2026-11-04  
+**Feature-freeze commit:** `77c98eaca6ba2cd8f50eb50adc4d4e352d6e719c`
+
+v0.3.0 contains the completed M11/M12 Editing API response/policy slice:
+
+- bounded `diffResult` XML parsing through `osm.upload`;
+- request-context result classification through
+  `UploadResultEntry.effectFor`;
+- bounded Editing API capabilities projection through `osm.capabilities`;
+- direct projection of dynamic Way/Relation/Changeset limits into the existing
+  `CapabilityProfile`.
+
+The production PBF decoder/writer, compact-store representation and city-scale
+store algorithms are unchanged by M11/M12. Existing v0.2 performance/reference
+evidence therefore remains the comparison baseline rather than being relabeled
+as fresh v0.3 measurements.
+
+v0.3-specific correctness evidence before the release branch:
+
+- M11 final PR-head Fast CI 41896048308 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M11 post-merge Fast CI 41896622851 — PASS;
+- M12 final PR-head Fast CI 41909701127 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M12 post-merge Fast CI 41910215373 — PASS;
+- external `osm.upload` and `osm.capabilities` consumers compile and run on
+  the fast compiler pair;
+- server-shape fixtures cover conditional delete result ambiguity, placeholder
+  reuse, current capability structure/service states, projection evolution and
+  malformed/bounded input.
+
+Release-branch stabilization evidence on candidate
+`6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`:
+
+- Release Gate run 41914520052 — PASS across all six compiler jobs, metadata
+  and Monaco I/O;
+- PBF Round-trip Qualification run 41914520062 — PASS for pinned Monaco,
+  Liechtenstein and Bremen;
+- M6 Store Qualification run 41914520082 — PASS;
+- Monaco I/O artifact
+  `release-io-monaco-6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`,
+  digest
+  `sha256:4541552189ecdd8c414420565102edd28beaf5a87c4ceb8ebea351eaac8fc24a`;
+- M6/Bremen evidence artifact
+  `store-layout-bremen-6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`,
+  digest
+  `sha256:900e0a4fd4e284003e7a80c40d066f585266bc1904bcf6b3df0061300817e61e`.
+
+Fresh Monaco release-I/O evidence under LDC 1.41.0, Ubuntu 24.04,
+release/allAtOnce:
+
+| Operation | v0.2.0 release-branch p50 | v0.3.0 stabilization p50 |
+| --- | ---: | ---: |
+| semantic PBF write | 104.310 ms | **83.989 ms** |
+| OSM XML write | 211.524 ms | **172.995 ms** |
+| materializing OSM XML read | 772.839 ms | **650.615 ms** |
+
+The input again contained 41,703 Nodes, 6,249 Ways and 348 Relations.
+Generated sizes remained 2,496,211 bytes for semantic PBF and 11,584,269
+bytes for OSM XML, with `semantic_parity=pass`.
+
+These cross-run timing differences are observations on GitHub-hosted runners,
+not causal performance claims. M11/M12 do not modify the measured PBF/XML hot
+paths.
+
+After this evidence is committed, the final promotion candidate is rerun
+through the same Release Gate, pinned PBF and M6/Bremen qualifications so that
+release promotion still uses one exact fully-green head.
+
+The API freeze removes the v0.2-only ambiguous
+`UploadResultEntry.action` shape guess and freezes request-aware `effectFor`
+as the supported semantic classifier. No further public API change is admitted
+after that checkpoint.
+
+## Historical v0.2 baseline
+
+**v0.2 feature-freeze date:** 2026-11-04  
+**v0.2 feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
+
+v0.2 was primarily a consumer-API and editable-store workflow release, not a
+parser algorithm rewrite. Evidence is split between unchanged v0.1
+performance/reference baselines and v0.2-specific requalification of the
+changed API/store surface.
+
+## Publication record
+
+v0.2.0 was promoted by release PR #103 with a merge commit:
+
+- `main` release commit:
+  `5bc4572452f1d68ff126d6bc5a8c734b59baeb6a`;
+- annotated tag object:
+  `4bd66459b985f208074ad7832f4ed3cbd53e26e6`;
+- tag `v0.2.0` resolves exactly to the release commit above;
+- Publish release run: 41855719421 — PASS;
+- post-promotion Release Gate run: 41855719445 — PASS across all six compiler
+  jobs, metadata and Monaco I/O;
+- release archive: `osm-d-0.2.0.tar.gz`, 324,437 bytes;
+- published archive digest:
+  `sha256:a39c30037445529c48b345548ea098c4ef92adf9a14cbb0e1a04682bfa729d91`;
+- checksum asset: `osm-d-0.2.0.tar.gz.sha256`.
+
+The automated tag is annotated but unsigned. Workspace policy recommends
+signed final release tags but does not make signing a release-gate requirement;
+v0.1.0 used the same publication mechanism.
+
+## v0.2.1 hotfix publication record
+
+The conditional-delete diffResult correctness hotfix was released on
+2026-11-04 without changing the v0.2.x compatibility line.
+
+- hotfix source commit:
+  `7c2a61048559929d5bbc3b7459232f5d4dd9d56f`;
+- release PR: #107;
+- `main` release merge:
+  `7bd630831d53758fdad472117056c51fe983fbd2`;
+- annotated tag object:
+  `89bfa991d80e54df6e8cca6d0edc9d4cb03b3a27`;
+- tag `v0.2.1` resolves exactly to the release merge above;
+- hotfix branch Release Gate 41874141587 — PASS;
+- release-PR Release Gate 41874638857 — PASS;
+- Publish release 41875263245 — PASS;
+- post-promotion Main Release Gate 41875263258 — PASS;
+- release archive: `osm-d-0.2.1.tar.gz`, 327,676 bytes;
+- published archive digest:
+  `sha256:99d1450c5cb674360235895181c4fc5066714297eb191dad1f2be9cc8f18dbf0`;
+- checksum asset: `osm-d-0.2.1.tar.gz.sha256`.
+
+The patch corrects request-context interpretation of conditional
+`delete if-unused` diffResult entries. It does not alter the compiler floor,
+platform qualification, store representation or parser performance baseline.
 
 ## Supported toolchain and platform
 
@@ -25,14 +149,14 @@ Release compiler matrix:
 - DMD 2.111.0, 2.112.1, 2.113.0;
 - LDC 1.41.0, 1.42.0, 1.43.0.
 
-The v0.2.0 release gate is Ubuntu 24.04 x86_64. Other platforms are not
+The v0.3.0 release gate is Ubuntu 24.04 x86_64. Other platforms are not
 claimed as release-qualified by this baseline.
 
 LDC 1.41.0 remains the primary release-performance compiler.
 
 The supported source API and direct-import boundary are defined in
-`API_STABILITY.md`; v0.1 -> v0.2 migration is documented in
-`API_V0_2.md`.
+`API_STABILITY.md`; v0.1 -> v0.2 and v0.2 -> v0.3 migration are documented
+in `API_V0_2.md` and `API_V0_3.md`.
 
 ## Pinned compatibility corpus
 

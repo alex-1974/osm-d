@@ -410,7 +410,13 @@ struct UploadResultEntry
      * delete-if-unused, or already-deleted conditional delete depending on the
      * request context.
      *
-     * Returns false when the raw result cannot acknowledge uploaded.
+     * Params:
+     *   uploaded = Exact semantic change entry sent to the server.
+     *   effect = Receives the request-context interpretation on success, or
+     *            UploadResultEffect.none on failure.
+     *
+     * Returns:
+     *   true when this raw result can acknowledge uploaded; false otherwise.
      */
     bool effectFor(
         scope ref const OwnedChangeEntry uploaded,
@@ -463,20 +469,6 @@ struct UploadResultEntry
         }
     }
 
-    /**
-     * Legacy context-free shape guess retained for v0.2.x source compatibility.
-     *
-     * Do not use this property to correlate a generic diffResult with its
-     * request: conditional delete-if-unused can have the same raw shape as a
-     * modify. Prefer effectFor when the uploaded entry is available.
-     */
-    @property ChangeAction action() const @safe pure nothrow @nogc
-    in (shapeValid)
-    {
-        if (!hasNewId)
-            return ChangeAction.deleteObject;
-        return oldId < 0 ? ChangeAction.create : ChangeAction.modify;
-    }
 }
 
 /**
@@ -527,7 +519,6 @@ unittest
 
     assert(deleted.shapeValid);
     assert(!deleted.complete);
-    assert(deleted.action == ChangeAction.deleteObject);
     assert(deleted.deleteIfUnused);
     assert(deleted.metadata.versionNumber == 7);
 }
@@ -568,17 +559,14 @@ unittest
     const created = UploadResultEntry.created(
         ElementType.node, -1, 1001, 1);
     assert(created.shapeValid);
-    assert(created.action == ChangeAction.create);
 
     const modified = UploadResultEntry.modified(
         ElementType.way, 22, 8);
     assert(modified.shapeValid);
-    assert(modified.action == ChangeAction.modify);
 
     const deleted = UploadResultEntry.deleted(
         ElementType.relation, 33);
     assert(deleted.shapeValid);
-    assert(deleted.action == ChangeAction.deleteObject);
 
     assert(!UploadResultEntry.init.shapeValid);
 }
@@ -597,7 +585,6 @@ unittest // v0.2.1: diffResult interpretation requires request context
         UploadResultEffect effect;
         assert(retained.effectFor(conditional, effect));
         assert(effect == UploadResultEffect.deleteRetained);
-        assert(retained.action == ChangeAction.modify);
 
         const alreadyDeleted = UploadResultEntry.modified(type, 42, 8);
         assert(alreadyDeleted.effectFor(conditional, effect));
@@ -614,7 +601,9 @@ unittest // v0.2.1: diffResult interpretation requires request context
 
     const placeholderDelete = UploadResultEntry.deleted(ElementType.node, -1);
     assert(placeholderDelete.shapeValid);
-    assert(placeholderDelete.action == ChangeAction.deleteObject);
+
+    // v0.3 deliberately removes the ambiguous context-free action guess.
+    static assert(!__traits(compiles, placeholderDelete.action));
 
     UploadResult repeated;
     repeated.entries ~= UploadResultEntry.created(ElementType.node, -1, 101, 1);

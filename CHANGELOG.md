@@ -7,6 +7,40 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-04
+
+### Added
+
+- Add the focused `osm.upload` facade and bounded transport-d/dxml reader for
+  OSM API 0.6 `diffResult` responses. The codec preserves root metadata,
+  source order, duplicate placeholder identities and raw old/new ID/version
+  fields without inferring request actions from response shape.
+- Add transactional `readUploadResult` / `readUploadResultDocument`
+  conveniences, explicit response limits/diagnostics, current server-shape
+  regression coverage and an external parser -> `OsmStore.applyUploadResult`
+  consumer probe.
+- Add the focused `osm.capabilities` facade and bounded XML projection of OSM
+  Editing API capabilities into the existing `CapabilityProfile`.
+  Way-node, Relation-member and Changeset-element limits now come from
+  target-server policy instead of caller hardcoding; API version range,
+  service state and timeout remain available for editing consumers.
+- Add an explicit forward-compatible projection policy for unrelated
+  capabilities: projected fields fail closed while map/Notes/GPX query policy,
+  imagery rules and future unrelated subtrees are boundedly skipped.
+
+### Changed
+
+- Remove the ambiguous context-free `UploadResultEntry.action` compatibility
+  property. Current OSM diffResult shapes cannot identify request action
+  reliably; v0.3 consumers use
+  `UploadResultEntry.effectFor(uploadedEntry, effect)` with exact request
+  context.
+
+### Fixed
+
+- Correct the compatibility-contract inventory to include
+  `UploadResultEffect`, which became public in v0.2.1.
+
 ## 0.2.1 - 2026-11-04
 
 ### Fixed
