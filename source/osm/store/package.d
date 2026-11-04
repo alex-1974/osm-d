@@ -34,3 +34,7 @@ public import osm.store.compact.store :
     StoreNodeRange,
     StoreWayRange,
     StoreRelationRange;
+
+public import osm.store.pbf :
+    PbfStoreReadStatus,
+    readPbfStore;
