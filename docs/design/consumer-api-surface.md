@@ -1,6 +1,6 @@
 # Consumer API Surface
 
-Status: implemented baseline; v0.2 ergonomics refinement in progress
+Status: implemented v0.2 baseline; frozen for the v0.2.x patch line
 
 ## Purpose
 
@@ -571,8 +571,9 @@ visibility rather than data layout or decoding.
 
 ## Compatibility direction
 
-There is no released API freeze that requires preserving accidental exposure of
-implementation mechanisms.
+The v0.2 supported facade/import surface is frozen by `docs/API_STABILITY.md`.
+Implementation mechanisms remain outside that contract; migration aliases that
+are explicitly listed there are preserved throughout v0.2.x.
 
 Before changing visibility or names:
 
