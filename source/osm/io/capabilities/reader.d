@@ -63,6 +63,12 @@ struct ApiCapabilitiesReadStatus
     int line;
     int column;
 
+    /**
+     * Whether no capability-read error has been recorded.
+     *
+     * Returns:
+     *   true when error is ApiCapabilitiesReadError.none.
+     */
     @property bool ok() const @safe pure nothrow @nogc
     {
         return error == ApiCapabilitiesReadError.none;
@@ -82,9 +88,31 @@ struct ApiCapabilitiesReadOptions
     size_t maximumIgnoredXmlEvents;
 }
 
-/** Stateless transactional reader for one capabilities document. */
+/**
+ * Stateless transactional reader for one capabilities document.
+ */
 struct ApiCapabilitiesReader
 {
+    /**
+     * Parse one Editing API capabilities XML document.
+     *
+     * Params:
+     *   source = Byte source containing one capabilities XML document.
+     *   document = Receives the projected editing/upload capabilities on
+     *              complete success.
+     *   status = Receives explicit transport/XML/projection failure details.
+     *   options = Optional parser/resource limits; zero fields select defaults.
+     *
+     * Returns:
+     *   true only after the complete document has been parsed and the required
+     *   editing/upload projection is present. On failure document remains
+     *   at .init.
+     *
+     * Safety:
+     *   The trusted boundary contains dxml parser ranges inside this
+     *   synchronous call. No parser entity/range escapes; the returned document
+     *   owns the projected byte strings and value data.
+     */
     bool read(
         ByteSource source,
         out EditingApiCapabilitiesDocument document,
@@ -229,7 +257,18 @@ struct ApiCapabilitiesReader
     }
 }
 
-/** Transactionally read one editing-capability projection. */
+/**
+ * Transactionally read one editing-capability projection.
+ *
+ * Params:
+ *   source = Byte source containing one capabilities XML document.
+ *   document = Receives root metadata and editing/upload capabilities.
+ *   status = Receives explicit failure details.
+ *   options = Optional parser/resource limits; zero fields select defaults.
+ *
+ * Returns:
+ *   true on complete success. On failure document remains at .init.
+ */
 bool readEditingApiCapabilities(
     ByteSource source,
     out EditingApiCapabilitiesDocument document,
