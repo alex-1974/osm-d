@@ -7,6 +7,17 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+### Added
+
+- Add the focused `osm.upload` facade and bounded transport-d/dxml reader for
+  OSM API 0.6 `diffResult` responses. The codec preserves root metadata,
+  source order, duplicate placeholder identities and raw old/new ID/version
+  fields without inferring request actions from response shape.
+- Add transactional `readUploadResult` / `readUploadResultDocument`
+  conveniences, explicit response limits/diagnostics, current server-shape
+  regression coverage and an external parser -> `OsmStore.applyUploadResult`
+  consumer probe.
+
 ## 0.2.1 - 2026-11-04
 
 ### Fixed
