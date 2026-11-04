@@ -69,8 +69,8 @@ compatibility surface.
   `OwnedNodeRef`, `OwnedRelationMember`, `OwnedNode`, `OwnedWay`,
   `OwnedRelation`, `OwnedDataset`, `ownBytes`;
 - change/upload values: `ChangeAction`, `ChangeObjectState`,
-  `OwnedChangeEntry`, `OwnedChangeSequence`, `UploadResultEntry`,
-  `UploadResult`;
+  `OwnedChangeEntry`, `OwnedChangeSequence`, `UploadResultEffect`,
+  `UploadResultEntry`, `UploadResult`;
 - editable store: `OsmStore`, `OsmHandle`, store views/ranges/status and
   counts/memory values, primary lookup, parent navigation, edit lifecycle,
   `collectChanges`, `applyUploadResult`, and `readPbfStore`;
