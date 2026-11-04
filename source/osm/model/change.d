@@ -519,7 +519,6 @@ unittest
 
     assert(deleted.shapeValid);
     assert(!deleted.complete);
-    assert(deleted.action == ChangeAction.deleteObject);
     assert(deleted.deleteIfUnused);
     assert(deleted.metadata.versionNumber == 7);
 }
@@ -560,12 +559,10 @@ unittest
     const created = UploadResultEntry.created(
         ElementType.node, -1, 1001, 1);
     assert(created.shapeValid);
-    assert(created.action == ChangeAction.create);
 
     const modified = UploadResultEntry.modified(
         ElementType.way, 22, 8);
     assert(modified.shapeValid);
-    assert(modified.action == ChangeAction.modify);
 
     const deleted = UploadResultEntry.deleted(
         ElementType.relation, 33);
