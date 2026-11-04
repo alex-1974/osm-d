@@ -65,10 +65,22 @@ import transport.source : MemorySink, MemorySource;
         handle: found));
     assert(found == handle);
 
-    assert(editable.remapId(
-        handle: handle,
+    OwnedChangeSequence uploadChanges;
+    assert(editable.collectChanges(
+        changes: uploadChanges,
+        status: status));
+    assert(uploadChanges.entries.length == 1);
+    assert(uploadChanges.setChangeset(changesetId: 55));
+
+    UploadResult uploadResult;
+    uploadResult.entries ~= UploadResultEntry.created(
+        type: ElementType.node,
+        oldId: -1,
         newId: 1001,
-        newVersion: 1,
+        newVersion: 1);
+    assert(editable.applyUploadResult(
+        uploaded: uploadChanges,
+        result: uploadResult,
         status: status));
 
     auto parentWays = editable.parentWays(nodeId: 1001);
