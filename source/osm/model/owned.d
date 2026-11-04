@@ -73,17 +73,20 @@ struct OwnedMetadata
 }
 
 /**
- * One ordered node reference inside an owned OSM Way.
+ * One owned reference to an OSM Node inside an ordered container such as a Way.
  *
  * `location` is meaningful only when `hasLocation` is true. This preserves
  * the optional LocationsOnWays semantic without exposing PBF parallel columns.
  */
-struct OwnedWayNode
+struct OwnedNodeRef
 {
     OsmId id;
     bool hasLocation;
     LocationView location;
 }
+
+/// v0.1 compatibility alias. Prefer OwnedNodeRef.
+alias OwnedWayNode = OwnedNodeRef;
 
 /** One ordered member inside an owned OSM Relation. */
 struct OwnedRelationMember
@@ -126,7 +129,7 @@ struct OwnedWay
     OsmId id;
     OwnedMetadata metadata;
     OwnedTag[] tags;
-    OwnedWayNode[] nodes;
+    OwnedNodeRef[] nodes;
 
     /** Copy this way and every mutable child array. Immutable strings may share. */
     OwnedWay deepCopy() const @safe
