@@ -55,18 +55,19 @@ memory decision.
 ## Equivalent capabilities
 
 The straightforward reference owns normal `OwnedDataset` objects and D
-associative-array primary indexes.
+associative-array primary indexes. Its reverse-navigation baseline is a static
+packed distinct-parent index.
 
-Both reference and compact variants also carry the **same** packed
-benchmark-only parent indexes:
+The compact variant uses the **production incremental parent indexes** from
+ADR 0023:
 
-- Node -> parent Ways;
-- typed element -> parent Relations.
+- Node -> distinct live parent Ways;
+- typed element -> distinct live parent Relations.
 
-This prevents #62 from winning by omitting reverse navigation while leaving the
-production #63 parent-index representation open.
-
-The benchmark-only parent index is not a supported store API.
+The benchmark validates production parent-query checksums against the static
+reference. The reference rebuilds its packed index after the edit batch; the
+production store maintains reverse state inside each mutation and therefore has
+no rebuild phase.
 
 ## Workloads
 
@@ -119,24 +120,25 @@ LDC 1.41.0, GitHub Ubuntu 24.04 hosted runner, release/allAtOnce:
 
 | Metric | Reference | Compact |
 | --- | ---: | ---: |
-| Final incremental RSS | 950,452 KiB | 345,208 KiB |
-| Logical owned bytes incl. parent index | 693,270,944 | 316,034,245 |
-| Node lookup p50 | 102.236 ms | 78.676 ms |
-| Way lookup p50 | 13.387 ms | 10.108 ms |
-| Relation lookup p50 | 0.849 ms | 0.574 ms |
-| Node-parent lookup p50 | 40.018 ms | 41.901 ms |
-| Relation-parent lookup p50 | 2.713 ms | 2.862 ms |
-| Full traversal p50 | 137.235 ms | 174.761 ms |
-| 10k edits | 6.368 ms | 19.130 ms |
-| Parent-index rebuild after edits | 377.127 ms | 363.129 ms |
-| Revert batch | 0.482 ms | 5.472 ms |
+| Final incremental RSS | 948,460 KiB | 351,324 KiB |
+| Logical owned bytes incl. parent index | 691,378,472 | 308,976,077 |
+| Parent-index bytes | 78,577,608 | 73,415,112 |
+| Node lookup p50 | 61.819 ms | 43.862 ms |
+| Way lookup p50 | 8.354 ms | 7.209 ms |
+| Relation lookup p50 | 0.938 ms | 0.572 ms |
+| Node-parent lookup p50 | 31.746 ms | 64.680 ms |
+| Relation-parent lookup p50 | 2.952 ms | 3.461 ms |
+| Full traversal p50 | 138.807 ms | 170.976 ms |
+| 10k edits incl. production parent maintenance | 5.509 ms | 29.210 ms |
+| Required parent rebuild after edits | 396.032 ms | **0 ms** |
+| Revert batch | 0.437 ms | 10.810 ms |
 
 All semantic, edit, revert and remap checksums matched.
 
 Memory decision:
 
-- RSS reduction: **63.680%**;
-- logical owned-byte reduction: **54.414%**;
+- RSS reduction: **62.958%**;
+- logical owned-byte reduction: **55.310%**;
 - <=75% reference-RSS gate: **PASS**;
 - <=512 MiB city budget: **PASS**;
 - <=384 MiB stretch budget: **PASS**.
