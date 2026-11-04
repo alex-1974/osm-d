@@ -314,14 +314,13 @@ struct StoreMemoryUsage
 /**
  * v0.1 compatibility aliases for leaf semantic values.
  *
- * The preferred v0.2 store API returns the same format-independent values as
- * the PBF reader. These aliases remain available only from the implementation
- * module for source migration; `osm.store` does not re-export them.
+ * Preferred v0.2 code receives the shared format-independent semantic values.
+ * The aliases remain in this implementation module only for migration.
  */
-alias MetadataView = MetadataView;
-alias TagView = TagView;
-alias NodeRefView = NodeRefView;
-alias RelationMemberView = RelationMemberView;
+alias StoreMetadataView = MetadataView;
+alias StoreTagView = TagView;
+alias StoreWayNodeView = NodeRefView;
+alias StoreRelationMemberView = RelationMemberView;
 
 /** Borrowed ordered tag range. Invalidated by structural store mutation. */
 struct StoreTagRange
@@ -353,14 +352,6 @@ public:
     {
         return cast(size_t)(_length - _position);
     }
-}
-
-/** One ordered Way node reference. */
-struct NodeRefView
-{
-    OsmId id;
-    bool hasLocation;
-    LocationView location;
 }
 
 /** Borrowed ordered Way-node range. Invalidated by structural mutation. */
@@ -2788,7 +2779,7 @@ private:
     }
 
     bool preflightWayReferences(
-        scope const(OwnedWayNode)[] nodes,
+        scope const(OwnedNodeRef)[] nodes,
         ref StoreStatus status) @safe nothrow @nogc
     {
         foreach (ref const node; nodes)
@@ -3218,7 +3209,7 @@ private:
     }
 
     Span32 appendWayNodes(
-        scope const(OwnedWayNode)[] values,
+        scope const(OwnedNodeRef)[] values,
         uint parentSlot) @safe
     {
         assert(_wayRefIds.length <= uint.max);
@@ -3588,7 +3579,7 @@ private:
         @safe pure nothrow @nogc
     {
         size_t result = OwnedWay.sizeof + ownedMetadataBytes(value.metadata);
-        result += value.nodes.length * OwnedWayNode.sizeof;
+        result += value.nodes.length * OwnedNodeRef.sizeof;
         foreach (ref const tag; value.tags)
             result += ownedTagBytes(tag);
         return result;
@@ -3668,7 +3659,7 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    OwnedWayNode refValue;
+    OwnedNodeRef refValue;
     refValue.id = -1;
     way.nodes ~= refValue;
 
@@ -3795,9 +3786,9 @@ unittest
 
     OwnedWay way;
     way.id = 10;
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(2, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(2, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
 
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
@@ -3886,8 +3877,8 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
 
