@@ -7,6 +7,23 @@ v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+### Added
+
+- Add the M9 editable-store change/upload bridge. `OsmStore.collectChanges`
+  materializes sparse pending edits as deterministic, dependency-safe
+  `OwnedChangeSequence` values without scanning the complete loaded store or
+  inventing a changeset ID. Local create-then-delete edits are cancelled;
+  established deletes retain authoritative baseline version metadata.
+- Add format-neutral `UploadResultEntry` / `UploadResult` values and
+  `OsmStore.applyUploadResult`. Reconciliation preflights the exact uploaded
+  snapshot before mutation, preserves handles for create/modify, remaps
+  authoritative create IDs through existing parent indexes, records returned
+  versions/explicit changesets, and invalidates handles for confirmed deletes.
+- Add end-to-end store → osmChange write/read → upload validation → simulated
+  diff-result → store qualification, including local Node/Way/Relation
+  dependencies, Relation topological ordering, stale-response atomicity and
+  delete-baseline behavior.
+
 ### Changed
 
 - Simplify the developing v0.2 consumer surface: `NodeRefView` /
