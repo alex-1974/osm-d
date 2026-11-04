@@ -295,12 +295,13 @@ struct StoreMemoryUsage
     size_t childPools;
     size_t stringPool;
     size_t primaryIndexes;
+    size_t parentIndexes;
     size_t editBaselines;
 
     @property size_t totalOwnedBytes() const @safe pure nothrow @nogc
     {
         return elementColumns + childPools + stringPool +
-               primaryIndexes + editBaselines;
+               primaryIndexes + parentIndexes + editBaselines;
     }
 }
 
@@ -521,16 +522,115 @@ struct StoreRelationView
     StoreElementState state;
 }
 
-package(osm) struct KnownWayRefRewrite
+/**
+ * Borrowed range of distinct live Ways that reference one Node ID.
+ *
+ * Duplicate references from the same Way are reported once. The range is
+ * invalidated by structural store mutation.
+ */
+struct StoreParentWayRange
 {
-    OsmHandle parent;
-    uint index;
+private:
+    OsmStore _store;
+    uint _edge;
+    uint _lastParentSlot = uint.max;
+
+    void skipUnavailable() @safe nothrow @nogc
+    {
+        while (_edge != 0)
+        {
+            const edge = _store._nodeWayParents.edge(_edge);
+            if (edge.parentSlot != uint.max &&
+                edge.parentSlot != _lastParentSlot &&
+                edge.parentSlot < _store._ways.states.length &&
+                _store._ways.states[edge.parentSlot] !=
+                    StoreElementState.deleted)
+                return;
+            _edge = edge.next;
+        }
+    }
+
+public:
+    @property bool empty() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        return _edge == 0;
+    }
+
+    @property StoreWayView front() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        assert(_edge != 0);
+        const edge = _store._nodeWayParents.edge(_edge);
+        return _store.wayViewAt(edge.parentSlot);
+    }
+
+    void popFront() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        if (_edge == 0)
+            return;
+        const edge = _store._nodeWayParents.edge(_edge);
+        _lastParentSlot = edge.parentSlot;
+        _edge = edge.next;
+        skipUnavailable();
+    }
 }
 
-package(osm) struct KnownRelationMemberRewrite
+/**
+ * Borrowed range of distinct live Relations that reference one typed OSM ID.
+ *
+ * Duplicate members from the same Relation are reported once. The range is
+ * invalidated by structural store mutation.
+ */
+struct StoreParentRelationRange
 {
-    OsmHandle parent;
-    uint index;
+private:
+    OsmStore _store;
+    ElementType _childType;
+    uint _edge;
+    uint _lastParentSlot = uint.max;
+
+    void skipUnavailable() @safe nothrow @nogc
+    {
+        while (_edge != 0)
+        {
+            const edge = _store.relationParentEdge(_childType, _edge);
+            if (edge.parentSlot != uint.max &&
+                edge.parentSlot != _lastParentSlot &&
+                edge.parentSlot < _store._relations.states.length &&
+                _store._relations.states[edge.parentSlot] !=
+                    StoreElementState.deleted)
+                return;
+            _edge = edge.next;
+        }
+    }
+
+public:
+    @property bool empty() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        return _edge == 0;
+    }
+
+    @property StoreRelationView front() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        assert(_edge != 0);
+        const edge = _store.relationParentEdge(_childType, _edge);
+        return _store.relationViewAt(edge.parentSlot);
+    }
+
+    void popFront() @safe nothrow @nogc
+    {
+        skipUnavailable();
+        if (_edge == 0)
+            return;
+        const edge = _store.relationParentEdge(_childType, _edge);
+        _lastParentSlot = edge.parentSlot;
+        _edge = edge.next;
+        skipUnavailable();
+    }
 }
 
 /** Deterministic live Node range in slot/insertion order. */
@@ -943,6 +1043,202 @@ private struct IdIndex
     }
 }
 
+private struct ParentEdge
+{
+    /// Parent element slot, or uint.max when this historical edge is inactive.
+    uint parentSlot;
+    /// Absolute index in the current or historical child pool.
+    uint childIndex;
+    /// Encoded next edge index: zero means end, otherwise index + 1.
+    uint next;
+}
+
+private struct ParentIndex
+{
+    ManualArray!OsmId keys;
+    ManualArray!uint heads;
+    ManualArray!ParentEdge edges;
+    size_t keyCount;
+
+    void initialize() @safe nothrow @nogc
+    {
+        if (heads.length != 0)
+            return;
+        keys.length = 16;
+        heads.length = 16;
+    }
+
+    void reserveEdges(size_t expectedEdges) @safe nothrow @nogc
+    {
+        edges.reserve(expectedEdges);
+    }
+
+    uint head(OsmId id) const @safe nothrow @nogc
+    {
+        if (id == 0 || heads.length == 0)
+            return 0;
+
+        size_t mask = heads.length - 1;
+        size_t pos = cast(size_t)hashId(id) & mask;
+        for (;;)
+        {
+            const key = keys[pos];
+            if (key == 0)
+                return 0;
+            if (key == id)
+                return heads[pos];
+            pos = (pos + 1) & mask;
+        }
+    }
+
+    uint insert(
+        OsmId id,
+        uint parentSlot,
+        uint childIndex) @safe nothrow @nogc
+    {
+        assert(id != 0);
+        if (heads.length == 0)
+            initialize();
+
+        if ((keyCount + 1) * 10 >= heads.length * 7 &&
+            findBucket(id) == size_t.max)
+            rehash(heads.length * 2);
+
+        size_t bucket = findBucket(id);
+        if (bucket == size_t.max)
+        {
+            size_t mask = heads.length - 1;
+            bucket = cast(size_t)hashId(id) & mask;
+            while (keys[bucket] != 0)
+                bucket = (bucket + 1) & mask;
+            keys[bucket] = id;
+            ++keyCount;
+        }
+
+        assert(edges.length < uint.max);
+        ParentEdge edge;
+        edge.parentSlot = parentSlot;
+        edge.childIndex = childIndex;
+        edge.next = heads[bucket];
+        edges ~= edge;
+        const encoded = cast(uint)edges.length;
+        heads[bucket] = encoded;
+        return encoded;
+    }
+
+    void deactivate(uint encoded) @safe nothrow @nogc
+    {
+        if (encoded == 0)
+            return;
+        auto index = cast(size_t)(encoded - 1);
+        assert(index < edges.length);
+        edges[index].parentSlot = uint.max;
+    }
+
+    ParentEdge edge(uint encoded) const @safe nothrow @nogc
+    {
+        assert(encoded != 0);
+        const index = cast(size_t)(encoded - 1);
+        assert(index < edges.length);
+        return edges[index];
+    }
+
+    size_t activeCount(OsmId id) const @safe nothrow @nogc
+    {
+        size_t result;
+        auto current = head(id);
+        while (current != 0)
+        {
+            const value = edge(current);
+            if (value.parentSlot != uint.max)
+                ++result;
+            current = value.next;
+        }
+        return result;
+    }
+
+    void reserveAdditionalEdges(size_t count) @safe nothrow @nogc
+    {
+        edges.reserve(edges.length + count);
+    }
+
+    void ensureKey(OsmId id) @safe nothrow @nogc
+    {
+        assert(id != 0);
+        if (heads.length == 0)
+            initialize();
+
+        if (findBucket(id) != size_t.max)
+            return;
+
+        if ((keyCount + 1) * 10 >= heads.length * 7)
+            rehash(heads.length * 2);
+
+        size_t mask = heads.length - 1;
+        size_t pos = cast(size_t)hashId(id) & mask;
+        while (keys[pos] != 0)
+            pos = (pos + 1) & mask;
+        keys[pos] = id;
+        ++keyCount;
+    }
+
+    @property size_t logicalBytes() const @safe pure nothrow @nogc
+    {
+        return keys.length * OsmId.sizeof +
+               heads.length * uint.sizeof +
+               edges.length * ParentEdge.sizeof;
+    }
+
+private:
+    size_t findBucket(OsmId id) const @safe nothrow @nogc
+    {
+        if (heads.length == 0)
+            return size_t.max;
+
+        size_t mask = heads.length - 1;
+        size_t pos = cast(size_t)hashId(id) & mask;
+        for (;;)
+        {
+            const key = keys[pos];
+            if (key == 0)
+                return size_t.max;
+            if (key == id)
+                return pos;
+            pos = (pos + 1) & mask;
+        }
+    }
+
+    void rehash(size_t requested) @safe nothrow @nogc
+    {
+        size_t capacity = 16;
+        while (capacity < requested)
+            capacity *= 2;
+
+        ManualArray!OsmId newKeys;
+        ManualArray!uint newHeads;
+        newKeys.length = capacity;
+        newHeads.length = capacity;
+
+        foreach (i; 0 .. keys.length)
+        {
+            const id = keys[i];
+            if (id == 0)
+                continue;
+
+            size_t mask = capacity - 1;
+            size_t pos = cast(size_t)hashId(id) & mask;
+            while (newKeys[pos] != 0)
+                pos = (pos + 1) & mask;
+
+            newKeys[pos] = id;
+            newHeads[pos] = heads[i];
+        }
+
+        keys.swap(newKeys);
+        heads.swap(newHeads);
+    }
+}
+
 private struct MetadataColumns
 {
     ManualArray!ubyte flags;
@@ -1287,6 +1583,13 @@ private:
     IdIndex _wayIndex;
     IdIndex _relationIndex;
 
+    ParentIndex _nodeWayParents;
+    ParentIndex _nodeRelationParents;
+    ParentIndex _wayRelationParents;
+    ParentIndex _relationRelationParents;
+    ManualArray!uint _wayParentEdges;
+    ManualArray!uint _relationParentEdges;
+
     size_t _liveNodes;
     size_t _liveWays;
     size_t _liveRelations;
@@ -1306,6 +1609,10 @@ public:
         _nodeIndex.initialize();
         _wayIndex.initialize();
         _relationIndex.initialize();
+        _nodeWayParents.initialize();
+        _nodeRelationParents.initialize();
+        _wayRelationParents.initialize();
+        _relationRelationParents.initialize();
     }
 
     /** Insert one validated Node, copying all durable bytes into the store. */
