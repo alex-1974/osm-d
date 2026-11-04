@@ -835,3 +835,52 @@ unittest // streaming summary and callback preserve exact source order
         [ElementType.way, ElementType.node, ElementType.relation]);
     assert(handler.ids == [9, -1, 4]);
 }
+
+
+unittest // parsed conditional-delete shapes require uploaded request context
+{
+    import osm.model.change :
+        OwnedChangeEntry,
+        UploadResultEffect;
+    import osm.model.owned : OwnedMetadata;
+    import transport.source : MemorySource;
+
+    OwnedMetadata metadata;
+    metadata.hasVersion = true;
+    metadata.versionNumber = 7;
+
+    const uploaded = OwnedChangeEntry.deletion(
+        ElementType.node, 42, metadata, true);
+
+    {
+        enum xml =
+            "<diffResult version=\"0.6\">" ~
+            "<node old_id=\"42\" new_id=\"42\" new_version=\"7\"/>" ~
+            "</diffResult>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        UploadResult result;
+        UploadResultReadStatus status;
+        assert(readUploadResult(source, result, status));
+
+        UploadResultEffect effect;
+        assert(result.entries[0].effectFor(uploaded, effect));
+        assert(effect == UploadResultEffect.deleteRetained);
+    }
+
+    {
+        enum xml =
+            "<diffResult version=\"0.6\">" ~
+            "<node old_id=\"42\" new_id=\"42\" new_version=\"8\"/>" ~
+            "</diffResult>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        UploadResult result;
+        UploadResultReadStatus status;
+        assert(readUploadResult(source, result, status));
+
+        UploadResultEffect effect;
+        assert(result.entries[0].effectFor(uploaded, effect));
+        assert(effect == UploadResultEffect.alreadyDeleted);
+    }
+}
