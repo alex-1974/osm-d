@@ -78,6 +78,57 @@ available for generic/editor workflows.
 A missing typed lookup returns `false`, resets the output view, and reports
 `StoreError.notFound` with the requested type and ID.
 
+## Editable store change/upload bridge
+
+The editable store can materialize its current pending state without exposing
+compact-layout details:
+
+```d
+OwnedChangeSequence changes;
+StoreStatus status;
+
+if (store.collectChanges(changes, status))
+{
+    // The store never invents an upload changeset.
+    if (!changes.setChangeset(openChangesetId))
+        return;
+
+    // validateUploadChanges(changes, capabilities, issue)
+    // OsmChangeWriter.writeChanges(changes, ...)
+}
+```
+
+The lifecycle mapping is semantic: clean objects are omitted, local creations
+become complete creates, edited loaded objects become complete modifies,
+established deletes become identity-only deletes using baseline version
+metadata, and a local create deleted before upload is omitted.
+
+Created Nodes and Ways precede their dependents; created Relations are
+topologically ordered by local Relation references. A circular local placeholder
+dependency fails explicitly rather than producing an invalid upload order.
+
+Successful API diff-upload results use the format-neutral `UploadResultEntry`
+and `UploadResult` values. Reconciliation requires both the result and the
+exact sequence that was sent:
+
+```d
+if (!store.applyUploadResult(changes, uploadResult, status))
+{
+    // stale local edit, malformed/mismatched result, etc.
+}
+```
+
+Before the first mutation, the store verifies that the uploaded snapshot still
+matches current pending state, ignoring only the explicitly supplied changeset.
+This prevents a delayed response from marking newer local work clean.
+
+Create acknowledgement remaps the local ID and preserves the handle. Modify
+acknowledgement records the authoritative version and preserves the handle.
+Confirmed delete invalidates the deleted object's old handle. The result does
+not carry server timestamp/user metadata, so osm-d does not fabricate them.
+
+See `docs/design/store-change-upload-bridge.md` and ADR 0025.
+
 ## PBF reading
 
 One-shot complete reads no longer require caller-managed scratch:

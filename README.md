@@ -188,6 +188,41 @@ workflows, but a simple typed read no longer needs the two-step
 The PBF input needs to remain alive only for `readPbfStore`; the resulting
 store owns its durable semantics and indexes.
 
+### Materializing and acknowledging edits
+
+The compact store owns editor-facing lifecycle state. Pending edits can be
+materialized explicitly as format-neutral change semantics:
+
+```d
+OwnedChangeSequence changes;
+StoreStatus status;
+
+if (store.collectChanges(changes, status))
+{
+    changes.setChangeset(openChangesetId);
+    // validate/write/upload the sequence through the focused facades.
+}
+```
+
+No changeset is invented by the store. Local creates are dependency-ordered;
+create-then-delete is omitted; established deletes use the captured baseline
+version.
+
+After a successful OSM diff upload, pass the exact uploaded sequence together
+with its format-neutral `UploadResult` back to the store:
+
+```d
+if (!store.applyUploadResult(changes, uploadResult, status))
+{
+    // stale local state or mismatched result; nothing was acknowledged.
+}
+```
+
+Create/modify acknowledgements keep stable handles, with create IDs remapped
+through current Way/Relation references and parent indexes. Confirmed deletes
+invalidate their old handles. See
+`docs/design/store-change-upload-bridge.md`.
+
 ### Parallel validated summary decoding
 
 Parallel summary decoding is specialized PBF functionality:

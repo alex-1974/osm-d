@@ -102,8 +102,16 @@ bool readPbfStore(
 
     PbfReadStatus pbfStatus;
     PbfReadSummary readSummary;
-    const pbfOk =
-        reader.read(input, workspace, sink, readSummary, pbfStatus);
+
+    // SAFETY: PbfReader.read is synchronous and does not retain input or
+    // handler-borrowed element views after the call. StoreSink copies every
+    // accepted semantic value into target-owned storage before returning from
+    // each callback. This narrow bridge compensates for the older generic
+    // reader signature not carrying an explicit scope parameter.
+    const pbfOk = (() @trusted {
+        return reader.read(
+            input, workspace, sink, readSummary, pbfStatus);
+    })();
 
     status.pbf = pbfStatus;
     if (sink.failed)

@@ -271,6 +271,25 @@ struct OwnedChangeSequence
         return entries.length == 0;
     }
 
+    /**
+     * Assign one explicit changeset ID to every operation.
+     *
+     * This is an upload-preparation operation, not an inferred default. A
+     * non-positive ID is rejected without modifying the sequence.
+     */
+    bool setChangeset(long changesetId) @safe nothrow @nogc
+    {
+        if (changesetId <= 0)
+            return false;
+
+        foreach (ref entry; entries)
+        {
+            entry.metadata.hasChangeset = true;
+            entry.metadata.changesetId = changesetId;
+        }
+        return true;
+    }
+
     /** Create an independently mutable sequence. */
     OwnedChangeSequence deepCopy() const @safe
     {
@@ -279,6 +298,110 @@ struct OwnedChangeSequence
         foreach (i, ref const value; entries)
             result.entries[i] = value.deepCopy();
         return result;
+    }
+}
+
+/**
+ * One authoritative result entry returned after a successful OSM diff upload.
+ *
+ * The type is format-neutral: XML parsing and HTTP transport are intentionally
+ * outside this model. OSM API 0.6 semantics are represented exactly:
+ *
+ * - create: negative oldId plus positive newId/newVersion;
+ * - modify: positive oldId, identical positive newId, positive newVersion;
+ * - delete: positive oldId with no new ID/version.
+ *
+ * .init is invalid because oldId is zero.
+ */
+struct UploadResultEntry
+{
+    ElementType type;
+    OsmId oldId;
+
+    bool hasNewId;
+    OsmId newId;
+
+    bool hasNewVersion;
+    int newVersion;
+
+    /** Construct a create acknowledgement. */
+    static UploadResultEntry created(
+        ElementType type,
+        OsmId oldId,
+        OsmId newId,
+        int newVersion) @safe pure nothrow @nogc
+    {
+        UploadResultEntry result;
+        result.type = type;
+        result.oldId = oldId;
+        result.hasNewId = true;
+        result.newId = newId;
+        result.hasNewVersion = true;
+        result.newVersion = newVersion;
+        return result;
+    }
+
+    /** Construct a modify acknowledgement. */
+    static UploadResultEntry modified(
+        ElementType type,
+        OsmId id,
+        int newVersion) @safe pure nothrow @nogc
+    {
+        return created(type, id, id, newVersion);
+    }
+
+    /** Construct a delete acknowledgement. */
+    static UploadResultEntry deleted(
+        ElementType type,
+        OsmId id) @safe pure nothrow @nogc
+    {
+        UploadResultEntry result;
+        result.type = type;
+        result.oldId = id;
+        return result;
+    }
+
+    /** Whether this value has a valid OSM API 0.6 diff-result shape. */
+    @property bool shapeValid() const @safe pure nothrow @nogc
+    {
+        if (oldId == 0 || hasNewId != hasNewVersion)
+            return false;
+
+        if (!hasNewId)
+            return oldId > 0;
+
+        if (newId <= 0 || newVersion <= 0)
+            return false;
+
+        if (oldId < 0)
+            return true;
+
+        return oldId > 0 && newId == oldId;
+    }
+
+    /** Operation acknowledged by this result entry. Valid only when shapeValid. */
+    @property ChangeAction action() const @safe pure nothrow @nogc
+    in (shapeValid)
+    {
+        if (!hasNewId)
+            return ChangeAction.deleteObject;
+        return oldId < 0 ? ChangeAction.create : ChangeAction.modify;
+    }
+}
+
+/**
+ * Authoritative result of one successful diff-upload request.
+ *
+ * Entry order is retained from the source response, but consumers must not need
+ * to rely on response order: each entry is keyed semantically by type+oldId.
+ */
+struct UploadResult
+{
+    UploadResultEntry[] entries;
+
+    @property bool empty() const @safe pure nothrow @nogc
+    {
+        return entries.length == 0;
     }
 }
 
@@ -335,4 +458,35 @@ unittest
 
     assert(sequence.entries[0].tags.length == 1);
     assert(copy.entries[0].tags.length == 2);
+}
+
+unittest
+{
+    OwnedChangeSequence changes;
+    changes.entries ~= OwnedChangeEntry.deletion(ElementType.node, 1);
+    assert(changes.setChangeset(42));
+    assert(changes.entries[0].metadata.hasChangeset);
+    assert(changes.entries[0].metadata.changesetId == 42);
+    assert(!changes.setChangeset(0));
+    assert(changes.entries[0].metadata.changesetId == 42);
+}
+
+unittest
+{
+    const created = UploadResultEntry.created(
+        ElementType.node, -1, 1001, 1);
+    assert(created.shapeValid);
+    assert(created.action == ChangeAction.create);
+
+    const modified = UploadResultEntry.modified(
+        ElementType.way, 22, 8);
+    assert(modified.shapeValid);
+    assert(modified.action == ChangeAction.modify);
+
+    const deleted = UploadResultEntry.deleted(
+        ElementType.relation, 33);
+    assert(deleted.shapeValid);
+    assert(deleted.action == ChangeAction.deleteObject);
+
+    assert(!UploadResultEntry.init.shapeValid);
 }
