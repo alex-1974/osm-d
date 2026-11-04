@@ -39,10 +39,7 @@ import osm :
 
 import osm.io.pbf.reader : PbfReadSummary, PbfReader, PbfReaderWorkspace;
 
-import osm.store.compact.store :
-    KnownRelationMemberRewrite,
-    KnownWayRefRewrite,
-    ManualArray;
+import osm.store.compact.store : ManualArray;
 
 import std.algorithm.sorting : sort;
 import std.datetime.stopwatch : AutoStart, StopWatch;
@@ -149,12 +146,23 @@ private struct PackedParentIndex
             assert(end - begin <= uint.max);
 
             keys ~= edges[begin].key;
-            spans ~= ParentSpan(
-                cast(uint)parents.length,
-                cast(uint)(end - begin));
+            const parentOffset = cast(uint)parents.length;
 
+            OsmId previousParent;
+            bool hasPrevious;
             foreach (i; begin .. end)
-                parents ~= edges[i].parent;
+            {
+                const parent = edges[i].parent;
+                if (hasPrevious && parent == previousParent)
+                    continue;
+                parents ~= parent;
+                previousParent = parent;
+                hasPrevious = true;
+            }
+
+            spans ~= ParentSpan(
+                parentOffset,
+                cast(uint)parents.length - parentOffset);
 
             begin = end;
         }
@@ -791,7 +799,12 @@ private Timing measureLookupCompact(
     return Timing(samples[rounds / 2], samples[rounds - 1], expected);
 }
 
-private Timing measureNodeParents(
+private ulong parentToken(OsmId id) @safe pure nothrow @nogc
+{
+    return hashId(id) ^ 0x9e3779b97f4a7c15UL;
+}
+
+private Timing measureNodeParentsReference(
     scope ref const ParentIndexes parents,
     scope const(OsmId)[] queries) @safe
 {
@@ -805,9 +818,11 @@ private Timing measureNodeParents(
             foreach (id; queries)
             {
                 const values = parents.waysForNode(id);
-                mix(hash, values.length);
+                ulong fold;
                 foreach (parent; values)
-                    mix(hash, cast(ulong)parent);
+                    fold ^= parentToken(parent);
+                mix(hash, values.length);
+                mix(hash, fold);
             }
         });
         if (round == 0)
@@ -820,7 +835,43 @@ private Timing measureNodeParents(
     return Timing(samples[rounds / 2], samples[rounds - 1], expected);
 }
 
-private Timing measureRelationParents(
+private Timing measureNodeParentsCompact(
+    OsmStore store,
+    scope const(OsmId)[] queries) @safe
+{
+    long[rounds] samples;
+    ulong expected;
+
+    foreach (round; 0 .. rounds)
+    {
+        ulong hash;
+        samples[round] = elapsedNs(() {
+            foreach (id; queries)
+            {
+                auto values = store.parentWays(id);
+                size_t count;
+                ulong fold;
+                while (!values.empty)
+                {
+                    fold ^= parentToken(values.front.id);
+                    ++count;
+                    values.popFront();
+                }
+                mix(hash, count);
+                mix(hash, fold);
+            }
+        });
+        if (round == 0)
+            expected = hash;
+        else
+            assert(hash == expected);
+    }
+
+    sort(samples[]);
+    return Timing(samples[rounds / 2], samples[rounds - 1], expected);
+}
+
+private Timing measureRelationParentsReference(
     scope ref const ParentIndexes parents,
     scope const(ParentKey)[] queries) @safe
 {
@@ -834,9 +885,47 @@ private Timing measureRelationParents(
             foreach (key; queries)
             {
                 const values = parents.relationsFor(key.type, key.id);
-                mix(hash, values.length);
+                ulong fold;
                 foreach (parent; values)
-                    mix(hash, cast(ulong)parent);
+                    fold ^= parentToken(parent);
+                mix(hash, values.length);
+                mix(hash, fold);
+            }
+        });
+        if (round == 0)
+            expected = hash;
+        else
+            assert(hash == expected);
+    }
+
+    sort(samples[]);
+    return Timing(samples[rounds / 2], samples[rounds - 1], expected);
+}
+
+private Timing measureRelationParentsCompact(
+    OsmStore store,
+    scope const(ParentKey)[] queries) @safe
+{
+    long[rounds] samples;
+    ulong expected;
+
+    foreach (round; 0 .. rounds)
+    {
+        ulong hash;
+        samples[round] = elapsedNs(() {
+            foreach (key; queries)
+            {
+                auto values = store.parentRelations(key.type, key.id);
+                size_t count;
+                ulong fold;
+                while (!values.empty)
+                {
+                    fold ^= parentToken(values.front.id);
+                    ++count;
+                    values.popFront();
+                }
+                mix(hash, count);
+                mix(hash, fold);
             }
         });
         if (round == 0)
@@ -1789,12 +1878,10 @@ private EditMetrics runCompactEdits(
     });
 
     metrics.editChecksum = traverseCompact(store);
-    metrics.postEditOwnedBytes =
-        store.memoryUsage.totalOwnedBytes + parentBytes;
+    metrics.postEditOwnedBytes = store.memoryUsage.totalOwnedBytes;
 
-    ParentIndexes editedParents;
-    metrics.parentUpdateNs =
-        elapsedNs(() { editedParents.build(store); });
+    // Production parent indexes are updated inside each mutation above.
+    metrics.parentUpdateNs = 0;
 
     metrics.revertNs = elapsedNs(() {
         foreach (ref op; relationTagOps)
@@ -1820,8 +1907,7 @@ private EditMetrics runCompactEdits(
 
     metrics.revertChecksum = traverseCompact(store);
     assert(metrics.revertChecksum == originalChecksum);
-    metrics.postRevertOwnedBytes =
-        store.memoryUsage.totalOwnedBytes + parentBytes;
+    metrics.postRevertOwnedBytes = store.memoryUsage.totalOwnedBytes;
     return metrics;
 }
 
@@ -1909,22 +1995,13 @@ private RemapMetrics runCompactRemap() @safe
     OsmHandle relationHandle;
     require(store.add(relation, relationHandle, status), "compact remap relation create failed");
 
-    auto nodeWayRefs = [KnownWayRefRewrite(wayHandle, 0)];
-    auto nodeRelationRefs = [KnownRelationMemberRewrite(relationHandle, 1)];
-    KnownWayRefRewrite[] noWays;
-    auto wayRelationRefs = [KnownRelationMemberRewrite(relationHandle, 0)];
-    KnownRelationMemberRewrite[] noRelations;
-
     RemapMetrics result;
     result.elapsedNs = elapsedNs(() {
-        require(store.remapKnown(
-            nodeHandle, 101, 1, nodeWayRefs, nodeRelationRefs, status),
+        require(store.remapId(nodeHandle, 101, 1, status),
             "compact node remap failed");
-        require(store.remapKnown(
-            wayHandle, 102, 1, noWays, wayRelationRefs, status),
+        require(store.remapId(wayHandle, 102, 1, status),
             "compact way remap failed");
-        require(store.remapKnown(
-            relationHandle, 103, 1, noWays, noRelations, status),
+        require(store.remapId(relationHandle, 103, 1, status),
             "compact relation remap failed");
     });
 
@@ -2113,10 +2190,8 @@ int main(string[] args)
             "direct relation count mismatch");
 
         expectedChecksum = traverseCompact(compact);
-        parentBuildNs =
-            elapsedNs(() { parents.build(compact); });
-        ownedBytes =
-            compact.memoryUsage.totalOwnedBytes + parents.logicalBytes;
+        parentBuildNs = 0;
+        ownedBytes = compact.memoryUsage.totalOwnedBytes;
     }
 
     // The file bytes and reader scratch are not retained by either store.
@@ -2185,10 +2260,35 @@ int main(string[] args)
         traversal = measureTraversalCompact(compact);
     }
 
-    const nodeParents =
-        measureNodeParents(parents, parentNodeQueries);
-    const relationParents =
-        measureRelationParents(parents, parentRelationQueries);
+    Timing nodeParents;
+    Timing relationParents;
+    if (variant == "reference")
+    {
+        nodeParents =
+            measureNodeParentsReference(parents, parentNodeQueries);
+        relationParents =
+            measureRelationParentsReference(parents, parentRelationQueries);
+    }
+    else
+    {
+        nodeParents =
+            measureNodeParentsCompact(compact, parentNodeQueries);
+        relationParents =
+            measureRelationParentsCompact(compact, parentRelationQueries);
+
+        // Parent semantics must match the straightforward reference answer set.
+        ParentIndexes expectedParents;
+        expectedParents.build(compact);
+        const expectedNodeParents =
+            measureNodeParentsReference(expectedParents, parentNodeQueries);
+        const expectedRelationParents =
+            measureRelationParentsReference(
+                expectedParents, parentRelationQueries);
+        require(nodeParents.checksum == expectedNodeParents.checksum,
+            "compact Node->Way parent index mismatch");
+        require(relationParents.checksum == expectedRelationParents.checksum,
+            "compact element->Relation parent index mismatch");
+    }
 
     if (traversal.checksum != expectedChecksum)
     {
@@ -2211,7 +2311,7 @@ int main(string[] args)
     else
     {
         edits = runCompactEdits(
-            compact, editSelection, expectedChecksum, parents.logicalBytes);
+            compact, editSelection, expectedChecksum, 0);
         remap = runCompactRemap();
     }
 
@@ -2227,7 +2327,11 @@ int main(string[] args)
     writefln("final_incremental_rss_kib=%s", finalIncremental);
     writefln("peak_incremental_rss_kib=%s", peakIncremental);
     writefln("owned_bytes=%s", ownedBytes);
-    writefln("parent_index_bytes=%s", parents.logicalBytes);
+    writefln(
+        "parent_index_bytes=%s",
+        variant == "reference" ?
+            parents.logicalBytes :
+            compact.memoryUsage.parentIndexes);
     writefln("nodes=%s", nodeIds.length);
     writefln("ways=%s", wayIds.length);
     writefln("relations=%s", relationIds.length);
