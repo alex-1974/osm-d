@@ -135,3 +135,102 @@ unittest
     assert(!status.pbf.ok);
     assert(status.store.ok);
 }
+
+
+unittest
+{
+    import osm.io.pbf.document : PbfDocument;
+    import osm.io.pbf.writer : PbfWriteStatus, PbfWriter;
+    import osm.model.owned :
+        OwnedDataset,
+        OwnedNode,
+        OwnedRelation,
+        OwnedRelationMember,
+        OwnedWay,
+        OwnedWayNode;
+    import osm.view.element : ElementType;
+    import osm.view.location : LocationView;
+
+    OwnedDataset data;
+
+    OwnedNode node;
+    node.id = 1;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    data.nodes ~= node;
+
+    OwnedWay way;
+    way.id = 2;
+    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+    data.ways ~= way;
+
+    OwnedRelation relation;
+    relation.id = 3;
+    OwnedRelationMember member;
+    member.type = ElementType.way;
+    member.id = 2;
+    relation.members ~= member;
+    data.relations ~= relation;
+
+    auto document = PbfDocument.create(data);
+
+    PbfWriter writer;
+    PbfWriteStatus writeStatus;
+    ubyte[] bytes;
+    assert(writer.write(document, bytes, writeStatus));
+
+    OsmStore store;
+    PbfReadSummary summary;
+    PbfStoreReadStatus status;
+    assert(readPbfStore(bytes, store, summary, status));
+    assert(status.ok);
+    assert(store !is null);
+    assert(summary.nodes == 1);
+    assert(summary.ways == 1);
+    assert(summary.relations == 1);
+
+    auto parents = store.parentWays(1);
+    assert(!parents.empty);
+    assert(parents.front.id == 2);
+
+    auto relationParents =
+        store.parentRelations(ElementType.way, 2);
+    assert(!relationParents.empty);
+    assert(relationParents.front.id == 3);
+}
+
+unittest
+{
+    // A PBF that is codec-valid but violates the editable-store tag contract
+    // fails at the public boundary without exposing the partially built store.
+    import osm.io.pbf.document : PbfDocument;
+    import osm.io.pbf.writer : PbfWriteStatus, PbfWriter;
+    import osm.model.owned : OwnedDataset, OwnedNode, OwnedTag, ownBytes;
+    import osm.view.location : LocationView;
+
+    OwnedDataset data;
+    OwnedNode node;
+    node.id = 1;
+    node.location = LocationView(1, 2);
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"first"));
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"second"));
+    data.nodes ~= node;
+
+    auto document = PbfDocument.create(data);
+    PbfWriter writer;
+    PbfWriteStatus writeStatus;
+    ubyte[] bytes;
+    assert(writer.write(document, bytes, writeStatus));
+
+    OsmStore store;
+    PbfReadSummary summary;
+    PbfStoreReadStatus status;
+    assert(!readPbfStore(bytes, store, summary, status));
+    assert(store is null);
+    assert(status.pbf.ok);
+    assert(!status.store.ok);
+    assert(summary.nodes == 0);
+}
