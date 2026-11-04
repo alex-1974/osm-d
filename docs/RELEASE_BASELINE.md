@@ -34,6 +34,32 @@ The automated tag is annotated but unsigned. Workspace policy recommends
 signed final release tags but does not make signing a release-gate requirement;
 v0.1.0 used the same publication mechanism.
 
+## v0.2.1 hotfix publication record
+
+The conditional-delete diffResult correctness hotfix was released on
+2026-11-04 without changing the v0.2.x compatibility line.
+
+- hotfix source commit:
+  `7c2a61048559929d5bbc3b7459232f5d4dd9d56f`;
+- release PR: #107;
+- `main` release merge:
+  `7bd630831d53758fdad472117056c51fe983fbd2`;
+- annotated tag object:
+  `89bfa991d80e54df6e8cca6d0edc9d4cb03b3a27`;
+- tag `v0.2.1` resolves exactly to the release merge above;
+- hotfix branch Release Gate 41874141587 — PASS;
+- release-PR Release Gate 41874638857 — PASS;
+- Publish release 41875263245 — PASS;
+- post-promotion Main Release Gate 41875263258 — PASS;
+- release archive: `osm-d-0.2.1.tar.gz`, 327,676 bytes;
+- published archive digest:
+  `sha256:99d1450c5cb674360235895181c4fc5066714297eb191dad1f2be9cc8f18dbf0`;
+- checksum asset: `osm-d-0.2.1.tar.gz.sha256`.
+
+The patch corrects request-context interpretation of conditional
+`delete if-unused` diffResult entries. It does not alter the compiler floor,
+platform qualification, store representation or parser performance baseline.
+
 ## Supported toolchain and platform
 
 Source-compatibility floor:

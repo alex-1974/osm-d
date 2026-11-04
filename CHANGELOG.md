@@ -7,6 +7,21 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+## 0.2.1 - 2026-11-04
+
+### Fixed
+
+- Correct OSM API diff-result interpretation for conditional
+  `delete if-unused`: a successful response may retain an object and return
+  `old_id`, `new_id` and `new_version` instead of confirming deletion.
+  `UploadResultEntry.effectFor` now classifies acknowledgements against the
+  exact uploaded request entry, and `OsmStore.applyUploadResult` restores a
+  retained object's clean baseline rather than invalidating its handle.
+- Accept bare delete-shaped diff-result entries with negative placeholder IDs
+  and document that general diff results may repeat type+oldId when placeholders
+  are reused. The existing context-free `UploadResultEntry.action` property
+  remains source-compatible but is explicitly only a legacy shape guess.
+
 ## 0.2.0 - 2026-11-04
 
 ### Added

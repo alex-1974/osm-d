@@ -26,6 +26,7 @@ import osm.model.change :
     OwnedChangeEntry,
     OwnedChangeSequence,
     UploadResult,
+    UploadResultEffect,
     UploadResultEntry;
 import osm.model.owned :
     OwnedBytes,
@@ -2890,7 +2891,7 @@ public:
             ElementType type;
             uint slot;
             size_t resultIndex;
-            ChangeAction action;
+            UploadResultEffect effect;
         }
 
         Binding[] bindings;
@@ -2953,7 +2954,8 @@ public:
 
             const resultIndex = encodedResult - 1;
             ref const acknowledged = result.entries[resultIndex];
-            if (acknowledged.action != change.action)
+            UploadResultEffect effect;
+            if (!acknowledged.effectFor(change, effect))
             {
                 status.error = StoreError.uploadResultMismatch;
                 return false;
@@ -3048,6 +3050,16 @@ public:
                 return false;
             }
 
+            if (effect == UploadResultEffect.deleteRetained)
+            {
+                OsmHandle duplicate;
+                if (find(change.type, change.id, duplicate))
+                {
+                    status.error = StoreError.staleUploadState;
+                    return false;
+                }
+            }
+
             if (change.action == ChangeAction.create)
             {
                 OsmHandle duplicate;
@@ -3088,7 +3100,7 @@ public:
             }
 
             bindings[i] = Binding(
-                change.type, slot, resultIndex, change.action);
+                change.type, slot, resultIndex, effect);
         }
 
         // The result must not contain an extra identity that happened to keep
@@ -3105,9 +3117,13 @@ public:
             ref const change = uploaded.entries[i];
             ref const acknowledged = result.entries[binding.resultIndex];
 
-            final switch (binding.action)
+            final switch (binding.effect)
             {
-                case ChangeAction.create:
+                case UploadResultEffect.none:
+                    assert(0, "preflight must classify every acknowledgement");
+                    break;
+
+                case UploadResultEffect.created:
                 {
                     const handle = makeHandle(
                         binding.type,
@@ -3127,7 +3143,7 @@ public:
                     break;
                 }
 
-                case ChangeAction.modify:
+                case UploadResultEffect.modified:
                     acknowledgeModified(
                         binding.type,
                         binding.slot,
@@ -3135,10 +3151,29 @@ public:
                         change.metadata);
                     break;
 
-                case ChangeAction.deleteObject:
+                case UploadResultEffect.deleted:
                     finalizeAcknowledgedDelete(
                         binding.type,
                         binding.slot);
+                    break;
+
+                case UploadResultEffect.deleteRetained:
+                {
+                    const handle = makeHandle(
+                        binding.type,
+                        binding.slot,
+                        generationAt(binding.type, binding.slot));
+                    StoreStatus revertStatus;
+                    const ok = revert(handle, revertStatus);
+                    assert(ok);
+                    break;
+                }
+
+                case UploadResultEffect.alreadyDeleted:
+                    finalizeAcknowledgedAlreadyDeleted(
+                        binding.type,
+                        binding.slot,
+                        acknowledged.newVersion);
                     break;
             }
         }
@@ -3679,6 +3714,27 @@ private:
                 _relationBaselines.remove(slot);
                 break;
         }
+    }
+
+    void finalizeAcknowledgedAlreadyDeleted(
+        ElementType type,
+        uint slot,
+        int newVersion) @safe nothrow
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                setAuthoritativeVersion(_nodes, slot, newVersion);
+                break;
+            case ElementType.way:
+                setAuthoritativeVersion(_ways, slot, newVersion);
+                break;
+            case ElementType.relation:
+                setAuthoritativeVersion(_relations, slot, newVersion);
+                break;
+        }
+
+        finalizeAcknowledgedDelete(type, slot);
     }
 
     void finalizeAcknowledgedDelete(
@@ -5319,4 +5375,112 @@ unittest // M9: modify then delete exports only authoritative deletion metadata
     assert(deletion.objectState == ChangeObjectState.identityOnly);
     assert(deletion.metadata.hasVersion);
     assert(deletion.metadata.versionNumber == 6);
+}
+
+
+unittest // v0.2.1: retained delete-if-unused restores the clean baseline
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = 42;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    node.metadata.hasVersion = true;
+    node.metadata.versionNumber = 7;
+    node.metadata.hasChangeset = true;
+    node.metadata.changesetId = 12;
+
+    OsmHandle handle;
+    assert(store.add(node, handle, status));
+    assert(store.remove(handle, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(uploaded.entries.length == 1);
+    uploaded.entries[0].deleteIfUnused = true;
+    assert(uploaded.setChangeset(99));
+
+    UploadResult result;
+    result.entries ~= UploadResultEntry.modified(ElementType.node, 42, 7);
+
+    assert(store.applyUploadResult(uploaded, result, status));
+
+    StoreNodeView restored;
+    assert(store.node(handle, restored, status));
+    assert(restored.state == StoreElementState.clean);
+    assert(restored.metadata.hasVersion);
+    assert(restored.metadata.versionNumber == 7);
+    assert(restored.metadata.hasChangeset);
+    assert(restored.metadata.changesetId == 12);
+
+    OwnedChangeSequence remaining;
+    assert(store.collectChanges(remaining, status));
+    assert(remaining.empty);
+}
+
+unittest // v0.2.1: already-deleted conditional result finalizes tombstone
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedRelation relation;
+    relation.id = 77;
+    relation.metadata.hasVersion = true;
+    relation.metadata.versionNumber = 3;
+
+    OsmHandle handle;
+    assert(store.add(relation, handle, status));
+    assert(store.remove(handle, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    uploaded.entries[0].deleteIfUnused = true;
+    assert(uploaded.setChangeset(100));
+
+    UploadResult result;
+    result.entries ~= UploadResultEntry.modified(ElementType.relation, 77, 4);
+
+    assert(store.applyUploadResult(uploaded, result, status));
+
+    StoreElementState state;
+    assert(!store.state(handle, state, status));
+    assert(status.error == StoreError.invalidHandle);
+
+    OsmHandle found;
+    assert(!store.find(ElementType.relation, 77, found));
+
+    OwnedChangeSequence remaining;
+    assert(store.collectChanges(remaining, status));
+    assert(remaining.empty);
+}
+
+unittest // v0.2.1: unconditional delete rejects retained-result shape atomically
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedWay way;
+    way.id = 88;
+    way.metadata.hasVersion = true;
+    way.metadata.versionNumber = 5;
+
+    OsmHandle handle;
+    assert(store.add(way, handle, status));
+    assert(store.remove(handle, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(!uploaded.entries[0].deleteIfUnused);
+    assert(uploaded.setChangeset(101));
+
+    UploadResult result;
+    result.entries ~= UploadResultEntry.modified(ElementType.way, 88, 5);
+
+    assert(!store.applyUploadResult(uploaded, result, status));
+    assert(status.error == StoreError.uploadResultMismatch);
+
+    StoreElementState state;
+    assert(store.state(handle, state, status));
+    assert(state == StoreElementState.deleted);
 }

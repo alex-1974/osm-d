@@ -1,6 +1,6 @@
 # Getting started with osm-d
 
-This guide targets the v0.2.0 consumer API. The v0.1 -> v0.2 migration is
+This guide targets the v0.2.x consumer API. The v0.1 -> v0.2 migration is
 summarized in `API_V0_2.md`; the supported v0.2.x compatibility contract is
 `API_STABILITY.md`.
 
