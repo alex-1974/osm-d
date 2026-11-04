@@ -57,6 +57,19 @@ jobs:
           CONSUMER_COMPILERS="$DC" \
             bash tests/run-consumer-compile.sh
 
+      - name: Build published examples
+        shell: bash
+        run: |
+          EXAMPLE_COMPILERS="$DC" \
+            bash tests/run-examples.sh
+
+      - name: Verify consumer archive
+        if: matrix.compiler == 'dmd-2.111.0' || matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          PACKAGE_SMOKE_COMPILERS="$DC" \
+            bash tests/run-package-smoke.sh
+
       - name: Qualify osmChange with external toolchain
         if: matrix.compiler == 'dmd-2.111.0'
         shell: bash
@@ -112,3 +125,54 @@ jobs:
             --build-mode=allAtOnce \
             --compiler="$DC" \
             --force
+
+
+  release-io-baseline:
+    name: Release / Monaco write + XML baseline
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Fetch pinned Monaco workload
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch monaco-260901; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
+
+      - name: Build release I/O baseline
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=release-io \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run release I/O baseline
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-release-io \
+            benchmark/data/geofabrik-2026-09-01/monaco-260901.osm.pbf \
+            | tee benchmark/release/io-monaco.txt
+
+      - name: Upload release I/O evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-io-monaco-${{ github.sha }}
+          path: benchmark/release/io-monaco.txt
+          if-no-files-found: error
