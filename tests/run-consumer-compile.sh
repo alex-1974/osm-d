@@ -60,5 +60,5 @@ for compiler in "${compilers[@]}"; do
         --compiler="$compiler" \
         --build=debug \
         --force
-    echo "PASS: $compiler v0.1 release API consumer compile"
+    echo "PASS: $compiler current release API consumer compile"
 done
