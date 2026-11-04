@@ -59,6 +59,19 @@ void compileStoreSurface()
     StoreCounts counts = store.counts;
     assert(usage.totalOwnedBytes > 0);
     assert(counts.liveNodes == 1);
+
+    OsmStore directStore;
+    PbfReadSummary directSummary;
+    PbfStoreReadStatus directStatus;
+    const(ubyte)[] pbfBytes;
+    bool directOk = readPbfStore(
+        pbfBytes,
+        directStore,
+        directSummary,
+        directStatus);
+    assert(!directOk);
+    assert(directStore is null);
+    assert(!directStatus.pbf.ok);
 }
 
 void main()
