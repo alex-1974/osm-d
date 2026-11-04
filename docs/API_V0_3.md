@@ -1,11 +1,12 @@
-# v0.3 API direction
+# v0.2 -> v0.3 API migration
 
-**Status:** development contract for the next minor release line  
-**Published compatibility contract:** `API_STABILITY.md` remains the v0.2.x
-source contract until a later release explicitly freezes a new line.
+**Status:** v0.3.0 release migration guide  
+**Compatibility contract:** `API_STABILITY.md` defines the frozen v0.3.x
+source contract.
 
-v0.3 development starts from the fully qualified v0.2.1 state. M11 is additive:
-it does not remove, rename or weaken any supported v0.2.x symbol.
+v0.3 keeps the v0.2 semantic/store/PBF surface and adds two focused Editing API
+response facades. One deliberately misleading v0.2 compatibility property is
+removed before the v0.3 API freeze.
 
 ## New focused upload facade
 
@@ -79,6 +80,31 @@ Current OSM server behavior makes that unsafe:
 Use `UploadResultEntry.effectFor(uploadedEntry, effect)` when semantic effect
 classification is required.
 
+### Migration from the v0.2 context-free action guess
+
+v0.2.1 retained `UploadResultEntry.action` only for patch-line source
+compatibility, even though the property could not distinguish ordinary modify
+from retained/already-deleted conditional delete results.
+
+v0.3 removes that property. Replace code such as:
+
+```d
+auto action = resultEntry.action;
+```
+
+with request-aware classification:
+
+```d
+UploadResultEffect effect;
+if (!resultEntry.effectFor(uploadedEntry, effect))
+{
+    // result cannot acknowledge this request entry
+}
+```
+
+This is the only deliberate source-breaking change from the supported v0.2.x
+surface.
+
 ## Bounded parsing
 
 `UploadResultReader` uses the existing transport-d/dxml XML boundary.
@@ -90,15 +116,15 @@ are transactional and leave the destination at `.init` on failure.
 
 Unknown root/entry attributes and unsupported content fail explicitly.
 
-## Compatibility direction
+## v0.3 facade policy
 
-M11 adds a new facade rather than expanding `import osm;`. This follows the
-v0.2 API cleanup: specialized wire-format families remain opt-in and the common
-root stays focused on ordinary semantic/store/PBF traversal work.
+M11 adds a new facade rather than expanding `import osm;`. Specialized
+wire-format/server-response families remain opt-in and the common root stays
+focused on ordinary semantic/store/PBF traversal work.
 
-Further v0.3 work must not silently broaden this facade into an HTTP/account
-client. A future network abstraction requires a separate responsibility/API
-decision.
+The frozen v0.3.x surface must not silently broaden `osm.upload` into an
+HTTP/account client. A future network abstraction requires a separate
+responsibility/API decision.
 
 
 ## Editing API capability discovery
@@ -141,3 +167,20 @@ values are never compiled into validation defaults.
 The XML form is implemented first because it reuses osm-d's existing bounded
 transport-d/dxml boundary. JSON capability support remains additive future work
 only if a consumer requires it.
+
+
+## Upgrade summary
+
+For ordinary v0.2.x consumers:
+
+1. change the DUB dependency to `~>0.3.0`;
+2. no source change is required for the existing `osm`, `osm.pbf`,
+   `osm.store`, `osm.compare`, `osm.xml`, `osm.osmchange` or
+   `osm.validate` workflows;
+3. if code used the deprecated-by-contract
+   `UploadResultEntry.action` shape guess, migrate to `effectFor`;
+4. use `osm.upload` when parsing successful diff-upload responses;
+5. use `osm.capabilities` when discovering target-server validation limits.
+
+HTTP/OAuth, changeset lifecycle, retry policy and application worksets remain
+outside osm-d in v0.3.x.

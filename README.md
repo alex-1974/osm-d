@@ -29,6 +29,8 @@ The current library scope includes:
 - OSM XML;
 - OSM PBF;
 - osmChange;
+- OSM Editing API diff-upload response parsing;
+- Editing API capability discovery for target-aware upload validation;
 - structural and semantic validation;
 - loss-aware read/write round trips;
 - compact stores for larger editable datasets;
@@ -44,7 +46,7 @@ The core layers are deliberately separated:
 ```text
 bytes
   -> memory / wire
-  -> format codec (PBF, XML, osmChange)
+  -> format codec (PBF, XML, osmChange, Editing API XML)
   -> raw representation
   -> validation
   -> borrowed OSM views
@@ -61,10 +63,10 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `ARCHITECTURE.md` — module boundaries and data flow
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
-- `docs/RELEASE_BASELINE.md` — v0.2.x release qualification baseline
-- `docs/API_STABILITY.md` — supported v0.2.x API and compatibility policy
+- `docs/RELEASE_BASELINE.md` — release qualification baseline/evidence
+- `docs/API_STABILITY.md` — supported v0.3.x API and compatibility policy
 - `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
-- `docs/API_V0_3.md` — current next-minor API direction on `develop`
+- `docs/API_V0_3.md` — v0.2 → v0.3 API migration guide
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -83,7 +85,7 @@ only `.workspace/`.
 Add the current standalone release line to a DUB package:
 
 ```sdl
-dependency "osm-d" version="~>0.2.0"
+dependency "osm-d" version="~>0.3.0"
 ```
 
 Then build normally:
@@ -108,18 +110,16 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package remains pre-1.0. v0.2.x preserves the current high-level consumer
-surface for the v0.2.x patch line: `import osm;` stays focused on common
-OSM/PBF-traversal/store workflows, loss-aware PBF document/write/parallel
-facilities live in `osm.pbf`, and XML, osmChange, comparison and upload
-validation use focused facades. The exact v0.2.x promise is in
-`docs/API_STABILITY.md`; v0.1 -> v0.2 migration is in `docs/API_V0_2.md`.
+The package remains pre-1.0. v0.3.x preserves the supported high-level
+consumer surface for the v0.3 patch line: `import osm;` stays focused on
+common semantic/PBF-traversal/store workflows, while specialized format and
+Editing API families use focused facades.
 
-Current `develop` starts the next minor line with additive focused
-facades for Editing API response semantics: `osm.upload` parses
-`diffResult`, while `osm.capabilities` discovers dynamic upload-validation
-limits from the server capability document. Neither changes the published
-v0.2.x contract or adds HTTP/OAuth policy. See `docs/API_V0_3.md`.
+v0.3 adds `osm.upload` for successful diff-upload responses and
+`osm.capabilities` for dynamic target-server upload limits. It deliberately
+does not add HTTP/OAuth, changeset lifecycle or retry policy. The exact v0.3.x
+promise is in `docs/API_STABILITY.md`; migration from v0.2 is in
+`docs/API_V0_3.md`.
 
 ## Reading an in-memory PBF
 
@@ -214,10 +214,19 @@ No changeset is invented by the store. Local creates are dependency-ordered;
 create-then-delete is omitted; established deletes use the captured baseline
 version.
 
-After a successful OSM diff upload, pass the exact uploaded sequence together
-with its format-neutral `UploadResult` back to the store:
+After a successful OSM diff upload, parse the server's `diffResult`
+through the focused facade and pass the exact uploaded sequence together with
+the resulting format-neutral `UploadResult` back to the store:
 
 ```d
+import osm.upload;
+
+UploadResult uploadResult;
+UploadResultReadStatus resultStatus;
+
+if (!readUploadResult(responseSource, uploadResult, resultStatus))
+    return;
+
 if (!store.applyUploadResult(changes, uploadResult, status))
 {
     // stale local state or mismatched result; nothing was acknowledged.
@@ -382,8 +391,19 @@ an `OwnedChangeSequence` is intended for an OSM API-style upload:
 ```d
 import osm.validate;
 
-CapabilityProfile target;
-target.maximumWayNodes = 2_000; // supply values from target-server policy
+import osm.capabilities;
+
+EditingApiCapabilitiesDocument capabilityDocument;
+ApiCapabilitiesReadStatus capabilityStatus;
+
+if (!readEditingApiCapabilities(
+        capabilitiesResponseSource,
+        capabilityDocument,
+        capabilityStatus))
+    return;
+
+CapabilityProfile target =
+    capabilityDocument.capabilities.validationProfile;
 
 UploadValidationIssue issue;
 if (!validateUploadChanges(changes, target, issue))
@@ -414,8 +434,8 @@ trip.
 
 ## Release status
 
-v0.2.1 is the current qualified v0.2.x patch release. Its high-level capabilities
-include:
+v0.3.0 extends the qualified v0.2.1 base with two focused Editing API
+response/policy facades. Its high-level capabilities include:
 
 - validated borrowed and parallel-summary PBF reading;
 - durable/loss-aware PBF document read and write through `osm.pbf`;
@@ -425,9 +445,11 @@ include:
   indexes;
 - direct transactional PBF-to-store construction;
 - deterministic store-edit materialization and authoritative diff-upload result
-  reconciliation.
+  reconciliation;
+- bounded OSM API diffResult parsing through `osm.upload`;
+- bounded Editing API capability discovery through `osm.capabilities`.
 
-The v0.2.x patch line freezes the supported high-level facade/import surface,
+The v0.3.x patch line freezes the supported high-level facade/import surface,
 parameter names, ownership/lifetime and failure contracts described in
 `docs/API_STABILITY.md`. It does not freeze low-level wire/codec/store
 implementation modules, a persistent store format, concurrent store mutation,
@@ -435,7 +457,7 @@ rendering, spatial indexing, network/OAuth policy or changeset lifecycle.
 `docs/RELEASE_BASELINE.md` records the evidence behind release claims.
 
 Literal JOSM-export provenance remains tracked separately in #85 as evidence
-hardening; it is not a semantic/API blocker for v0.2.x.
+hardening; it is not a semantic/API blocker for v0.3.x.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package use the

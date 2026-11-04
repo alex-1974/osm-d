@@ -74,6 +74,12 @@ struct UploadResultReadStatus
     OsmId oldId;
     bool hasElementIdentity;
 
+    /**
+     * Whether no read error has been recorded.
+     *
+     * Returns:
+     *   true when error is UploadResultReadError.none.
+     */
     @property bool ok() const @safe pure nothrow @nogc
     {
         return error == UploadResultReadError.none;
@@ -115,6 +121,30 @@ struct UploadResultReadSummary
  */
 struct UploadResultReader
 {
+    /**
+     * Stream one complete diffResult document.
+     *
+     * Params:
+     *   source = Byte source containing one XML diffResult document.
+     *   handler = Consumer receiving each UploadResultEntry through
+     *             handler.entry(entry), in source order.
+     *   summary = Receives counts and root metadata on successful completion.
+     *   status = Receives explicit transport/XML/semantic failure details.
+     *   options = Optional parser/resource limits; zero fields select defaults.
+     *
+     * Returns:
+     *   true only after the complete document has been validated and consumed.
+     *
+     * Notes:
+     *   Entries delivered before a later streaming failure are not rolled back.
+     *   Use readUploadResult or readUploadResultDocument for transactional
+     *   materialization.
+     *
+     * Safety:
+     *   The trusted boundary contains dxml's parser ranges inside this
+     *   synchronous call. No dxml entity/range escapes; callbacks receive only
+     *   value-type UploadResultEntry values.
+     */
     bool read(Handler)(
         ByteSource source,
         ref Handler handler,
@@ -249,7 +279,18 @@ struct UploadResultReader
     }
 }
 
-/** Transactionally materialize one complete diffResult document. */
+/**
+ * Transactionally materialize one complete diffResult document.
+ *
+ * Params:
+ *   source = Byte source containing one XML diffResult document.
+ *   document = Receives root metadata plus ordered result entries on success.
+ *   status = Receives explicit failure details.
+ *   options = Optional parser/resource limits; zero fields select defaults.
+ *
+ * Returns:
+ *   true on complete success. On failure document remains at .init.
+ */
 bool readUploadResultDocument(
     ByteSource source,
     out UploadResultDocument document,
@@ -288,6 +329,15 @@ bool readUploadResultDocument(
  *
  * Root XML metadata is deliberately discarded by this convenience function.
  * Use readUploadResultDocument when generator/licence envelope metadata matters.
+ *
+ * Params:
+ *   source = Byte source containing one XML diffResult document.
+ *   result = Receives ordered raw upload-result entries on success.
+ *   status = Receives explicit failure details.
+ *   options = Optional parser/resource limits; zero fields select defaults.
+ *
+ * Returns:
+ *   true on complete success. On failure result remains at .init.
  */
 bool readUploadResult(
     ByteSource source,

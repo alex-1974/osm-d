@@ -1,17 +1,94 @@
-# osm-d v0.2.0 release baseline
-
-**Feature-freeze date:** 2026-11-04  
-**Feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
-
-This document condenses the evidence relevant to the v0.2.0 release. v0.2 is
-primarily a consumer-API and editable-store workflow release, not a parser
-algorithm rewrite. Evidence is therefore split between unchanged v0.1
-performance/reference baselines and v0.2-specific requalification of the
-changed API/store surface.
+# osm-d release baseline
 
 Absolute timings are environment-specific. Durable claims are semantic parity,
 bounded-memory behavior, the supported compiler matrix, source/lifetime
 contracts and the measured performance class on the recorded runners.
+
+## v0.3.0 release candidate
+
+**Feature-freeze date:** 2026-11-04  
+**Feature-freeze commit:** `77c98eaca6ba2cd8f50eb50adc4d4e352d6e719c`
+
+v0.3.0 contains the completed M11/M12 Editing API response/policy slice:
+
+- bounded `diffResult` XML parsing through `osm.upload`;
+- request-context result classification through
+  `UploadResultEntry.effectFor`;
+- bounded Editing API capabilities projection through `osm.capabilities`;
+- direct projection of dynamic Way/Relation/Changeset limits into the existing
+  `CapabilityProfile`.
+
+The production PBF decoder/writer, compact-store representation and city-scale
+store algorithms are unchanged by M11/M12. Existing v0.2 performance/reference
+evidence therefore remains the comparison baseline rather than being relabeled
+as fresh v0.3 measurements.
+
+v0.3-specific correctness evidence before the release branch:
+
+- M11 final PR-head Fast CI 41896048308 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M11 post-merge Fast CI 41896622851 — PASS;
+- M12 final PR-head Fast CI 41909701127 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M12 post-merge Fast CI 41910215373 — PASS;
+- external `osm.upload` and `osm.capabilities` consumers compile and run on
+  the fast compiler pair;
+- server-shape fixtures cover conditional delete result ambiguity, placeholder
+  reuse, current capability structure/service states, projection evolution and
+  malformed/bounded input.
+
+Release-branch stabilization evidence on candidate
+`6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`:
+
+- Release Gate run 41914520052 — PASS across all six compiler jobs, metadata
+  and Monaco I/O;
+- PBF Round-trip Qualification run 41914520062 — PASS for pinned Monaco,
+  Liechtenstein and Bremen;
+- M6 Store Qualification run 41914520082 — PASS;
+- Monaco I/O artifact
+  `release-io-monaco-6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`,
+  digest
+  `sha256:4541552189ecdd8c414420565102edd28beaf5a87c4ceb8ebea351eaac8fc24a`;
+- M6/Bremen evidence artifact
+  `store-layout-bremen-6475ead54f7fe1a4a701ac0232eb67a3ca2d7a9b`,
+  digest
+  `sha256:900e0a4fd4e284003e7a80c40d066f585266bc1904bcf6b3df0061300817e61e`.
+
+Fresh Monaco release-I/O evidence under LDC 1.41.0, Ubuntu 24.04,
+release/allAtOnce:
+
+| Operation | v0.2.0 release-branch p50 | v0.3.0 stabilization p50 |
+| --- | ---: | ---: |
+| semantic PBF write | 104.310 ms | **83.989 ms** |
+| OSM XML write | 211.524 ms | **172.995 ms** |
+| materializing OSM XML read | 772.839 ms | **650.615 ms** |
+
+The input again contained 41,703 Nodes, 6,249 Ways and 348 Relations.
+Generated sizes remained 2,496,211 bytes for semantic PBF and 11,584,269
+bytes for OSM XML, with `semantic_parity=pass`.
+
+These cross-run timing differences are observations on GitHub-hosted runners,
+not causal performance claims. M11/M12 do not modify the measured PBF/XML hot
+paths.
+
+After this evidence is committed, the final promotion candidate is rerun
+through the same Release Gate, pinned PBF and M6/Bremen qualifications so that
+release promotion still uses one exact fully-green head.
+
+The API freeze removes the v0.2-only ambiguous
+`UploadResultEntry.action` shape guess and freezes request-aware `effectFor`
+as the supported semantic classifier. No further public API change is admitted
+after that checkpoint.
+
+## Historical v0.2 baseline
+
+**v0.2 feature-freeze date:** 2026-11-04  
+**v0.2 feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
+
+v0.2 was primarily a consumer-API and editable-store workflow release, not a
+parser algorithm rewrite. Evidence is split between unchanged v0.1
+performance/reference baselines and v0.2-specific requalification of the
+changed API/store surface.
 
 ## Publication record
 
@@ -72,14 +149,14 @@ Release compiler matrix:
 - DMD 2.111.0, 2.112.1, 2.113.0;
 - LDC 1.41.0, 1.42.0, 1.43.0.
 
-The v0.2.0 release gate is Ubuntu 24.04 x86_64. Other platforms are not
+The v0.3.0 release gate is Ubuntu 24.04 x86_64. Other platforms are not
 claimed as release-qualified by this baseline.
 
 LDC 1.41.0 remains the primary release-performance compiler.
 
 The supported source API and direct-import boundary are defined in
-`API_STABILITY.md`; v0.1 -> v0.2 migration is documented in
-`API_V0_2.md`.
+`API_STABILITY.md`; v0.1 -> v0.2 and v0.2 -> v0.3 migration are documented
+in `API_V0_2.md` and `API_V0_3.md`.
 
 ## Pinned compatibility corpus
 

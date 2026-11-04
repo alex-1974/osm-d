@@ -39,7 +39,12 @@ struct UploadResultDocumentInfo
     bool hasLicense;
     OwnedBytes license;
 
-    /** Create an independently mutable value. Immutable byte strings may share. */
+    /**
+     * Create an independently mutable metadata value.
+     *
+     * Returns:
+     *   A value copy. Immutable byte strings may safely remain shared.
+     */
     UploadResultDocumentInfo deepCopy() const @safe
     {
         return this;
@@ -52,7 +57,12 @@ struct UploadResultDocument
     UploadResultDocumentInfo info;
     UploadResult result;
 
-    /** Create an independently mutable entry array. */
+    /**
+     * Create an independently mutable document.
+     *
+     * Returns:
+     *   A copy with an independently mutable result-entry array.
+     */
     UploadResultDocument deepCopy() const @safe
     {
         UploadResultDocument copy;
