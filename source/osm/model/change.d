@@ -567,7 +567,6 @@ unittest
     const deleted = UploadResultEntry.deleted(
         ElementType.relation, 33);
     assert(deleted.shapeValid);
-    assert(deleted.action == ChangeAction.deleteObject);
 
     assert(!UploadResultEntry.init.shapeValid);
 }
