@@ -22,7 +22,7 @@ A third rule follows from both:
 
 ## Scope
 
-The v0.1 release scope includes:
+The current library scope includes:
 
 - the OSM object model: nodes, ways, relations, tags and metadata;
 - streaming and owned representations;
@@ -62,7 +62,8 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
 - `docs/RELEASE_BASELINE.md` — v0.1.0 compatibility/performance baseline
-- `docs/API_STABILITY.md` — supported v0.1.x API and compatibility policy
+- `docs/API_STABILITY.md` — published v0.1.x API and compatibility policy
+- `docs/API_V0_2.md` — current v0.2 API direction and migration
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -107,16 +108,16 @@ LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
 The package is pre-1.0 and the first deliberate standalone release is v0.1.0.
-`import osm;` is the curated package root for PBF and store workflows; XML,
-osmChange and upload validation use the supported `osm.xml`, `osm.osmchange`
-and `osm.validate` facades. The v0.1.x source-compatibility promise and
-supported direct-import surface are defined in `docs/API_STABILITY.md`.
+Current `develop` prepares the v0.2 consumer API: `import osm;` stays
+focused on common OSM/PBF-traversal/store workflows, while loss-aware PBF
+document/write/parallel facilities live in `osm.pbf`. XML, osmChange and
+upload validation use `osm.xml`, `osm.osmchange` and `osm.validate`.
+The immutable v0.1.x promise is in `docs/API_STABILITY.md`; the v0.2 migration
+is in `docs/API_V0_2.md`.
 
 ## Reading an in-memory PBF
 
-The first consumer reader is intentionally streaming and borrowed. The caller
-owns the encoded bytes and a reusable workspace; callbacks receive element
-views synchronously without materializing an owned OSM model.
+The ordinary one-shot path does not require caller-managed scratch storage:
 
 ```d
 import osm;
@@ -129,104 +130,47 @@ struct Handler
     {
         ++nodes;
 
-        OsmId id = node.id;
-        auto location = node.location;
-        double latitude = location.latitude;
-        double longitude = location.longitude;
-
-        // Exact integer coordinates remain available when required:
-        long latitudeNanodegrees = location.latitudeNanodegrees;
-        long longitudeNanodegrees = location.longitudeNanodegrees;
-
-        auto metadata = node.metadata;
-        if (metadata.hasVersion)
-            int versionNumber = metadata.versionNumber;
-        if (metadata.hasUserId)
-            int userId = metadata.userId;
-        if (metadata.hasUsername)
-            auto username = metadata.username;
-
         auto tags = node.tags;
         while (!tags.empty)
         {
             TagView tag = tags.front;
-            const key = tag.key;
-            const value = tag.value;
             tags.popFront();
         }
     }
 }
 
-const(ubyte)[] pbfBytes = ...;
-
-PbfReader reader;
-PbfReaderWorkspace workspace;
 Handler handler;
-PbfReadSummary summary;
-PbfReadStatus status;
+auto result = readPbf(pbfBytes, handler);
 
-if (!reader.read(pbfBytes, workspace, handler, summary, status))
+if (!result.ok)
 {
-    // status.error is the stable high-level category.
-    // blockSequence/blockOffset identify the affected file block.
+    // result.status identifies the high-level failure.
 }
 ```
 
-A handler may omit `node`, `way`, or `relation` when that element kind is
-not needed. `PbfReader` delivers one concrete semantic `NodeView` for both
-regular Node and DenseNodes encoding. The callback-scoped `NodeView` is
-deliberately non-copyable; copy the semantic values or ranges that need to be
-retained during the callback instead. `node.tags` returns an independent
-zero-allocation borrowed range, so advancing that range does not mutate the
-codec-owned node view. Relation members are format-independent at the consumer
-boundary: each member exposes
-`ElementType type`, `OsmId id`, and borrowed role bytes without PBF
-StringTable IDs. Tags from regular elements and DenseNodes expose the same
-format-independent `TagView` containing only borrowed key/value bytes; PBF
-StringTable IDs remain below the consumer boundary. Way callbacks expose ordered
-node references through `way.nodes`: each `WayNodeView` carries the referenced `OsmId` and, when
-the input provides `LocationsOnWays`, an optional `LocationView`. Consumers
-therefore do not need to zip PBF reference and coordinate columns themselves.
-The remaining semantic-view unification is tracked separately from the reader
-orchestration.
+For repeated/high-throughput reads, retain `PbfReaderWorkspace` and call
+`PbfReader.read` directly; this reuses grown scratch capacity. Borrowed views
+remain callback-scoped in both forms.
+
+A Way exposes ordered references through `way.nodes`; each value is a
+`NodeRefView` with an OSM ID and an optional `LocationView` when
+`LocationsOnWays` was present.
 
 ### Loading an editable store directly from PBF
 
-Consumers that need durable random access can construct the compact store
-directly from the validated PBF stream:
-
 ```d
-import osm;
-
-const(ubyte)[] pbfBytes = ...;
-
 OsmStore store;
 PbfReadSummary summary;
-PbfStoreReadStatus status;
+PbfStoreReadStatus readStatus;
 
-if (!readPbfStore(pbfBytes, store, summary, status))
+if (readPbfStore(pbfBytes, store, summary, readStatus))
 {
-    if (!status.pbf.ok)
+    StoreNodeView node;
+    StoreStatus status;
+
+    if (store.node(123, node, status))
     {
-        // PBF/framing/semantic decode failure.
-    }
-    else
-    {
-        // The file decoded, but editable-store semantics were rejected.
-        // Inspect status.store.
-    }
-}
-else
-{
-    OsmHandle node;
-    if (store.find(ElementType.node, 123, node))
-    {
-        StoreNodeView view;
-        StoreStatus storeStatus;
-        if (store.node(node, view, storeStatus))
-        {
-            // view borrows from the durable store, not from pbfBytes.
-        }
+        // node.handle is available when stable editor identity is needed.
     }
 
     auto parentWays = store.parentWays(123);
@@ -235,19 +179,23 @@ else
 }
 ```
 
-The input bytes need to remain alive only for the call. On success the store
-owns all semantic state, primary indexes and parent indexes. No
-`PbfDocument` or `OwnedDataset` object graph is materialized. The selected M6
-construction path is single-writer with one reusable reader workspace; see ADR
-0024 for the parallel-staging decision and city-scale evidence.
+The store returns the common semantic leaf types `MetadataView`, `TagView`,
+`NodeRefView` and `RelationMemberView`; only the borrowing ranges are
+store-specific. Stable `OsmHandle` lookup remains available for generic/editor
+workflows, but a simple typed read no longer needs the two-step
+`find(type,id) -> handle -> node/way/relation` sequence.
+
+The PBF input needs to remain alive only for `readPbfStore`; the resulting
+store owns its durable semantics and indexes.
 
 ### Parallel validated summary decoding
 
-When only complete-file validation and aggregate counts are required,
-`PbfParallelReader` can decode independent OSMData blocks concurrently
-without exposing borrowed element views across worker threads:
+Parallel summary decoding is specialized PBF functionality:
 
 ```d
+import osm;
+import osm.pbf;
+
 PbfParallelReader reader;
 PbfParallelReadOptions options;
 options.workerCount = 4;
@@ -255,83 +203,41 @@ options.queueCapacity = 8;
 
 PbfReadSummary summary;
 PbfReadStatus status;
-
-if (!reader.readSummary(pbfBytes, options, summary, status))
-{
-    // status identifies the earliest failing file block.
-}
+reader.readSummary(pbfBytes, options, summary, status);
 ```
 
-Framing and HeaderBlock validation remain serial. OSMData jobs then enter a
-fixed-capacity producer/worker queue. Jobs borrow immutable Blob slices from
-the already-loaded input, while each worker owns and reuses one
-`PbfReaderWorkspace` for decompression and block decode. All workers join
-before `readSummary` returns.
-
-This first parallel API is intentionally summary-only. It does not invoke one
-arbitrary consumer handler concurrently and does not materialize semantic
-elements merely to extend worker-buffer lifetimes. `PbfReader.read` remains
-the ordered direct-sink API; ordered parallel element delivery is a separate
-future step.
-
-Zero-valued options select practical defaults: available CPU count for workers
-and one queued job slot per worker.
+The bounded pipeline keeps its current blocking producer-backpressure queue.
+`containers-d` v0.3.1 was reviewed, but its `BlockingQueue` deliberately
+uses non-blocking producer admission; replacing the reader queue with
+spin/yield would change the scheduling/performance contract merely for reuse.
 
 ### Iterating semantic elements with `foreach`
 
-`PbfReader.nodes`, `PbfReader.ways`, and `PbfReader.relations` provide
-idiomatic D `foreach` adapters without materializing owned element
-collections:
+The most discoverable element-specific form is:
 
 ```d
-PbfReader reader;
-
-auto nodes = reader.nodes(pbfBytes);
-foreach (scope ref NodeView node; nodes)
+foreach (scope ref NodeView node; pbfNodes(pbfBytes))
 {
-    // The view is borrowed for this iteration body.
-    if (node.id == wantedId)
-        break;
+    // borrowed for this iteration body
 }
 
-auto ways = reader.ways(pbfBytes);
-foreach (scope ref WayView way; ways)
+foreach (scope ref WayView way; pbfWays(pbfBytes))
 {
-    // Semantic tags, metadata, and ordered way.nodes remain borrowed.
+    // way.nodes yields NodeRefView
 }
 
-auto relations = reader.relations(pbfBytes);
-foreach (scope ref RelationView relation; relations)
+foreach (scope ref RelationView relation; pbfRelations(pbfBytes))
 {
-    // Semantic tags, metadata, and relation.members remain borrowed.
 }
 ```
 
-After traversal, inspect the adapter's `status` and `completed` properties.
-A natural traversal to end-of-file has `status.ok == true` and
-`completed == true`. A consumer `break`, enclosing `return`, or outer
-`goto` stops parsing immediately and leaves `completed == false`; the
-unvisited file suffix is then deliberately not validated. Decode failures also
-leave `completed == false`, with the failure reported through `status`.
+The existing `PbfReader.nodes/ways/relations` methods remain equivalent
+advanced entry points. Natural completion validates the complete file; an
+early foreach exit is explicitly a partial traversal.
 
-These adapters use D's `opApply` protocol rather than pretending the
-synchronous push decoder is a resumable Phobos InputRange. Complete traversal
-retains the same whole-file validation scope as `PbfReader.read`, including
-validation of element kinds that are not yielded by the selected adapter.
-
-The direct sink API remains the performance-critical core. The node foreach
-adapter has no per-node materialization and was qualified against the direct
-sink on the pinned Bremen workload with LDC 1.41.0: median deltas were
-`+0.77%` for core node access and `-0.21%` for tag traversal, treated as
-performance parity.
-
-Way and Relation foreach adapters preserve the same semantic results but carry
-a measured convenience cost on the same city workload. Final clean-candidate
-medians were `+5.23%` for Way core access, `+4.63%` for full Way traversal,
-`+4.84%` for Relation core access, and `+5.21%` for full Relation
-traversal. Consumers that need maximum whole-file throughput should therefore
-prefer the direct sink API; the foreach adapters trade about five percent on
-this workload for idiomatic element-specific traversal.
+Loss-aware PBF documents, raw preservation, writing and PBF-specific semantic
+comparison are grouped under `import osm.pbf;` rather than expanding the
+ordinary package root.
 
 ## Streaming OSM XML
 
