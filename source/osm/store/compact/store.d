@@ -3730,9 +3730,102 @@ unittest
 
 unittest
 {
-    // The #62 remap kernel rewrites known inbound locations atomically while
-    // preserving all stable handles. #63 will supply these locations from
-    // production parent indexes.
+    // Parent navigation is distinct by parent and remains coherent under
+    // replacement, deletion and restoration.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    foreach (id; [1L, 2L])
+    {
+        OwnedNode node;
+        node.id = id;
+        node.location = LocationView(id, id);
+        OsmHandle ignored;
+        assert(store.add(node, ignored, status));
+    }
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+    way.nodes ~= OwnedWayNode(2, false, LocationView.init);
+    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    auto parents1 = store.parentWays(1);
+    assert(!parents1.empty);
+    assert(parents1.front.handle == wayHandle);
+    parents1.popFront();
+    assert(parents1.empty);
+
+    auto parents2 = store.parentWays(2);
+    assert(!parents2.empty);
+    assert(parents2.front.handle == wayHandle);
+
+    OwnedWay replacement = way.deepCopy();
+    replacement.nodes.length = 1;
+    replacement.nodes[0].id = 2;
+    assert(store.replace(wayHandle, replacement, status));
+
+    assert(store.parentWays(1).empty);
+    parents2 = store.parentWays(2);
+    assert(!parents2.empty);
+    assert(parents2.front.handle == wayHandle);
+
+    assert(store.remove(wayHandle, status));
+    assert(store.parentWays(2).empty);
+    assert(store.restore(wayHandle, status));
+    parents2 = store.parentWays(2);
+    assert(!parents2.empty);
+    assert(parents2.front.handle == wayHandle);
+}
+
+unittest
+{
+    // Relation parents are typed and may point at an unresolved positive child.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedRelation relation;
+    relation.id = 20;
+
+    OwnedRelationMember nodeMember;
+    nodeMember.type = ElementType.node;
+    nodeMember.id = 999;
+    relation.members ~= nodeMember;
+    relation.members ~= nodeMember; // duplicate member, one distinct parent
+
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = 999;
+    relation.members ~= wayMember;
+
+    OsmHandle relationHandle;
+    assert(store.add(relation, relationHandle, status));
+
+    auto nodeParents = store.parentRelations(ElementType.node, 999);
+    assert(!nodeParents.empty);
+    assert(nodeParents.front.handle == relationHandle);
+    nodeParents.popFront();
+    assert(nodeParents.empty);
+
+    auto wayParents = store.parentRelations(ElementType.way, 999);
+    assert(!wayParents.empty);
+    assert(wayParents.front.handle == relationHandle);
+
+    assert(store.parentRelations(ElementType.relation, 999).empty);
+
+    assert(store.remove(relationHandle, status));
+    assert(store.parentRelations(ElementType.node, 999).empty);
+    assert(store.restore(relationHandle, status));
+    assert(!store.parentRelations(ElementType.node, 999).empty);
+}
+
+unittest
+{
+    // Public ID remapping discovers all inbound references through the
+    // production indexes, updates tombstoned parents, and preserves handles.
     auto store = new OsmStore();
     StoreStatus status;
 
@@ -3744,9 +3837,8 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    OwnedWayNode refValue;
-    refValue.id = -1;
-    way.nodes ~= refValue;
+    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
+    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
 
@@ -3766,19 +3858,28 @@ unittest
     OsmHandle relationHandle;
     assert(store.add(relation, relationHandle, status));
 
-    auto wayRefs = [KnownWayRefRewrite(wayHandle, 0)];
-    auto relationRefs = [KnownRelationMemberRewrite(relationHandle, 1)];
-    assert(store.remapKnown(
-        nodeHandle, 101, 1, wayRefs, relationRefs, status));
+    // Deleted parents are not navigable, but their current forward state must
+    // still participate in an authoritative child-ID remap.
+    assert(store.remove(wayHandle, status));
+    assert(store.parentWays(-1).empty);
 
+    assert(store.remapId(nodeHandle, 101, 1, status));
     OsmHandle found;
     assert(store.find(ElementType.node, 101, found));
     assert(found == nodeHandle);
     assert(!store.find(ElementType.node, -1, found));
 
+    assert(store.restore(wayHandle, status));
+    auto wayParents = store.parentWays(101);
+    assert(!wayParents.empty);
+    assert(wayParents.front.handle == wayHandle);
+
     StoreWayView wayView;
     assert(store.way(wayHandle, wayView, status));
-    assert(wayView.nodes.front.id == 101);
+    auto refs = wayView.nodes;
+    assert(refs.front.id == 101);
+    refs.popFront();
+    assert(refs.front.id == 101);
 
     StoreRelationView relationView;
     assert(store.relation(relationHandle, relationView, status));
@@ -3786,4 +3887,24 @@ unittest
     assert(members.front.id == -2);
     members.popFront();
     assert(members.front.id == 101);
+
+    assert(store.remapId(wayHandle, 102, 1, status));
+    assert(store.find(ElementType.way, 102, found));
+    assert(found == wayHandle);
+
+    auto relationParents = store.parentRelations(ElementType.way, 102);
+    assert(!relationParents.empty);
+    assert(relationParents.front.handle == relationHandle);
+
+    assert(store.relation(relationHandle, relationView, status));
+    members = relationView.members;
+    assert(members.front.id == 102);
+
+    assert(store.remapId(relationHandle, 103, 1, status));
+    assert(store.find(ElementType.relation, 103, found));
+    assert(found == relationHandle);
+
+    // A second remap is rejected because the ID is no longer local.
+    assert(!store.remapId(nodeHandle, 104, 2, status));
+    assert(status.error == StoreError.invalidId);
 }
