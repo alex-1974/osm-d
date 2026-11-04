@@ -154,10 +154,10 @@ Tracked by M10: #102.
   evidence baseline.
 - [x] Make release metadata checks derive the compatibility line from
   `RELEASE_VERSION`.
-- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
-- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
-- [ ] Promote `release/0.2` to `main` with a merge commit.
-- [ ] Verify the annotated v0.2.0 tag, GitHub Release, archive/checksum and
+- [x] Pass the full six-compiler Release Gate and package/archive smoke.
+- [x] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [x] Promote `release/0.2` to `main` with a merge commit.
+- [x] Verify the annotated v0.2.0 tag, GitHub Release, archive/checksum and
   post-release consumer state.
 
 Feature/API freeze checkpoints are immutable engineering evidence. The final
