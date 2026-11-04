@@ -1,0 +1,8 @@
+name "osm-d-upload-consumer"
+description "External consumer compile probe for osm-d diffResult upload response API"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../../.."
