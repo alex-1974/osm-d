@@ -56,6 +56,11 @@ void compileStoreSurface()
     static assert(is(typeof(view.metadata) == MetadataView));
     static assert(is(typeof(view.tags.front) == TagView));
 
+    StoreWayView typeProbeWay;
+    StoreRelationView typeProbeRelation;
+    static assert(is(typeof(typeProbeWay.nodes.front) == NodeRefView));
+    static assert(is(typeof(typeProbeRelation.members.front) == RelationMemberView));
+
     StoreParentWayRange wayParents = store.parentWays(1);
     StoreParentRelationRange relationParents =
         store.parentRelations(ElementType.node, 1);
