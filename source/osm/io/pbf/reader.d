@@ -513,7 +513,7 @@ struct PbfReader
      *   allocation-free and statically dispatched.
      */
     bool read(Handler)(
-        scope const(ubyte)[] input,
+        const(ubyte)[] input,
         ref PbfReaderWorkspace workspace,
         ref Handler handler,
         out PbfReadSummary summary,
