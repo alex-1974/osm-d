@@ -1,6 +1,6 @@
 module app;
 
-import osm : sameChangeSemantics;
+import osm.model.compare : sameChangeSemantics;
 import osm.osmchange;
 import transport.source : MemorySink, MemorySource;
 
