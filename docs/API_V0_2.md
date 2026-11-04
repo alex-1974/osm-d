@@ -1,7 +1,7 @@
-# v0.2 API direction
+# v0.2 API changes and migration guide
 
-**Status:** development contract for the next pre-1.0 release line  
-**Baseline:** v0.1.0 remains published and source-compatible under `API_STABILITY.md`
+**Status:** finalized migration guide for v0.2.0  
+**Compatibility contract:** `API_STABILITY.md`
 
 v0.2 deliberately improves consumer ergonomics after the first independent
 release cycle. These changes may break v0.1 source where the old surface
@@ -181,7 +181,7 @@ root and into `import osm.pbf;`:
 
 Generic semantic comparison helpers such as `sameOsmSemantics` and
 `sameChangeSemantics` use the focused `osm.compare` facade. The underlying
-`osm.model.compare` module remains available for v0.1 direct-import compatibility.
+`osm.model.compare` module remains supported during the v0.2.x migration line.
 
 ## Exact text bytes
 
@@ -269,3 +269,12 @@ import osm.pbf;
 
 No migration should require weaker lifetime handling, validation or
 data-integrity checks.
+
+
+## Freeze status
+
+The public names, facade/export surface, ordinary function parameter names,
+ownership/lifetime contracts, failure semantics and documented `.init`
+behaviour described here are frozen for the v0.2.x patch line by
+`API_STABILITY.md`. Further implementation, CI, packaging and documentation
+work may continue without changing that supported contract.

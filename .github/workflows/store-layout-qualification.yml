@@ -11,6 +11,15 @@ on:
       - "benchmark/store/**"
       - "benchmark/dub.sdl"
       - ".github/workflows/store-layout-qualification.yml"
+  push:
+    branches:
+      - "release/**"
+    paths:
+      - "source/osm/store/**"
+      - "source/osm/package.d"
+      - "benchmark/store/**"
+      - "benchmark/dub.sdl"
+      - ".github/workflows/store-layout-qualification.yml"
 
 permissions:
   contents: read

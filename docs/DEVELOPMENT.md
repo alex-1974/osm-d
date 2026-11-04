@@ -66,9 +66,9 @@ release line; normal development targets `develop`.
 
 ## Public module surface
 
-The published v0.1.x source contract remains frozen in
-`docs/API_STABILITY.md`. Current `develop` intentionally prepares a cleaner
-v0.2 pre-1.0 surface; its migration is documented in `docs/API_V0_2.md`.
+The supported v0.2.x source contract is frozen in
+`docs/API_STABILITY.md`. The deliberate v0.1 -> v0.2 migration is documented
+in `docs/API_V0_2.md`.
 
 Preferred v0.2 facades:
 

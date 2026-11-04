@@ -5,6 +5,9 @@ import osm.pbf;
 import osm.osmchange;
 import osm.validate;
 import osm.xml;
+import osm.compare : sameChangeSemantics, sameOsmSemantics;
+import osm.model.owned : OwnedWayNode;
+import osm.view.way_node : WayNodeView;
 import transport.source : MemorySink, MemorySource;
 
 @safe void compileRootAndNamedArguments()
@@ -17,6 +20,12 @@ import transport.source : MemorySink, MemorySource;
     static assert(PbfWriteStatus.init.ok);
     static assert(PbfStoreReadStatus.init.ok);
     static assert(StoreStatus.init.ok);
+    static assert(UploadResult.init.empty);
+    static assert(!UploadResultEntry.init.shapeValid);
+    static assert(is(WayNodeView == NodeRefView));
+    static assert(is(OwnedWayNode == OwnedNodeRef));
+    static assert(is(typeof(&sameOsmSemantics)));
+    static assert(is(typeof(&sameChangeSemantics)));
 
     const(ubyte)[] input;
 

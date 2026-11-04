@@ -2,10 +2,12 @@
 
 All notable changes to this project will be documented here.
 
-The project uses semantic versioning. During the pre-1.0 period, the supported
-v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
+The project uses semantic versioning. During the pre-1.0 period, the current
+supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
+
+## 0.2.0 - 2026-11-04
 
 ### Added
 
