@@ -1,5 +1,5 @@
 name "osm-d-release-consumer"
-description "v0.1.x external compatibility probe for osm-d"
+description "External consumer compatibility probe for the current osm-d API"
 authors "osm-d CI"
 license "MIT"
 targetType "executable"

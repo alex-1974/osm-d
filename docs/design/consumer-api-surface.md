@@ -1,8 +1,15 @@
 # Consumer API Surface
 
-Status: design proposal
+Status: implemented v0.2 baseline; frozen for the v0.2.x patch line
 
 ## Purpose
+
+The v0.2 refinement applies the same semantic vocabulary to the editable store:
+store ranges remain representation-specific borrows, but their leaf values are
+the shared `TagView`, `MetadataView`, `NodeRefView` and
+`RelationMemberView`. Typed store lookup by OSM ID is the ordinary convenience
+path; stable `OsmHandle` values remain the editor identity mechanism.
+
 
 `osm-d` should expose OpenStreetMap concepts and user operations.
 
@@ -51,7 +58,7 @@ Technical names remain appropriate for internal implementation code.
 | `TagView` | keep | Clear OSM tag |
 | `RelationMemberView` | keep | Clear OSM relation member |
 | `LocationView` | add | Semantic coordinate value shared by nodes and optional way-node locations |
-| `WayNodeView` | add | Semantic way-node reference with optional location |
+| `NodeRefView` | add | Semantic way-node reference with optional location |
 
 `View` is intentional. It communicates borrowed, non-owning data and therefore
 carries useful lifetime information for consumers.
@@ -316,7 +323,7 @@ That mirrors PBF storage more than ordinary OSM usage. The preferred semantic
 surface is a single ordered node-reference range:
 
 ~~~d
-struct WayNodeView
+struct NodeRefView
 {
     OsmId id;
 
@@ -327,7 +334,7 @@ struct WayNodeView
 way.nodes
 ~~~
 
-For normal OSM PBF data, `WayNodeView.id` is always useful while the location
+For normal OSM PBF data, `NodeRefView.id` is always useful while the location
 is usually absent. If `LocationsOnWays` is present, the same range can expose
 the corresponding location without requiring callers to zip parallel ranges.
 
@@ -340,7 +347,7 @@ if that is faster.
 Consumers should not need to construct any of these ranges manually.
 
 Implementation note (2026-11-01): the first Way-node semantic slice now
-exports format-independent `WayNodeView` and exposes `way.nodes` as a lazy,
+exports format-independent `NodeRefView` and exposes `way.nodes` as a lazy,
 allocation-free projection over the already validated PBF reference and optional
 location ranges. Existing `refs` / `locations` remain available during the
 pre-1.0 transition, but the external package-root consumer probe uses
@@ -564,8 +571,9 @@ visibility rather than data layout or decoding.
 
 ## Compatibility direction
 
-There is no released API freeze that requires preserving accidental exposure of
-implementation mechanisms.
+The v0.2 supported facade/import surface is frozen by `docs/API_STABILITY.md`.
+Implementation mechanisms remain outside that contract; migration aliases that
+are explicitly listed there are preserved throughout v0.2.x.
 
 Before changing visibility or names:
 
@@ -592,7 +600,7 @@ WayView
 RelationView
 
 LocationView
-WayNodeView
+NodeRefView
 TagView
 MetadataView
 RelationMemberView
@@ -602,3 +610,22 @@ plus the semantic ranges/properties reachable from those views.
 
 The implementation may contain substantially more code and substantially more
 technical names. That complexity should remain below the public boundary.
+
+
+## v0.2 workspace reuse review
+
+Before adding convenience infrastructure, neighboring workspace libraries were
+inspected.
+
+- `transport-d` remains the byte resource/I/O abstraction.
+- `containers-d` v0.3.1 is not substituted for the parallel-reader queue:
+  its producer contract is non-blocking whereas the reader currently requires
+  blocking bounded backpressure.
+- `concurrency-d` has a broader executor/structured-task policy than this
+  reader needs.
+- `compression-d` is still explicitly a research repository without a stable
+  consumer release; the bounded zlib backend remains local for now.
+- no shared qualified UTF-8/TextView abstraction was found, so exact OSM text
+  bytes remain bytes rather than introducing a second, osm-specific text model.
+
+The detailed migration contract is in `docs/API_V0_2.md`.

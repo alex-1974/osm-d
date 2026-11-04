@@ -1,9 +1,13 @@
 module app;
 
 import osm;
+import osm.pbf;
 import osm.osmchange;
 import osm.validate;
 import osm.xml;
+import osm.compare : sameChangeSemantics, sameOsmSemantics;
+import osm.model.owned : OwnedWayNode;
+import osm.view.way_node : WayNodeView;
 import transport.source : MemorySink, MemorySource;
 
 @safe void compileRootAndNamedArguments()
@@ -16,6 +20,12 @@ import transport.source : MemorySink, MemorySource;
     static assert(PbfWriteStatus.init.ok);
     static assert(PbfStoreReadStatus.init.ok);
     static assert(StoreStatus.init.ok);
+    static assert(UploadResult.init.empty);
+    static assert(!UploadResultEntry.init.shapeValid);
+    static assert(is(WayNodeView == NodeRefView));
+    static assert(is(OwnedWayNode == OwnedNodeRef));
+    static assert(is(typeof(&sameOsmSemantics)));
+    static assert(is(typeof(&sameChangeSemantics)));
 
     const(ubyte)[] input;
 
@@ -50,6 +60,13 @@ import transport.source : MemorySink, MemorySource;
         handle: handle,
         status: status));
 
+    StoreNodeView direct;
+    assert(editable.node(
+        id: -1,
+        value: direct,
+        status: status));
+    assert(direct.handle == handle);
+
     OsmHandle found;
     assert(editable.find(
         type: ElementType.node,
@@ -57,10 +74,22 @@ import transport.source : MemorySink, MemorySource;
         handle: found));
     assert(found == handle);
 
-    assert(editable.remapId(
-        handle: handle,
+    OwnedChangeSequence uploadChanges;
+    assert(editable.collectChanges(
+        changes: uploadChanges,
+        status: status));
+    assert(uploadChanges.entries.length == 1);
+    assert(uploadChanges.setChangeset(changesetId: 55));
+
+    UploadResult uploadResult;
+    uploadResult.entries ~= UploadResultEntry.created(
+        type: ElementType.node,
+        oldId: -1,
         newId: 1001,
-        newVersion: 1,
+        newVersion: 1);
+    assert(editable.applyUploadResult(
+        uploaded: uploadChanges,
+        result: uploadResult,
         status: status));
 
     auto parentWays = editable.parentWays(nodeId: 1001);

@@ -1,36 +1,34 @@
 # Public API and compatibility policy
 
+> **v0.2.x contract.** This document defines the supported source-level
+> compatibility surface for the osm-d v0.2 release line. The v0.1.0 tag keeps
+> the immutable v0.1.x contract that applied to the first release.
+
 ## Release line
 
-This document defines the supported source-level API contract for the first
-standalone `osm-d` release line, **v0.1.x**.
+The current supported release line is **v0.2.x**.
 
-The library remains pre-1.0. The v0.1.x line is deliberately stable enough for
-independent consumption, but it is not an ABI promise and it does not imply
-that all technically importable D modules are frozen.
+osm-d remains pre-1.0. v0.2.0 intentionally contains the documented API
+cleanup from v0.1.0, but patch releases within v0.2.x preserve this supported
+source contract unless a security or correctness defect makes preservation
+impossible.
 
 The release compiler floor is D frontend **2.111** with DUB **1.40.0**.
 The qualified release matrix is:
 
 - DMD 2.111.0, 2.112.1 and 2.113.0;
 - LDC 1.41.0, 1.42.0 and 1.43.0;
-- Ubuntu 24.04 x86_64 for the first release gate.
+- Ubuntu 24.04 x86_64.
 
-Other operating systems and architectures may work, but v0.1.0 makes no
+Other operating systems and architectures may work, but v0.2.0 makes no
 release-qualified portability claim for them.
 
 ## Compatibility promise
 
-Within v0.1.x, patch releases preserve the supported source API unless a
-security or correctness defect makes preservation impossible. In particular,
-a patch release does not deliberately remove or rename supported symbols,
-change parameter order or supported parameter names, weaken ownership/lifetime
-contracts, change documented failure semantics, or narrow legal input solely
-for convenience.
-
-Because this is a pre-1.0 library, **v0.2.0 may contain breaking API changes**.
-Such changes must be deliberate, documented in the changelog, and accompanied
-by migration guidance when practical.
+Within v0.2.x, patch releases do not deliberately remove or rename supported
+symbols, change parameter order or supported parameter names, weaken
+ownership/lifetime contracts, change documented failure semantics, or narrow
+legal input solely for convenience.
 
 The compatibility promise is source-level. There is no binary ABI guarantee
 between D compiler versions or osm-d releases.
@@ -39,38 +37,73 @@ For supported ordinary functions and methods, parameter names are part of the
 source contract because D named arguments can depend on them. Representative
 named-argument calls are compiled by the release consumer probe.
 
+A future v0.3.0 may contain deliberate pre-1.0 breaking changes. Such changes
+must be documented and accompanied by migration guidance where practical.
+
+## Preferred entry points
+
+The supported high-level facades are:
+
+- `import osm;` — common OSM identity/semantic values, owned values, borrowed
+  PBF traversal and the editable store;
+- `import osm.pbf;` — PBF-specific preservation/document writing, parallel
+  summary decoding and PBF semantic comparison;
+- `import osm.store;` — editable store and store/change reconciliation;
+- `import osm.compare;` — serialization-independent OSM/change comparison;
+- `import osm.xml;` — ordinary OSM XML;
+- `import osm.osmchange;` — osmChange 0.6;
+- `import osm.validate;` — upload-readiness validation.
+
+Low-level protobuf/wire, XML parser internals, validation implementation
+modules and compact-store representation modules are not part of this
+compatibility surface.
+
 ## Curated package root
 
-`import osm;` is the preferred entry point for the PBF and compact-store
-families. Its v0.1.x exports are intentional:
+`import osm;` intentionally exports:
 
-- semantic identity and views: `OsmId`, `ElementType`, `LocationView`,
-  `MetadataView`, `TagView`, `WayNodeView`, `RelationMemberView`;
-- borrowed PBF reading: `PbfReader`, `PbfReaderWorkspace`,
-  `PbfNodeIterable`, `PbfWayIterable`, `PbfRelationIterable`,
-  `PbfParallelReader`, `PbfParallelReadOptions`, `PbfReadSummary`,
-  `PbfReadStatus`, `PbfReadError`;
-- durable semantic model: `OwnedTag`, `OwnedMetadata`, `OwnedWayNode`,
-  `OwnedRelationMember`, `OwnedNode`, `OwnedWay`, `OwnedRelation`,
-  `OwnedDataset`, `OwnedBytes`, `ownBytes`;
-- loss-aware PBF document/write boundary: `PbfDocument`, `PbfHeader`,
-  `PbfHeaderBBox`, `PbfRawFile`, `PbfPreservation`,
-  `PbfPreservationReason`, `readPbfDocument`, `PbfWriter`,
-  `PbfWriteOptions`, `PbfWriteStatus`, `PbfWriteError`;
-- semantic comparison helpers exported by the package root;
-- edit model: `ChangeAction`, `ChangeObjectState`,
-  `OwnedChangeEntry`, `OwnedChangeSequence`;
-- compact store: `OsmStore`, `OsmHandle`, store views/ranges/status,
-  primary lookup, parent navigation, `remapId`, and `readPbfStore`.
+- identity/semantic leaves: `OsmId`, `ElementType`, `LocationView`,
+  `MetadataView`, `TagView`, `NodeRefView`, `RelationMemberView`;
+- borrowed semantic PBF elements: `NodeView`, `WayView`, `RelationView`;
+- owned semantic values: `OwnedBytes`, `OwnedTag`, `OwnedMetadata`,
+  `OwnedNodeRef`, `OwnedRelationMember`, `OwnedNode`, `OwnedWay`,
+  `OwnedRelation`, `OwnedDataset`, `ownBytes`;
+- change/upload values: `ChangeAction`, `ChangeObjectState`,
+  `OwnedChangeEntry`, `OwnedChangeSequence`, `UploadResultEntry`,
+  `UploadResult`;
+- editable store: `OsmStore`, `OsmHandle`, store views/ranges/status and
+  counts/memory values, primary lookup, parent navigation, edit lifecycle,
+  `collectChanges`, `applyUploadResult`, and `readPbfStore`;
+- ordinary borrowed PBF reading: `PbfReader`, `PbfReaderWorkspace`,
+  element-specific iterables, `PbfReadSummary`, `PbfReadStatus`,
+  `PbfReadError`, `PbfReadResult`, `readPbf`,
+  `pbfNodes`/`pbfWays`/`pbfRelations`.
 
-The exact root export list is compiled by the external release-consumer gate.
+Loss-aware PBF documents/writing and parallel-summary facilities deliberately
+live in `osm.pbf` rather than the root.
+
+## Supported focused PBF facade
+
+`import osm.pbf;` supports:
+
+- the ordinary PBF reader family also reachable from `osm`;
+- `PbfParallelReader` and `PbfParallelReadOptions`;
+- `PbfRawFile`, `PbfPreservation`, `PbfPreservationReason`;
+- `PbfDocument`, `PbfHeader`, `PbfHeaderBBox`, `readPbfDocument`;
+- `PbfWriter`, `PbfWriteOptions`, `PbfWriteStatus`, `PbfWriteError`;
+- PBF-specific semantic/raw comparison helpers.
+
+Serialization-independent `sameOsmSemantics` and `sameChangeSemantics`
+belong to `osm.compare`.
 
 ## Supported direct-import modules
 
-The following direct imports are supported on v0.1.x:
+The following direct imports are supported on v0.2.x:
 
 - `osm`;
+- `osm.pbf`;
 - `osm.store`;
+- `osm.compare`;
 - `osm.xml`;
 - `osm.osmchange`;
 - `osm.validate`;
@@ -82,8 +115,9 @@ The following direct imports are supported on v0.1.x:
 - `osm.view.location`;
 - `osm.view.metadata`;
 - `osm.view.tag`;
-- `osm.view.way_node`;
+- `osm.view.node_ref`;
 - `osm.view.relation_member`;
+- `osm.view.way_node` as a migration compatibility import;
 - `osm.io.pbf.reader`;
 - `osm.io.pbf.parallel_reader`;
 - `osm.io.pbf.document`;
@@ -100,6 +134,54 @@ Other `osm.io.pbf.*`, `osm.wire.*`, `osm.util.*`,
 direct-import compatibility surfaces even if D makes declarations technically
 importable.
 
+## v0.1 migration compatibility
+
+v0.2 uses Node-reference terminology because a Way stores references to Nodes,
+not embedded Node objects:
+
+- `WayNodeView` -> `NodeRefView`;
+- `OwnedWayNode` -> `OwnedNodeRef`;
+- store Way-node leaf values -> `NodeRefView`.
+
+The direct module `osm.view.way_node`, alias `WayNodeView`, and alias
+`OwnedWayNode` remain available during v0.2.x migration. They are not
+re-exported from the preferred package root.
+
+PBF-specialized document/writer/parallel facilities that were root exports in
+v0.1 are reached through `osm.pbf` in v0.2. Generic comparison helpers are
+reached through `osm.compare`.
+
+See `API_V0_2.md` for the complete v0.1 -> v0.2 migration guide.
+
+## Editable store and upload reconciliation
+
+`OsmStore` owns inserted semantics and retains explicit edit lifecycle state.
+`OsmHandle` is a stable store-local logical identity, not an address or OSM
+ID.
+
+`collectChanges` explicitly materializes current pending edits as an owned,
+format-neutral `OwnedChangeSequence`. It does not invent a changeset ID.
+`OwnedChangeSequence.setChangeset` is the explicit upload-preparation step.
+
+Create ordering is dependency-safe for local Node/Way/Relation references.
+Unresolved local references and circular local Relation dependencies fail
+explicitly rather than producing an invalid upload sequence.
+
+`applyUploadResult` requires both the exact uploaded semantic sequence and an
+authoritative `UploadResult`. Before visible mutation it verifies that current
+pending state still matches the uploaded snapshot, so a delayed server response
+cannot silently acknowledge newer local work.
+
+Successful create/modify acknowledgements preserve surviving handles. Create
+remaps local IDs and inbound Way/Relation references through current parent
+indexes. Confirmed deletion invalidates the deleted object's former handle.
+
+The diff result does not carry complete server timestamp/user metadata; osm-d
+does not fabricate those fields.
+
+Network upload transport, OAuth/account state and changeset creation/closing
+remain outside osm-d.
+
 ## Ownership and lifetime
 
 Borrowed PBF views are valid only for the documented synchronous callback or
@@ -109,86 +191,89 @@ may be copied as cursors but do not become owners of their backing data.
 
 The owned semantic model owns durable child arrays/byte strings according to
 normal D value/array semantics; `deepCopy` creates independently mutable child
-arrays where the type provides it.
+arrays where provided.
 
-`OsmStore` owns all semantics inserted into it. `OsmHandle` is an opaque
-store-local logical identity, not an address or OSM ID. Store semantic views
-and ranges are borrows invalidated by structural mutation as documented.
+Store semantic views and ranges borrow from store-managed storage and are
+invalidated by structural mutation as documented. Stable `OsmHandle` values
+survive replacement/revert and authoritative ID remap for surviving objects;
+a server-confirmed deleted object invalidates its former handle.
 
 `readPbfStore` borrows encoded PBF bytes only for the call. On success the
 returned store no longer depends on the input bytes.
 
-XML and osmChange streaming readers/writers borrow/own through transport-d's
-`ByteSource`/`ByteSink` contracts. The osm-d facade does not create a
-second filesystem/network abstraction.
+XML and osmChange readers/writers use transport-d `ByteSource`/`ByteSink`
+contracts. osm-d does not create a competing filesystem/network abstraction.
 
-## Failure and output-state contract
+## Failure and `.init` contract
 
-Fallible public operations use explicit boolean/status results rather than
+Fallible public operations use explicit success/status channels rather than
 silently repairing input.
 
-Important `.init` meanings on v0.1.x include:
+Important meanings include:
 
-- `PbfReadStatus.init`, `PbfWriteStatus.init`,
-  `PbfStoreReadStatus.init`, XML/osmChange status values,
-  `StoreStatus.init`, and `UploadValidationIssue.init`: success/no error;
+- read/write/store status structs and `UploadValidationIssue.init`: success /
+  no error;
 - `PbfReaderWorkspace.init`: valid empty reusable workspace;
-- `PbfWriter.init`, XML writer/reader option structs and osmChange
-  option structs: usable defaults where documented;
-- `PbfParallelReadOptions.init`: automatic worker/queue defaults;
+- writer/reader option structs: documented usable defaults;
 - `LocationView.init`: exact coordinate origin;
 - `OsmHandle.init`: invalid handle;
-- owned element/data structs at `.init`: empty structural carriers, not an
-  assertion that ID zero is valid editable/upload state.
+- `OwnedDataset.init`, `OwnedChangeSequence.init`, `UploadResult.init`:
+  valid empty carriers;
+- `UploadResultEntry.init`: invalid diff-result entry because old ID is zero;
+- owned element structs at `.init`: structurally representable carriers, not
+  an assertion that ID zero is valid editable/upload state.
 
-For D `out` parameters, the destination is initialized to `.init` on
-entry. Transactional whole-document/store APIs document the output state after
-failure. Streaming callbacks already delivered before a later XML/osmChange
-failure are not rolled back.
+For D `out` parameters, the destination is initialized to `.init` on entry.
+Transactional whole-document/store/reconciliation APIs document output/store
+state after failure. Streaming callbacks already delivered before a later
+XML/osmChange failure are not rolled back.
 
 ## Safety and attributes
 
 The supported high-level API is designed for ordinary `@safe` use.
-Claims such as `@safe`, `nothrow`, `@nogc` and DIP1000 lifetime behavior
-are contracts only where they are present on the declaration/documentation and
-are exercised by compile tests.
+`@safe`, `nothrow`, `@nogc`, DIP1000 and named-argument claims are
+contracts only where present and are exercised by compile tests.
 
-`PbfParallelReader.readSummary` and the XML/osmChange streaming internals use
-narrow `@trusted` boundaries to establish safe ownership/lifetime contracts
-over thread or parser machinery. The low-level implementation does not become
-part of the public contract merely because a high-level operation is safe.
+Narrow `@trusted` boundaries remain implementation details with explicit
+safety arguments, including parallel reader orchestration, parser machinery
+and the synchronous direct-PBF-store adapter. They do not enlarge the public
+compatibility surface.
 
-## Semantic versus codec-specific types
+## Exact bytes and codec boundaries
 
-The supported consumer boundary uses semantic OSM concepts whenever possible.
-PBF StringTable IDs, protobuf field numbers, block offsets used only for codec
-execution, decompression buffers, compact-store pool offsets and hash-table
-slots are implementation details.
+Tag keys/values, usernames and relation roles preserve exact bytes. v0.2 does
+not invent an osm-specific text wrapper, normalization, repair or transcoding
+policy.
 
-The explicit exception is the loss-aware PBF document/raw-preservation family:
-those public types exist because callers need to distinguish semantic rewrite
-from exact-source preservation.
+PBF StringTable IDs, protobuf field numbers, compact-store slots/pool offsets,
+wire cursors and decoder plans remain implementation details.
 
-## What is not promised in v0.1.x
+The loss-aware PBF document/raw-preservation family is an explicit advanced
+exception because callers may need to distinguish semantic rewriting from
+source preservation.
 
-v0.1.x does not promise:
+## What is not promised in v0.2.x
+
+v0.2.x does not promise:
 
 - binary ABI stability;
 - persistent/mmap store format compatibility;
 - thread-safe concurrent store mutation;
-- filesystem, HTTP, cache or scheduler policy;
+- filesystem, HTTP, cache, OAuth or scheduler policy;
+- changeset lifecycle management;
 - spatial indexing or rendering;
 - generic ordered parallel borrowed callbacks;
-- compatibility of low-level wire/codec implementation modules;
-- release qualification on platforms outside the documented matrix.
+- compatibility of low-level wire/codec/store implementation modules;
+- release qualification outside the documented compiler/platform matrix.
 
 ## Change review
 
-A change is treated as breaking for the supported v0.1.x surface when it can
-require a conforming consumer to change source or when it weakens a documented
-ownership, failure, data-integrity or lifetime guarantee. Additive overloads or
-new symbols are reviewed for overload ambiguity before being classified as
-non-breaking.
+A change is breaking for the supported v0.2.x surface when it can require a
+conforming consumer to change source or when it weakens a documented
+ownership, failure, data-integrity or lifetime guarantee.
 
-The release consumer compile probe, negative DIP1000 tests and package smoke
-are the executable baseline for this policy.
+Additive overloads/new symbols are reviewed for overload ambiguity and named
+argument interactions before being classified as non-breaking.
+
+The release consumer compile probe, package smoke, negative DIP1000 tests and
+focused interoperability gates are the executable baseline for this policy.

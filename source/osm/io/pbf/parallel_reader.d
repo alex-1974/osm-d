@@ -237,6 +237,17 @@ private struct PbfSummaryJob
     const(ubyte)[] blob;
 }
 
+/**
+ * Bounded queue with blocking producer backpressure.
+ *
+ * containers-d v0.3.1 was evaluated before retaining this private primitive.
+ * Its BlockingQueue deliberately uses non-blocking producer admission
+ * (tryPush reports full) plus blocking consumer removal. This PBF pipeline
+ * requires the producer to sleep while the bounded queue is full. Replacing
+ * that contract with spin/yield merely to reuse a type would change scheduling
+ * and performance semantics. Re-evaluate when a shared queue exposes matching
+ * blocking-producer behavior or measurements justify another policy.
+ */
 private final class PbfSummaryQueue
 {
 private:

@@ -2,10 +2,49 @@
 
 All notable changes to this project will be documented here.
 
-The project uses semantic versioning. During the pre-1.0 period, the supported
-v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
+The project uses semantic versioning. During the pre-1.0 period, the current
+supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
+
+## 0.2.0 - 2026-11-04
+
+### Added
+
+- Add the M9 editable-store change/upload bridge. `OsmStore.collectChanges`
+  materializes sparse pending edits as deterministic, dependency-safe
+  `OwnedChangeSequence` values without scanning the complete loaded store or
+  inventing a changeset ID. Local create-then-delete edits are cancelled;
+  established deletes retain authoritative baseline version metadata.
+- Add format-neutral `UploadResultEntry` / `UploadResult` values and
+  `OsmStore.applyUploadResult`. Reconciliation preflights the exact uploaded
+  snapshot before mutation, preserves handles for create/modify, remaps
+  authoritative create IDs through existing parent indexes, records returned
+  versions/explicit changesets, and invalidates handles for confirmed deletes.
+- Add end-to-end store → osmChange write/read → upload validation → simulated
+  diff-result → store qualification, including local Node/Way/Relation
+  dependencies, Relation topological ordering, stale-response atomicity and
+  delete-baseline behavior.
+
+### Changed
+
+- Simplify the developing v0.2 consumer surface: `NodeRefView` /
+  `OwnedNodeRef` replace the ambiguous Way-node names, compact-store ranges
+  return the same semantic leaf values as PBF, and typed
+  `store.node/way/relation(id, ...)` lookup avoids a mandatory handle round
+  trip for ordinary reads.
+- Add one-shot `readPbf` and `pbfNodes/pbfWays/pbfRelations` convenience
+  entry points while preserving the reusable-workspace `PbfReader.read` hot
+  path.
+- Add focused `osm.pbf` and `osm.compare` facades for PBF-specialized and
+  serialization-independent semantic comparison workflows respectively; slim
+  `import osm;` to ordinary semantic/PBF-traversal/store concepts.
+- Audit workspace reuse: retain transport-d as the byte-resource boundary;
+  defer containers-d queue reuse because its producer-admission contract does
+  not match PBF blocking backpressure; defer compression-d until it has a
+  stable qualified release; avoid importing concurrency-d's broader executor
+  policy for this reader slice.
+
 
 ## 0.1.0 - 2026-11-04
 

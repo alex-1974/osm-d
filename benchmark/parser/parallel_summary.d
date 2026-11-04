@@ -13,12 +13,13 @@
 module osm.benchmark.parser.parallel_summary;
 
 import osm :
-    PbfParallelReadOptions,
-    PbfParallelReader,
     PbfReadStatus,
     PbfReadSummary,
     PbfReader,
     PbfReaderWorkspace;
+import osm.pbf :
+    PbfParallelReadOptions,
+    PbfParallelReader;
 
 import std.conv : to;
 import std.datetime.stopwatch : AutoStart, StopWatch;

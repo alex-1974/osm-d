@@ -2,15 +2,18 @@
 
 ## Tracked delivery milestones
 
-The remaining roadmap is organized into five delivery milestones. GitHub goal
-issues are the canonical trackers; each contains the child-issue checklist and
-exit criteria.
+Delivery work is organized into tracked milestones. GitHub goal/release issues
+are the canonical trackers; each contains the current checklist and exit
+criteria.
 
 - **M3 — Close the production PBF reader:** #43
 - **M4 — Loss-aware PBF round trip:** #44
 - **M5 — XML and osmChange interoperability:** #45
 - **M6 — Compact editable OSM store:** #46
 - **M7 — First stable standalone release:** #47
+- **M8 — API ergonomics and workspace primitive reuse:** #94
+- **M9 — Editable store ↔ change/upload bridge:** #100
+- **M10 — v0.2.0 release stabilization and API freeze:** #102
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -111,3 +114,51 @@ Tracked by M7: #47.
 - [x] Consumer documentation, examples and package smoke tests. #66
 - [x] Compatibility and performance baseline published. #67
 - [x] Release gate and first tagged release. #69
+
+
+## Phase 8 — API ergonomics and workspace reuse
+
+Tracked by M8: #94.
+
+- [x] Unify PBF/store leaf semantic view vocabulary.
+- [x] Adopt `NodeRefView` / `OwnedNodeRef` terminology.
+- [x] Add direct typed store lookup while preserving stable handles.
+- [x] Add one-shot PBF convenience and focused `osm.pbf` facade.
+- [x] Reconcile consumer docs, migration probes and package surface.
+- [x] Complete workspace primitive reuse audit and preserve only contract-matching dependencies.
+
+
+## Phase 9 — Editable store ↔ change/upload bridge
+
+Tracked by M9: #100.
+
+- [x] Define lifecycle-to-change extraction contract. #96
+- [x] Implement deterministic sparse edit materialization. #97
+- [x] Model and apply authoritative diff-upload results. #98
+- [x] Qualify store → osmChange/validation → result → store round trip. #99
+
+The bridge remains format-neutral. HTTP, OAuth, changeset creation/closing,
+retry policy, editor undo/history and application worksets remain outside
+osm-d.
+
+
+## Phase 10 — v0.2.0 release stabilization and API freeze
+
+Tracked by M10: #102.
+
+- [x] Cut `release/0.2` from the exact post-M9 feature-freeze commit.
+- [x] Audit the preferred facade/direct-import surface and freeze the v0.2.x
+  source contract.
+- [x] Finalize v0.1 -> v0.2 migration guidance and compatibility aliases.
+- [x] Prepare v0.2.0 version intent, changelog, release notes and release
+  evidence baseline.
+- [x] Make release metadata checks derive the compatibility line from
+  `RELEASE_VERSION`.
+- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
+- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [ ] Promote `release/0.2` to `main` with a merge commit.
+- [ ] Verify the annotated v0.2.0 tag, GitHub Release, archive/checksum and
+  post-release consumer state.
+
+Feature/API freeze checkpoints are immutable engineering evidence. The final
+release tag alone is the publication trigger.

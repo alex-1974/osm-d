@@ -20,6 +20,13 @@ import core.atomic : atomicOp;
 import core.exception : onArrayIndexError, onArraySliceError, onOutOfMemoryError;
 import core.stdc.stdlib : free, realloc;
 import core.stdc.string : memcpy;
+import osm.model.change :
+    ChangeAction,
+    ChangeObjectState,
+    OwnedChangeEntry,
+    OwnedChangeSequence,
+    UploadResult,
+    UploadResultEntry;
 import osm.model.owned :
     OwnedBytes,
     OwnedDataset,
@@ -29,9 +36,14 @@ import osm.model.owned :
     OwnedRelationMember,
     OwnedTag,
     OwnedWay,
-    OwnedWayNode;
+    OwnedNodeRef;
 import osm.view.element : ElementType, OsmId;
 import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
+import osm.view.node_ref : NodeRefView;
+import osm.view.relation_member : RelationMemberView;
+import osm.view.tag : TagView;
+import std.algorithm.sorting : sort;
 
 
 /**
@@ -224,8 +236,14 @@ enum StoreError : ubyte
     deletedElement,
     idMismatch,
     unresolvedLocalReference,
+    cyclicLocalDependency,
+    invalidChangeSequence,
+    invalidUploadResult,
+    uploadResultMismatch,
+    staleUploadState,
     duplicateTagKey,
     emptyTagKey,
+    notFound,
 }
 
 /** Status returned by fallible store operations. */
@@ -306,35 +324,16 @@ struct StoreMemoryUsage
     }
 }
 
-/** Borrowed metadata view backed by the store's current string pool. */
-struct StoreMetadataView
-{
-    bool hasVersion;
-    int versionNumber;
-    bool hasTimestamp;
-    long timestampMilliseconds;
-    bool hasChangeset;
-    long changesetId;
-    bool hasUserId;
-    int userId;
-    bool hasUsername;
-    const(ubyte)[] username;
-    bool hasVisibility;
-    bool visible;
-
-    @property bool empty() const @safe pure nothrow @nogc
-    {
-        return !hasVersion && !hasTimestamp && !hasChangeset &&
-               !hasUserId && !hasUsername && !hasVisibility;
-    }
-}
-
-/** One borrowed tag. */
-struct StoreTagView
-{
-    const(ubyte)[] key;
-    const(ubyte)[] value;
-}
+/**
+ * v0.1 compatibility aliases for leaf semantic values.
+ *
+ * Preferred v0.2 code receives the shared format-independent semantic values.
+ * The aliases remain in this implementation module only for migration.
+ */
+alias StoreMetadataView = MetadataView;
+alias StoreTagView = TagView;
+alias StoreWayNodeView = NodeRefView;
+alias StoreRelationMemberView = RelationMemberView;
 
 /** Borrowed ordered tag range. Invalidated by structural store mutation. */
 struct StoreTagRange
@@ -351,7 +350,7 @@ public:
         return _position >= _length;
     }
 
-    @property StoreTagView front() @safe nothrow @nogc
+    @property TagView front() @safe nothrow @nogc
     {
         return _store.tagAt(_offset + _position);
     }
@@ -368,16 +367,8 @@ public:
     }
 }
 
-/** One ordered Way node reference. */
-struct StoreWayNodeView
-{
-    OsmId id;
-    bool hasLocation;
-    LocationView location;
-}
-
 /** Borrowed ordered Way-node range. Invalidated by structural mutation. */
-struct StoreWayNodeRange
+struct StoreNodeRefRange
 {
 private:
     OsmStore _store;
@@ -394,10 +385,9 @@ public:
         return _position >= _refLength;
     }
 
-    @property StoreWayNodeView front() @safe nothrow @nogc
+    @property NodeRefView front() @safe nothrow @nogc
     {
-        StoreWayNodeView result;
-        result.id = _store._wayRefIds[_refOffset + _position];
+        const id = _store._wayRefIds[_refOffset + _position];
 
         while (_locationPosition < _locationLength)
         {
@@ -412,15 +402,16 @@ public:
 
             if (entry.relativeIndex == _position)
             {
-                result.hasLocation = true;
-                result.location = LocationView(
-                    entry.latitudeNanodegrees,
-                    entry.longitudeNanodegrees);
+                return NodeRefView(
+                    id,
+                    LocationView(
+                        entry.latitudeNanodegrees,
+                        entry.longitudeNanodegrees));
             }
             break;
         }
 
-        return result;
+        return NodeRefView(id);
     }
 
     void popFront() @safe nothrow @nogc
@@ -445,13 +436,8 @@ public:
     }
 }
 
-/** One borrowed ordered Relation member. */
-struct StoreRelationMemberView
-{
-    ElementType type;
-    OsmId id;
-    const(ubyte)[] role;
-}
+/// v0.1 compatibility alias. Prefer StoreNodeRefRange.
+alias StoreWayNodeRange = StoreNodeRefRange;
 
 /** Borrowed ordered Relation-member range. Invalidated by structural mutation. */
 struct StoreRelationMemberRange
@@ -468,14 +454,13 @@ public:
         return _position >= _length;
     }
 
-    @property StoreRelationMemberView front() @safe nothrow @nogc
+    @property RelationMemberView front() @safe nothrow @nogc
     {
         const i = _offset + _position;
-        StoreRelationMemberView result;
-        result.type = cast(ElementType)_store._relationMemberTypes[i];
-        result.id = _store._relationMemberIds[i];
-        result.role = _store._strings.get(_store._relationMemberRoles[i]);
-        return result;
+        return RelationMemberView(
+            cast(ElementType)_store._relationMemberTypes[i],
+            _store._relationMemberIds[i],
+            _store._strings.get(_store._relationMemberRoles[i]));
     }
 
     void popFront() @safe nothrow @nogc
@@ -496,7 +481,7 @@ struct StoreNodeView
     OsmHandle handle;
     OsmId id;
     LocationView location;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
     StoreElementState state;
 }
@@ -506,9 +491,9 @@ struct StoreWayView
 {
     OsmHandle handle;
     OsmId id;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
-    StoreWayNodeRange nodes;
+    StoreNodeRefRange nodes;
     StoreElementState state;
 }
 
@@ -517,7 +502,7 @@ struct StoreRelationView
 {
     OsmHandle handle;
     OsmId id;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
     StoreRelationMemberRange members;
     StoreElementState state;
@@ -1393,25 +1378,21 @@ private struct MetadataColumns
         visible[slot] = value.visible ? 1 : 0;
     }
 
-    StoreMetadataView view(uint slot, ref StringPool strings)
+    MetadataView view(uint slot, ref StringPool strings)
         @safe nothrow @nogc
     {
-        StoreMetadataView result;
         const bits = flags[slot];
-        result.hasVersion = (bits & (1 << 0)) != 0;
-        result.versionNumber = versions[slot];
-        result.hasTimestamp = (bits & (1 << 1)) != 0;
-        result.timestampMilliseconds = timestamps[slot];
-        result.hasChangeset = (bits & (1 << 2)) != 0;
-        result.changesetId = changesets[slot];
-        result.hasUserId = (bits & (1 << 3)) != 0;
-        result.userId = userIds[slot];
-        result.hasUsername = (bits & (1 << 4)) != 0;
-        if (result.hasUsername)
-            result.username = strings.get(usernames[slot]);
-        result.hasVisibility = (bits & (1 << 5)) != 0;
-        result.visible = visible[slot] != 0;
-        return result;
+        const hasUsername = (bits & (1 << 4)) != 0;
+        const(ubyte)[] username =
+            hasUsername ? strings.get(usernames[slot]) : null;
+
+        return MetadataView(
+            (bits & (1 << 0)) != 0, versions[slot],
+            (bits & (1 << 1)) != 0, timestamps[slot],
+            (bits & (1 << 2)) != 0, changesets[slot],
+            (bits & (1 << 3)) != 0, userIds[slot],
+            hasUsername, username,
+            (bits & (1 << 5)) != 0, visible[slot] != 0);
     }
 
     OwnedMetadata owned(uint slot, ref StringPool strings) @safe
@@ -1685,6 +1666,12 @@ private:
     OwnedWay[uint] _wayBaselines;
     OwnedRelation[uint] _relationBaselines;
 
+    // Sparse edit journals. These grow with locally created/edited elements,
+    // never with the complete loaded city dataset.
+    uint[] _createdNodeSlots;
+    uint[] _createdWaySlots;
+    uint[] _createdRelationSlots;
+
 public:
     this() @safe
     {
@@ -1727,6 +1714,8 @@ public:
         const inserted = _nodeIndex.insert(value.id, slot);
         assert(inserted);
         ++_liveNodes;
+        if (lifecycle == StoreElementState.created)
+            _createdNodeSlots ~= slot;
 
         handle = makeHandle(ElementType.node, slot, _nodes.generations[slot]);
         return true;
@@ -1761,6 +1750,8 @@ public:
         const inserted = _wayIndex.insert(value.id, slot);
         assert(inserted);
         ++_liveWays;
+        if (lifecycle == StoreElementState.created)
+            _createdWaySlots ~= slot;
 
         handle = makeHandle(ElementType.way, slot, _ways.generations[slot]);
         return true;
@@ -1795,6 +1786,8 @@ public:
         const inserted = _relationIndex.insert(value.id, slot);
         assert(inserted);
         ++_liveRelations;
+        if (lifecycle == StoreElementState.created)
+            _createdRelationSlots ~= slot;
 
         handle = makeHandle(
             ElementType.relation, slot, _relations.generations[slot]);
@@ -2056,6 +2049,68 @@ public:
             return false;
         value = relationViewAt(handle._slot);
         return true;
+    }
+
+    /**
+     * Borrow a Node by OSM ID.
+     *
+     * This is the ordinary lookup path when stable local handle identity is not
+     * needed. The handle remains available as `value.handle`.
+     */
+    bool node(
+        OsmId id,
+        out StoreNodeView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.node, id, handle))
+        {
+            value = StoreNodeView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.node;
+            status.id = id;
+            return false;
+        }
+        return node(handle, value, status);
+    }
+
+    /** Borrow a Way directly by OSM ID. */
+    bool way(
+        OsmId id,
+        out StoreWayView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.way, id, handle))
+        {
+            value = StoreWayView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.way;
+            status.id = id;
+            return false;
+        }
+        return way(handle, value, status);
+    }
+
+    /** Borrow a Relation directly by OSM ID. */
+    bool relation(
+        OsmId id,
+        out StoreRelationView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.relation, id, handle))
+        {
+            value = StoreRelationView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.relation;
+            status.id = id;
+            return false;
+        }
+        return relation(handle, value, status);
     }
 
     /** Copy one Node into the ordinary owned semantic model. */
@@ -2555,6 +2610,543 @@ public:
         return true;
     }
 
+    /**
+     * Materialize the store's current pending edits as format-neutral changes.
+     *
+     * The returned sequence owns its element arrays/bytes and remains valid
+     * across later store mutation. No changeset ID is invented; callers can
+     * explicitly assign one with OwnedChangeSequence.setChangeset.
+     *
+     * Ordering is deterministic and upload-oriented:
+     *
+     * - creates: Nodes, Ways, then topologically ordered Relations;
+     * - modifies: Nodes, Ways, Relations;
+     * - deletes: Relations, Ways, Nodes.
+     *
+     * A local-reference cycle that cannot be represented by one OSM diff
+     * upload fails explicitly. On failure changes remains .init.
+     */
+    bool collectChanges(
+        out OwnedChangeSequence changes,
+        out StoreStatus status) @safe
+    {
+        changes = OwnedChangeSequence.init;
+        status = StoreStatus.init;
+
+        OwnedChangeSequence result;
+
+        foreach (slot; _createdNodeSlots)
+        {
+            if (_nodes.states[slot] != StoreElementState.created)
+                continue;
+            result.entries ~=
+                OwnedChangeEntry.fromNode(
+                    ChangeAction.create, copyNodeAt(slot));
+        }
+
+        foreach (slot; _createdWaySlots)
+        {
+            if (_ways.states[slot] != StoreElementState.created)
+                continue;
+            if (!preflightCurrentWayLocalReferences(slot, status))
+                return false;
+            result.entries ~=
+                OwnedChangeEntry.fromWay(
+                    ChangeAction.create, copyWayAt(slot));
+        }
+
+        OsmId[] emittedRelations;
+        size_t pendingRelations;
+        foreach (slot; _createdRelationSlots)
+        {
+            if (_relations.states[slot] == StoreElementState.created)
+                ++pendingRelations;
+        }
+
+        while (emittedRelations.length < pendingRelations)
+        {
+            bool progressed;
+
+            foreach (slot; _createdRelationSlots)
+            {
+                if (_relations.states[slot] != StoreElementState.created)
+                    continue;
+
+                const id = _relations.ids[slot];
+                if (containsId(emittedRelations, id))
+                    continue;
+
+                bool ready;
+                if (!relationCreateReady(
+                        slot, emittedRelations, ready, status))
+                    return false;
+                if (!ready)
+                    continue;
+
+                result.entries ~=
+                    OwnedChangeEntry.fromRelation(
+                        ChangeAction.create, copyRelationAt(slot));
+                emittedRelations ~= id;
+                progressed = true;
+            }
+
+            if (!progressed)
+            {
+                status.error = StoreError.cyclicLocalDependency;
+                status.type = ElementType.relation;
+                foreach (slot; _createdRelationSlots)
+                {
+                    if (_relations.states[slot] ==
+                            StoreElementState.created &&
+                        !containsId(
+                            emittedRelations, _relations.ids[slot]))
+                    {
+                        status.id = _relations.ids[slot];
+                        break;
+                    }
+                }
+                return false;
+            }
+        }
+
+        auto nodeSlots = sortedNodeBaselineSlots();
+        auto waySlots = sortedWayBaselineSlots();
+        auto relationSlots = sortedRelationBaselineSlots();
+
+        foreach (slot; nodeSlots)
+        {
+            if (_nodes.states[slot] == StoreElementState.modified)
+            {
+                result.entries ~=
+                    OwnedChangeEntry.fromNode(
+                        ChangeAction.modify, copyNodeAt(slot));
+            }
+        }
+
+        foreach (slot; waySlots)
+        {
+            if (_ways.states[slot] != StoreElementState.modified)
+                continue;
+            if (!preflightCurrentWayLocalReferences(slot, status))
+                return false;
+            result.entries ~=
+                OwnedChangeEntry.fromWay(
+                    ChangeAction.modify, copyWayAt(slot));
+        }
+
+        foreach (slot; relationSlots)
+        {
+            if (_relations.states[slot] != StoreElementState.modified)
+                continue;
+            if (!preflightCurrentRelationLocalReferences(slot, status))
+                return false;
+            result.entries ~=
+                OwnedChangeEntry.fromRelation(
+                    ChangeAction.modify, copyRelationAt(slot));
+        }
+
+        // Deleting an established object supersedes any earlier local modify.
+        // Use the captured server baseline metadata so version identity remains
+        // authoritative while unuploaded local payload edits are discarded.
+        foreach (slot; relationSlots)
+        {
+            if (_relations.states[slot] == StoreElementState.deleted)
+            {
+                ref const baseline = _relationBaselines[slot];
+                result.entries ~= OwnedChangeEntry.deletion(
+                    ElementType.relation,
+                    _relations.ids[slot],
+                    baseline.metadata);
+            }
+        }
+
+        foreach (slot; waySlots)
+        {
+            if (_ways.states[slot] == StoreElementState.deleted)
+            {
+                ref const baseline = _wayBaselines[slot];
+                result.entries ~= OwnedChangeEntry.deletion(
+                    ElementType.way,
+                    _ways.ids[slot],
+                    baseline.metadata);
+            }
+        }
+
+        foreach (slot; nodeSlots)
+        {
+            if (_nodes.states[slot] == StoreElementState.deleted)
+            {
+                ref const baseline = _nodeBaselines[slot];
+                result.entries ~= OwnedChangeEntry.deletion(
+                    ElementType.node,
+                    _nodes.ids[slot],
+                    baseline.metadata);
+            }
+        }
+
+        changes = result;
+        return true;
+    }
+
+    /**
+     * Reconcile one successful OSM diff-upload result with this store.
+     *
+     * uploaded must be the exact semantic sequence sent to the server. The
+     * method compares it with the store's current pending state before the
+     * first mutation, ignoring only the caller-supplied changeset field. This
+     * prevents a delayed response from marking newer local edits clean.
+     *
+     * Result order is irrelevant; entries are matched by element type+old ID.
+     * A successful create preserves its handle while remapping the local ID.
+     * A successful modify preserves its handle and records the authoritative
+     * version. A successful delete invalidates the deleted element's handle.
+     *
+     * The diff-result does not contain server timestamp/user metadata, so those
+     * fields are not fabricated. The explicit uploaded changeset is retained
+     * for surviving objects.
+     *
+     * All semantic/result validation is completed before the first visible
+     * mutation. Resource exhaustion follows the library's normal allocation
+     * failure behavior rather than returning a partial validation status.
+     */
+    bool applyUploadResult(
+        scope ref const OwnedChangeSequence uploaded,
+        scope ref const UploadResult result,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+
+        if (uploaded.entries.length != result.entries.length)
+        {
+            status.error = StoreError.uploadResultMismatch;
+            return false;
+        }
+
+        size_t[OsmId] nodeResults;
+        size_t[OsmId] wayResults;
+        size_t[OsmId] relationResults;
+
+        foreach (i, ref const entry; result.entries)
+        {
+            if (!entry.shapeValid)
+            {
+                status.error = StoreError.invalidUploadResult;
+                status.type = entry.type;
+                status.id = entry.oldId;
+                return false;
+            }
+
+            size_t* existing;
+            final switch (entry.type)
+            {
+                case ElementType.node:
+                    existing = entry.oldId in nodeResults;
+                    if (existing is null)
+                        nodeResults[entry.oldId] = i + 1;
+                    break;
+                case ElementType.way:
+                    existing = entry.oldId in wayResults;
+                    if (existing is null)
+                        wayResults[entry.oldId] = i + 1;
+                    break;
+                case ElementType.relation:
+                    existing = entry.oldId in relationResults;
+                    if (existing is null)
+                        relationResults[entry.oldId] = i + 1;
+                    break;
+            }
+
+            if (existing !is null)
+            {
+                status.error = StoreError.invalidUploadResult;
+                status.type = entry.type;
+                status.id = entry.oldId;
+                return false;
+            }
+        }
+
+        uint[OsmId] deletedNodes;
+        uint[OsmId] deletedWays;
+        uint[OsmId] deletedRelations;
+
+        foreach (slot, ref ignored; _nodeBaselines)
+        {
+            if (_nodes.states[slot] == StoreElementState.deleted)
+                deletedNodes[_nodes.ids[slot]] = slot + 1;
+        }
+        foreach (slot, ref ignored; _wayBaselines)
+        {
+            if (_ways.states[slot] == StoreElementState.deleted)
+                deletedWays[_ways.ids[slot]] = slot + 1;
+        }
+        foreach (slot, ref ignored; _relationBaselines)
+        {
+            if (_relations.states[slot] == StoreElementState.deleted)
+                deletedRelations[_relations.ids[slot]] = slot + 1;
+        }
+
+        struct Binding
+        {
+            ElementType type;
+            uint slot;
+            size_t resultIndex;
+            ChangeAction action;
+        }
+
+        Binding[] bindings;
+        bindings.length = uploaded.entries.length;
+
+        ubyte[OsmId] newNodeIds;
+        ubyte[OsmId] newWayIds;
+        ubyte[OsmId] newRelationIds;
+
+        foreach (i, ref const change; uploaded.entries)
+        {
+            status.type = change.type;
+            status.id = change.id;
+
+            if (!change.shapeValid ||
+                !change.metadata.hasChangeset ||
+                change.metadata.changesetId <= 0)
+            {
+                status.error = StoreError.invalidChangeSequence;
+                return false;
+            }
+
+            if ((change.action == ChangeAction.create ||
+                 change.action == ChangeAction.modify) &&
+                change.objectState != ChangeObjectState.complete)
+            {
+                status.error = StoreError.invalidChangeSequence;
+                return false;
+            }
+
+            if (change.action == ChangeAction.deleteObject &&
+                change.objectState != ChangeObjectState.identityOnly)
+            {
+                status.error = StoreError.invalidChangeSequence;
+                return false;
+            }
+
+            size_t encodedResult;
+            final switch (change.type)
+            {
+                case ElementType.node:
+                    if (auto p = change.id in nodeResults)
+                        encodedResult = *p;
+                    break;
+                case ElementType.way:
+                    if (auto p = change.id in wayResults)
+                        encodedResult = *p;
+                    break;
+                case ElementType.relation:
+                    if (auto p = change.id in relationResults)
+                        encodedResult = *p;
+                    break;
+            }
+
+            if (encodedResult == 0)
+            {
+                status.error = StoreError.uploadResultMismatch;
+                return false;
+            }
+
+            const resultIndex = encodedResult - 1;
+            ref const acknowledged = result.entries[resultIndex];
+            if (acknowledged.action != change.action)
+            {
+                status.error = StoreError.uploadResultMismatch;
+                return false;
+            }
+
+            uint slot;
+            bool found;
+            final switch (change.action)
+            {
+                case ChangeAction.create:
+                case ChangeAction.modify:
+                    final switch (change.type)
+                    {
+                        case ElementType.node:
+                            found = _nodeIndex.find(change.id, slot);
+                            break;
+                        case ElementType.way:
+                            found = _wayIndex.find(change.id, slot);
+                            break;
+                        case ElementType.relation:
+                            found = _relationIndex.find(change.id, slot);
+                            break;
+                    }
+                    break;
+
+                case ChangeAction.deleteObject:
+                    final switch (change.type)
+                    {
+                        case ElementType.node:
+                            if (auto p = change.id in deletedNodes)
+                            {
+                                slot = *p - 1;
+                                found = true;
+                            }
+                            break;
+                        case ElementType.way:
+                            if (auto p = change.id in deletedWays)
+                            {
+                                slot = *p - 1;
+                                found = true;
+                            }
+                            break;
+                        case ElementType.relation:
+                            if (auto p = change.id in deletedRelations)
+                            {
+                                slot = *p - 1;
+                                found = true;
+                            }
+                            break;
+                    }
+                    break;
+            }
+
+            if (!found)
+            {
+                status.error = StoreError.staleUploadState;
+                return false;
+            }
+
+            const currentState = stateAtSlot(change.type, slot);
+            final switch (change.action)
+            {
+                case ChangeAction.create:
+                    if (change.id >= 0 ||
+                        currentState != StoreElementState.created)
+                    {
+                        status.error = StoreError.staleUploadState;
+                        return false;
+                    }
+                    break;
+                case ChangeAction.modify:
+                    if (change.id <= 0 ||
+                        currentState != StoreElementState.modified)
+                    {
+                        status.error = StoreError.staleUploadState;
+                        return false;
+                    }
+                    break;
+                case ChangeAction.deleteObject:
+                    if (change.id <= 0 ||
+                        currentState != StoreElementState.deleted)
+                    {
+                        status.error = StoreError.staleUploadState;
+                        return false;
+                    }
+                    break;
+            }
+
+            if (!currentMatchesUploaded(slot, change))
+            {
+                status.error = StoreError.staleUploadState;
+                return false;
+            }
+
+            if (change.action == ChangeAction.create)
+            {
+                OsmHandle duplicate;
+                if (find(change.type, acknowledged.newId, duplicate))
+                {
+                    status.error = StoreError.uploadResultMismatch;
+                    status.id = acknowledged.newId;
+                    return false;
+                }
+
+                ubyte* duplicateNewId;
+                final switch (change.type)
+                {
+                    case ElementType.node:
+                        duplicateNewId = acknowledged.newId in newNodeIds;
+                        if (duplicateNewId is null)
+                            newNodeIds[acknowledged.newId] = 1;
+                        break;
+                    case ElementType.way:
+                        duplicateNewId = acknowledged.newId in newWayIds;
+                        if (duplicateNewId is null)
+                            newWayIds[acknowledged.newId] = 1;
+                        break;
+                    case ElementType.relation:
+                        duplicateNewId =
+                            acknowledged.newId in newRelationIds;
+                        if (duplicateNewId is null)
+                            newRelationIds[acknowledged.newId] = 1;
+                        break;
+                }
+
+                if (duplicateNewId !is null)
+                {
+                    status.error = StoreError.uploadResultMismatch;
+                    status.id = acknowledged.newId;
+                    return false;
+                }
+            }
+
+            bindings[i] = Binding(
+                change.type, slot, resultIndex, change.action);
+        }
+
+        // The result must not contain an extra identity that happened to keep
+        // the same total count while one uploaded identity was duplicated.
+        if (bindings.length !=
+            nodeResults.length + wayResults.length + relationResults.length)
+        {
+            status.error = StoreError.uploadResultMismatch;
+            return false;
+        }
+
+        foreach (i, ref const binding; bindings)
+        {
+            ref const change = uploaded.entries[i];
+            ref const acknowledged = result.entries[binding.resultIndex];
+
+            final switch (binding.action)
+            {
+                case ChangeAction.create:
+                {
+                    const handle = makeHandle(
+                        binding.type,
+                        binding.slot,
+                        generationAt(binding.type, binding.slot));
+                    StoreStatus remapStatus;
+                    const ok = remapId(
+                        handle,
+                        acknowledged.newId,
+                        acknowledged.newVersion,
+                        remapStatus);
+                    assert(ok);
+                    setAcknowledgedChangeset(
+                        binding.type,
+                        binding.slot,
+                        change.metadata);
+                    break;
+                }
+
+                case ChangeAction.modify:
+                    acknowledgeModified(
+                        binding.type,
+                        binding.slot,
+                        acknowledged.newVersion,
+                        change.metadata);
+                    break;
+
+                case ChangeAction.deleteObject:
+                    finalizeAcknowledgedDelete(
+                        binding.type,
+                        binding.slot);
+                    break;
+            }
+        }
+
+        status = StoreStatus.init;
+        return true;
+    }
+
     /** Deterministic live Node iteration. */
     @property StoreNodeRange nodes() @safe nothrow @nogc
     {
@@ -2644,6 +3236,491 @@ public:
     }
 
 private:
+    uint[] sortedNodeBaselineSlots() @safe
+    {
+        uint[] result;
+        foreach (slot, ref ignored; _nodeBaselines)
+            result ~= slot;
+        sort(result);
+        return result;
+    }
+
+    uint[] sortedWayBaselineSlots() @safe
+    {
+        uint[] result;
+        foreach (slot, ref ignored; _wayBaselines)
+            result ~= slot;
+        sort(result);
+        return result;
+    }
+
+    uint[] sortedRelationBaselineSlots() @safe
+    {
+        uint[] result;
+        foreach (slot, ref ignored; _relationBaselines)
+            result ~= slot;
+        sort(result);
+        return result;
+    }
+
+    static bool containsId(
+        scope const(OsmId)[] values,
+        OsmId id) @safe pure nothrow @nogc
+    {
+        foreach (value; values)
+        {
+            if (value == id)
+                return true;
+        }
+        return false;
+    }
+
+    bool preflightCurrentWayLocalReferences(
+        uint slot,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        auto refs = nodeRefRange(slot);
+        while (!refs.empty)
+        {
+            const value = refs.front;
+            if (value.id < 0)
+            {
+                uint dependencySlot;
+                if (!_nodeIndex.find(value.id, dependencySlot) ||
+                    _nodes.states[dependencySlot] !=
+                        StoreElementState.created)
+                {
+                    status.error = StoreError.unresolvedLocalReference;
+                    status.type = ElementType.node;
+                    status.id = value.id;
+                    return false;
+                }
+            }
+            refs.popFront();
+        }
+        return true;
+    }
+
+    bool preflightCurrentRelationLocalReferences(
+        uint slot,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        auto members = relationMemberRange(slot);
+        while (!members.empty)
+        {
+            const member = members.front;
+            if (member.id < 0)
+            {
+                uint dependencySlot;
+                bool found;
+                StoreElementState dependencyState;
+
+                final switch (member.type)
+                {
+                    case ElementType.node:
+                        found = _nodeIndex.find(member.id, dependencySlot);
+                        if (found)
+                            dependencyState =
+                                _nodes.states[dependencySlot];
+                        break;
+                    case ElementType.way:
+                        found = _wayIndex.find(member.id, dependencySlot);
+                        if (found)
+                            dependencyState =
+                                _ways.states[dependencySlot];
+                        break;
+                    case ElementType.relation:
+                        found =
+                            _relationIndex.find(member.id, dependencySlot);
+                        if (found)
+                            dependencyState =
+                                _relations.states[dependencySlot];
+                        break;
+                }
+
+                if (!found ||
+                    dependencyState != StoreElementState.created)
+                {
+                    status.error = StoreError.unresolvedLocalReference;
+                    status.type = member.type;
+                    status.id = member.id;
+                    return false;
+                }
+            }
+            members.popFront();
+        }
+        return true;
+    }
+
+    bool relationCreateReady(
+        uint slot,
+        scope const(OsmId)[] emittedRelations,
+        out bool ready,
+        ref StoreStatus status) @safe nothrow @nogc
+    {
+        ready = true;
+
+        auto members = relationMemberRange(slot);
+        while (!members.empty)
+        {
+            const member = members.front;
+            members.popFront();
+
+            if (member.id >= 0)
+                continue;
+
+            uint dependencySlot;
+            bool found;
+            StoreElementState dependencyState;
+
+            final switch (member.type)
+            {
+                case ElementType.node:
+                    found = _nodeIndex.find(member.id, dependencySlot);
+                    if (found)
+                        dependencyState = _nodes.states[dependencySlot];
+                    break;
+                case ElementType.way:
+                    found = _wayIndex.find(member.id, dependencySlot);
+                    if (found)
+                        dependencyState = _ways.states[dependencySlot];
+                    break;
+                case ElementType.relation:
+                    found =
+                        _relationIndex.find(member.id, dependencySlot);
+                    if (found)
+                        dependencyState =
+                            _relations.states[dependencySlot];
+                    break;
+            }
+
+            if (!found || dependencyState != StoreElementState.created)
+            {
+                status.error = StoreError.unresolvedLocalReference;
+                status.type = member.type;
+                status.id = member.id;
+                return false;
+            }
+
+            if (member.type == ElementType.relation &&
+                !containsId(emittedRelations, member.id))
+            {
+                ready = false;
+                return true;
+            }
+        }
+
+        return true;
+    }
+
+    StoreElementState stateAtSlot(
+        ElementType type,
+        uint slot) @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodes.states[slot];
+            case ElementType.way:
+                return _ways.states[slot];
+            case ElementType.relation:
+                return _relations.states[slot];
+        }
+    }
+
+    uint generationAt(
+        ElementType type,
+        uint slot) @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodes.generations[slot];
+            case ElementType.way:
+                return _ways.generations[slot];
+            case ElementType.relation:
+                return _relations.generations[slot];
+        }
+    }
+
+    bool currentMatchesUploaded(
+        uint slot,
+        scope ref const OwnedChangeEntry change) @safe nothrow @nogc
+    {
+        final switch (change.action)
+        {
+            case ChangeAction.create:
+            case ChangeAction.modify:
+                final switch (change.type)
+                {
+                    case ElementType.node:
+                        return currentNodeMatches(slot, change);
+                    case ElementType.way:
+                        return currentWayMatches(slot, change);
+                    case ElementType.relation:
+                        return currentRelationMatches(slot, change);
+                }
+
+            case ChangeAction.deleteObject:
+                final switch (change.type)
+                {
+                    case ElementType.node:
+                        if (auto baseline = slot in _nodeBaselines)
+                            return ownedMetadataMatchesUpload(
+                                baseline.metadata, change.metadata);
+                        break;
+                    case ElementType.way:
+                        if (auto baseline = slot in _wayBaselines)
+                            return ownedMetadataMatchesUpload(
+                                baseline.metadata, change.metadata);
+                        break;
+                    case ElementType.relation:
+                        if (auto baseline = slot in _relationBaselines)
+                            return ownedMetadataMatchesUpload(
+                                baseline.metadata, change.metadata);
+                        break;
+                }
+                return false;
+        }
+    }
+
+    bool currentNodeMatches(
+        uint slot,
+        scope ref const OwnedChangeEntry change) @safe nothrow @nogc
+    {
+        if (change.type != ElementType.node ||
+            change.id != _nodes.ids[slot] ||
+            change.location.latitudeNanodegrees != _nodeLatitudes[slot] ||
+            change.location.longitudeNanodegrees != _nodeLongitudes[slot] ||
+            !metadataMatchesUpload(
+                _nodes.metadata.view(slot, _strings), change.metadata))
+            return false;
+
+        return tagRangeMatches(_nodes.tags[slot], change.tags);
+    }
+
+    bool currentWayMatches(
+        uint slot,
+        scope ref const OwnedChangeEntry change) @safe nothrow @nogc
+    {
+        if (change.type != ElementType.way ||
+            change.id != _ways.ids[slot] ||
+            !metadataMatchesUpload(
+                _ways.metadata.view(slot, _strings), change.metadata) ||
+            !tagRangeMatches(_ways.tags[slot], change.tags))
+            return false;
+
+        auto current = nodeRefRange(slot);
+        if (current.length != change.wayNodes.length)
+            return false;
+
+        size_t i;
+        while (!current.empty)
+        {
+            const value = current.front;
+            ref const expected = change.wayNodes[i++];
+            if (value.id != expected.id ||
+                value.hasLocation != expected.hasLocation)
+                return false;
+            if (value.hasLocation &&
+                (value.location.latitudeNanodegrees !=
+                    expected.location.latitudeNanodegrees ||
+                 value.location.longitudeNanodegrees !=
+                    expected.location.longitudeNanodegrees))
+                return false;
+            current.popFront();
+        }
+        return true;
+    }
+
+    bool currentRelationMatches(
+        uint slot,
+        scope ref const OwnedChangeEntry change) @safe nothrow @nogc
+    {
+        if (change.type != ElementType.relation ||
+            change.id != _relations.ids[slot] ||
+            !metadataMatchesUpload(
+                _relations.metadata.view(slot, _strings), change.metadata) ||
+            !tagRangeMatches(_relations.tags[slot], change.tags))
+            return false;
+
+        auto current = relationMemberRange(slot);
+        if (current.length != change.relationMembers.length)
+            return false;
+
+        size_t i;
+        while (!current.empty)
+        {
+            const value = current.front;
+            ref const expected = change.relationMembers[i++];
+            if (value.type != expected.type ||
+                value.id != expected.id ||
+                !sameBytes(value.role, expected.role))
+                return false;
+            current.popFront();
+        }
+        return true;
+    }
+
+    bool tagRangeMatches(
+        Span32 span,
+        scope const(OwnedTag)[] expected) @safe nothrow @nogc
+    {
+        auto current = tagRange(span);
+        if (current.length != expected.length)
+            return false;
+
+        size_t i;
+        while (!current.empty)
+        {
+            const value = current.front;
+            if (!sameBytes(value.key, expected[i].key) ||
+                !sameBytes(value.value, expected[i].value))
+                return false;
+            ++i;
+            current.popFront();
+        }
+        return true;
+    }
+
+    static bool metadataMatchesUpload(
+        MetadataView current,
+        scope ref const OwnedMetadata uploaded)
+        @safe pure nothrow @nogc
+    {
+        return current.hasVersion == uploaded.hasVersion &&
+               (!current.hasVersion ||
+                current.versionNumber == uploaded.versionNumber) &&
+               current.hasTimestamp == uploaded.hasTimestamp &&
+               (!current.hasTimestamp ||
+                current.timestampMilliseconds ==
+                    uploaded.timestampMilliseconds) &&
+               current.hasUserId == uploaded.hasUserId &&
+               (!current.hasUserId ||
+                current.userId == uploaded.userId) &&
+               current.hasUsername == uploaded.hasUsername &&
+               (!current.hasUsername ||
+                sameBytes(current.username, uploaded.username)) &&
+               current.hasVisibility == uploaded.hasVisibility &&
+               (!current.hasVisibility ||
+                current.visible == uploaded.visible);
+        // changeset is intentionally excluded: callers assign the upload
+        // changeset after materializing the store snapshot.
+    }
+
+    static bool ownedMetadataMatchesUpload(
+        scope ref const OwnedMetadata current,
+        scope ref const OwnedMetadata uploaded)
+        @safe pure nothrow @nogc
+    {
+        return current.hasVersion == uploaded.hasVersion &&
+               (!current.hasVersion ||
+                current.versionNumber == uploaded.versionNumber) &&
+               current.hasTimestamp == uploaded.hasTimestamp &&
+               (!current.hasTimestamp ||
+                current.timestampMilliseconds ==
+                    uploaded.timestampMilliseconds) &&
+               current.hasUserId == uploaded.hasUserId &&
+               (!current.hasUserId ||
+                current.userId == uploaded.userId) &&
+               current.hasUsername == uploaded.hasUsername &&
+               (!current.hasUsername ||
+                sameBytes(current.username, uploaded.username)) &&
+               current.hasVisibility == uploaded.hasVisibility &&
+               (!current.hasVisibility ||
+                current.visible == uploaded.visible);
+    }
+
+    void setAcknowledgedChangeset(
+        ElementType type,
+        uint slot,
+        scope ref const OwnedMetadata uploaded) @safe nothrow @nogc
+    {
+        assert(uploaded.hasChangeset && uploaded.changesetId > 0);
+
+        final switch (type)
+        {
+            case ElementType.node:
+                setChangeset(_nodes, slot, uploaded.changesetId);
+                break;
+            case ElementType.way:
+                setChangeset(_ways, slot, uploaded.changesetId);
+                break;
+            case ElementType.relation:
+                setChangeset(_relations, slot, uploaded.changesetId);
+                break;
+        }
+    }
+
+    void acknowledgeModified(
+        ElementType type,
+        uint slot,
+        int newVersion,
+        scope ref const OwnedMetadata uploaded) @safe nothrow
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                setAuthoritativeVersion(_nodes, slot, newVersion);
+                setChangeset(_nodes, slot, uploaded.changesetId);
+                _nodes.states[slot] = StoreElementState.clean;
+                _nodeBaselines.remove(slot);
+                break;
+            case ElementType.way:
+                setAuthoritativeVersion(_ways, slot, newVersion);
+                setChangeset(_ways, slot, uploaded.changesetId);
+                _ways.states[slot] = StoreElementState.clean;
+                _wayBaselines.remove(slot);
+                break;
+            case ElementType.relation:
+                setAuthoritativeVersion(_relations, slot, newVersion);
+                setChangeset(_relations, slot, uploaded.changesetId);
+                _relations.states[slot] = StoreElementState.clean;
+                _relationBaselines.remove(slot);
+                break;
+        }
+    }
+
+    void finalizeAcknowledgedDelete(
+        ElementType type,
+        uint slot) @safe nothrow
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                _nodeBaselines.remove(slot);
+                invalidateGeneration(_nodes, slot);
+                break;
+            case ElementType.way:
+                _wayBaselines.remove(slot);
+                invalidateGeneration(_ways, slot);
+                break;
+            case ElementType.relation:
+                _relationBaselines.remove(slot);
+                invalidateGeneration(_relations, slot);
+                break;
+        }
+    }
+
+    static void invalidateGeneration(
+        ref CommonColumns columns,
+        uint slot) @safe nothrow @nogc
+    {
+        ++columns.generations[slot];
+        if (columns.generations[slot] == 0)
+            ++columns.generations[slot];
+        columns.deletedFrom[slot] = StoreElementState.deleted;
+    }
+
+    static void setChangeset(
+        ref CommonColumns columns,
+        uint slot,
+        long changesetId) @safe nothrow @nogc
+    {
+        columns.metadata.flags[slot] |= 1 << 2;
+        columns.metadata.changesets[slot] = changesetId;
+    }
+
     void prepareForBuild(scope ref const BuildPlan plan) @safe
     {
         _strings.prepare(plan.stringOccurrences, plan.stringBytes);
@@ -2741,7 +3818,7 @@ private:
     }
 
     bool preflightWayReferences(
-        scope const(OwnedWayNode)[] nodes,
+        scope const(OwnedNodeRef)[] nodes,
         ref StoreStatus status) @safe nothrow @nogc
     {
         foreach (ref const node; nodes)
@@ -2819,7 +3896,7 @@ private:
     }
 
     bool preflightBorrowedTags(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         auto outer = source;
@@ -3029,7 +4106,7 @@ private:
         }
     }
 
-    Span32 appendBorrowedTags(Range)(Range source)
+    Span32 appendBorrowedTags(Range)(scope Range source)
         @safe nothrow @nogc
     {
         Span32 result;
@@ -3051,7 +4128,7 @@ private:
 
 
     bool preflightBorrowedWayNodes(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         while (!source.empty)
@@ -3070,7 +4147,7 @@ private:
     }
 
     bool preflightBorrowedRelationMembers(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         while (!source.empty)
@@ -3089,7 +4166,7 @@ private:
     }
 
     Span32 appendBorrowedWayNodes(Range)(
-        Range source,
+        scope Range source,
         uint parentSlot) @safe nothrow @nogc
     {
         Span32 refs;
@@ -3127,7 +4204,7 @@ private:
     }
 
     Span32 appendBorrowedRelationMembers(Range)(
-        Range source,
+        scope Range source,
         uint parentSlot) @safe nothrow @nogc
     {
         Span32 result;
@@ -3171,7 +4248,7 @@ private:
     }
 
     Span32 appendWayNodes(
-        scope const(OwnedWayNode)[] values,
+        scope const(OwnedNodeRef)[] values,
         uint parentSlot) @safe
     {
         assert(_wayRefIds.length <= uint.max);
@@ -3233,13 +4310,10 @@ private:
         return result;
     }
 
-    StoreTagView tagAt(uint index) @safe nothrow @nogc
+    TagView tagAt(uint index) @safe nothrow @nogc
     {
         const tag = _tags[index];
-        StoreTagView result;
-        result.key = _strings.get(tag.key);
-        result.value = _strings.get(tag.value);
-        return result;
+        return TagView(_strings.get(tag.key), _strings.get(tag.value));
     }
 
     StoreTagRange tagRange(Span32 span) @safe nothrow @nogc
@@ -3251,11 +4325,11 @@ private:
         return result;
     }
 
-    StoreWayNodeRange wayNodeRange(uint slot) @safe nothrow @nogc
+    StoreNodeRefRange nodeRefRange(uint slot) @safe nothrow @nogc
     {
         const refs = _wayRefs[slot];
         const locations = _wayLocationSpans[slot];
-        StoreWayNodeRange result;
+        StoreNodeRefRange result;
         result._store = this;
         result._refOffset = refs.offset;
         result._refLength = refs.length;
@@ -3297,7 +4371,7 @@ private:
         result.id = _ways.ids[slot];
         result.metadata = _ways.metadata.view(slot, _strings);
         result.tags = tagRange(_ways.tags[slot]);
-        result.nodes = wayNodeRange(slot);
+        result.nodes = nodeRefRange(slot);
         result.state = _ways.states[slot];
         return result;
     }
@@ -3346,7 +4420,7 @@ private:
         result.metadata = _ways.metadata.owned(slot, _strings);
         result.tags = copyTags(_ways.tags[slot]);
 
-        auto range = wayNodeRange(slot);
+        auto range = nodeRefRange(slot);
         result.nodes.length = range.length;
         size_t i;
         while (!range.empty)
@@ -3544,7 +4618,7 @@ private:
         @safe pure nothrow @nogc
     {
         size_t result = OwnedWay.sizeof + ownedMetadataBytes(value.metadata);
-        result += value.nodes.length * OwnedWayNode.sizeof;
+        result += value.nodes.length * OwnedNodeRef.sizeof;
         foreach (ref const tag; value.tags)
             result += ownedTagBytes(tag);
         return result;
@@ -3624,7 +4698,7 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    OwnedWayNode refValue;
+    OwnedNodeRef refValue;
     refValue.id = -1;
     way.nodes ~= refValue;
 
@@ -3751,9 +4825,9 @@ unittest
 
     OwnedWay way;
     way.id = 10;
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(2, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(2, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
 
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
@@ -3842,8 +4916,8 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
 
@@ -3912,4 +4986,337 @@ unittest
     // A second remap is rejected because the ID is no longer local.
     assert(!store.remapId(nodeHandle, 104, 2, status));
     assert(status.error == StoreError.invalidId);
+}
+
+
+unittest // M9: dependency-safe change extraction and cancelled local creates
+{
+    import osm.validation.capability : CapabilityProfile;
+    import osm.validation.change :
+        UploadValidationIssue,
+        validateUploadChanges;
+
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = -2;
+    way.nodes ~= OwnedNodeRef(-1);
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation first;
+    first.id = -3;
+    OsmHandle firstHandle;
+    assert(store.add(first, firstHandle, status));
+
+    OwnedRelation second;
+    second.id = -4;
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    second.members ~= wayMember;
+    OsmHandle secondHandle;
+    assert(store.add(second, secondHandle, status));
+
+    // Force a forward relation dependency relative to slot order. Collection
+    // must topologically emit -4 before -3.
+    OwnedRelation firstEdited = first;
+    OwnedRelationMember relationMember;
+    relationMember.type = ElementType.relation;
+    relationMember.id = -4;
+    firstEdited.members ~= relationMember;
+    assert(store.replace(firstHandle, firstEdited, status));
+
+    OwnedNode cancelled;
+    cancelled.id = -5;
+    cancelled.location = LocationView(47_000_000_000L, 15_000_000_000L);
+    OsmHandle cancelledHandle;
+    assert(store.add(cancelled, cancelledHandle, status));
+    assert(store.remove(cancelledHandle, status));
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, status));
+    assert(changes.entries.length == 4);
+    assert(changes.entries[0].type == ElementType.node);
+    assert(changes.entries[0].id == -1);
+    assert(changes.entries[1].type == ElementType.way);
+    assert(changes.entries[1].id == -2);
+    assert(changes.entries[2].type == ElementType.relation);
+    assert(changes.entries[2].id == -4);
+    assert(changes.entries[3].type == ElementType.relation);
+    assert(changes.entries[3].id == -3);
+
+    foreach (ref const entry; changes.entries)
+        assert(entry.action == ChangeAction.create);
+
+    assert(changes.setChangeset(77));
+    CapabilityProfile capabilities;
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(changes, capabilities, issue));
+    assert(issue.ok);
+}
+
+unittest // M9: circular local relation dependencies fail before output
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedRelation a;
+    a.id = -1;
+    OsmHandle aHandle;
+    assert(store.add(a, aHandle, status));
+
+    OwnedRelation b;
+    b.id = -2;
+    OwnedRelationMember aMember;
+    aMember.type = ElementType.relation;
+    aMember.id = -1;
+    b.members ~= aMember;
+    OsmHandle bHandle;
+    assert(store.add(b, bHandle, status));
+
+    OwnedRelation editedA = a;
+    OwnedRelationMember bMember;
+    bMember.type = ElementType.relation;
+    bMember.id = -2;
+    editedA.members ~= bMember;
+    assert(store.replace(aHandle, editedA, status));
+
+    OwnedChangeSequence changes;
+    assert(!store.collectChanges(changes, status));
+    assert(changes.empty);
+    assert(status.error == StoreError.cyclicLocalDependency);
+    assert(status.type == ElementType.relation);
+}
+
+unittest // M9: store -> osmChange -> authoritative result -> clean store
+{
+    import osm.io.osmchange.document : OsmChangeDocument;
+    import osm.io.osmchange.reader :
+        OsmChangeReadStatus,
+        readOsmChangeDocument;
+    import osm.io.osmchange.writer :
+        OsmChangeWriteStatus,
+        OsmChangeWriter;
+    import osm.model.compare : sameChangeSemantics;
+    import osm.model.owned : ownBytes;
+    import osm.validation.capability : CapabilityProfile;
+    import osm.validation.change :
+        UploadValidationIssue,
+        validateUploadChanges;
+    import transport.source : MemorySink, MemorySource;
+
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode existing;
+    existing.id = 10;
+    existing.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    existing.metadata.hasVersion = true;
+    existing.metadata.versionNumber = 3;
+    existing.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"before"));
+    OsmHandle existingHandle;
+    assert(store.add(existing, existingHandle, status));
+
+    OwnedNode modified = existing.deepCopy();
+    modified.location = LocationView(48_000_000_100L, 16_000_000_100L);
+    modified.tags[0].value = ownBytes(cast(const(ubyte)[])"after");
+    assert(store.replace(existingHandle, modified, status));
+
+    OwnedNode localNode;
+    localNode.id = -1;
+    localNode.location =
+        LocationView(48_100_000_000L, 16_100_000_000L);
+    OsmHandle localNodeHandle;
+    assert(store.add(localNode, localNodeHandle, status));
+
+    OwnedWay localWay;
+    localWay.id = -2;
+    localWay.nodes ~= OwnedNodeRef(-1);
+    OsmHandle localWayHandle;
+    assert(store.add(localWay, localWayHandle, status));
+
+    OwnedRelation localRelation;
+    localRelation.id = -3;
+    OwnedRelationMember localWayMember;
+    localWayMember.type = ElementType.way;
+    localWayMember.id = -2;
+    localRelation.members ~= localWayMember;
+    OsmHandle localRelationHandle;
+    assert(store.add(localRelation, localRelationHandle, status));
+
+    OwnedRelation deletedRelation;
+    deletedRelation.id = 20;
+    deletedRelation.metadata.hasVersion = true;
+    deletedRelation.metadata.versionNumber = 5;
+    OsmHandle deletedHandle;
+    assert(store.add(deletedRelation, deletedHandle, status));
+    assert(store.remove(deletedHandle, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(uploaded.entries.length == 5);
+    assert(uploaded.setChangeset(99));
+
+    CapabilityProfile capabilities;
+    UploadValidationIssue validation;
+    assert(validateUploadChanges(uploaded, capabilities, validation));
+
+    auto sink = new MemorySink();
+    OsmChangeWriter writer;
+    OsmChangeWriteStatus writeStatus;
+    assert(writer.writeChanges(uploaded, sink, writeStatus));
+
+    auto source = new MemorySource(sink.data);
+    OsmChangeDocument reread;
+    OsmChangeReadStatus readStatus;
+    assert(readOsmChangeDocument(source, reread, readStatus));
+    assert(sameChangeSemantics(uploaded, reread.changes));
+
+    UploadResult server;
+    // Deliberately shuffled: reconciliation is identity-based, not positional.
+    server.entries ~= UploadResultEntry.deleted(
+        ElementType.relation, 20);
+    server.entries ~= UploadResultEntry.modified(
+        ElementType.node, 10, 4);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.relation, -3, 103, 1);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.way, -2, 102, 1);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.node, -1, 101, 1);
+
+    assert(store.applyUploadResult(reread.changes, server, status));
+
+    OsmHandle found;
+    assert(store.find(ElementType.node, 101, found));
+    assert(found == localNodeHandle);
+    assert(store.find(ElementType.way, 102, found));
+    assert(found == localWayHandle);
+    assert(store.find(ElementType.relation, 103, found));
+    assert(found == localRelationHandle);
+
+    StoreNodeView nodeView;
+    assert(store.node(existingHandle, nodeView, status));
+    assert(nodeView.state == StoreElementState.clean);
+    assert(nodeView.metadata.hasVersion);
+    assert(nodeView.metadata.versionNumber == 4);
+    assert(nodeView.metadata.hasChangeset);
+    assert(nodeView.metadata.changesetId == 99);
+
+    StoreWayView wayView;
+    assert(store.way(localWayHandle, wayView, status));
+    assert(wayView.nodes.front.id == 101);
+
+    StoreRelationView relationView;
+    assert(store.relation(localRelationHandle, relationView, status));
+    assert(relationView.members.front.id == 102);
+
+    auto parentWays = store.parentWays(101);
+    assert(!parentWays.empty);
+    assert(parentWays.front.id == 102);
+
+    auto parentRelations =
+        store.parentRelations(ElementType.way, 102);
+    assert(!parentRelations.empty);
+    assert(parentRelations.front.id == 103);
+
+    StoreElementState deletedState;
+    assert(!store.state(deletedHandle, deletedState, status));
+    assert(status.error == StoreError.invalidHandle);
+    assert(!store.find(ElementType.relation, 20, found));
+
+    OwnedChangeSequence remaining;
+    assert(store.collectChanges(remaining, status));
+    assert(remaining.empty);
+}
+
+unittest // M9: stale/malformed acknowledgement is validation-atomic
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode a;
+    a.id = 1;
+    a.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    a.metadata.hasVersion = true;
+    a.metadata.versionNumber = 1;
+    OsmHandle aHandle;
+    assert(store.add(a, aHandle, status));
+
+    OwnedNode b = a;
+    b.id = 2;
+    OsmHandle bHandle;
+    assert(store.add(b, bHandle, status));
+
+    OwnedNode editedA = a;
+    editedA.location = LocationView(48_000_000_100L, 16_000_000_000L);
+    assert(store.replace(aHandle, editedA, status));
+
+    OwnedNode editedB = b;
+    editedB.location = LocationView(48_000_000_200L, 16_000_000_000L);
+    assert(store.replace(bHandle, editedB, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(uploaded.setChangeset(123));
+
+    // A newer local edit arrives after the upload snapshot was materialized.
+    editedA.location = LocationView(48_000_000_300L, 16_000_000_000L);
+    assert(store.replace(aHandle, editedA, status));
+
+    UploadResult server;
+    server.entries ~= UploadResultEntry.modified(ElementType.node, 1, 2);
+    server.entries ~= UploadResultEntry.modified(ElementType.node, 2, 2);
+
+    assert(!store.applyUploadResult(uploaded, server, status));
+    assert(status.error == StoreError.staleUploadState);
+
+    StoreElementState state;
+    assert(store.state(aHandle, state, status));
+    assert(state == StoreElementState.modified);
+    assert(store.state(bHandle, state, status));
+    assert(state == StoreElementState.modified);
+
+    StoreNodeView bView;
+    assert(store.node(bHandle, bView, status));
+    assert(bView.metadata.versionNumber == 1);
+}
+
+unittest // M9: modify then delete exports only authoritative deletion metadata
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = 7;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    node.metadata.hasVersion = true;
+    node.metadata.versionNumber = 6;
+    OsmHandle handle;
+    assert(store.add(node, handle, status));
+
+    OwnedNode edited = node;
+    edited.metadata.versionNumber = 999; // local payload edit must not leak.
+    edited.location = LocationView(49_000_000_000L, 17_000_000_000L);
+    assert(store.replace(handle, edited, status));
+    assert(store.remove(handle, status));
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, status));
+    assert(changes.entries.length == 1);
+    ref const deletion = changes.entries[0];
+    assert(deletion.action == ChangeAction.deleteObject);
+    assert(deletion.objectState == ChangeObjectState.identityOnly);
+    assert(deletion.metadata.hasVersion);
+    assert(deletion.metadata.versionNumber == 6);
 }
