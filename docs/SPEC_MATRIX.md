@@ -335,10 +335,17 @@ actual values may change.
 
 | Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
-| capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **IMPLEMENTED:** `CapabilityProfile` supplies optional changeset-element, Way-node and Relation-member limits to `validateUploadChanges`; zero means unspecified. No current server limit is hardcoded as normative truth. | mocked smaller Way/member/change limits. |
+| capability values | Query server capabilities; values are server/policy state, not format constants. | Current Rails XML publishes Way-node, Relation-member and Changeset-element maxima; established editors also consume server capabilities rather than treating examples as constants. | **IMPLEMENTED:** `osm.capabilities` projects these three dynamic maxima directly into `CapabilityProfile`; `validateUploadChanges` applies nonzero values. No current server limit is hardcoded as normative truth. | current Rails-style document; mocked smaller Way/member/change limits; capabilities -> validator consumer. |
+| capability evolution | The capabilities document contains multiple policy families and may grow over time. | Current Rails includes area, note area, tracepoints, query limits, status and imagery policy in addition to edit-size limits. | **IMPLEMENTED:** projected edit fields fail closed; unrelated/future sibling subtrees are boundedly skipped under an explicit projection contract. The parser does not claim a lossless full-server model. | current unrelated fields; unknown future sibling; skip-event resource limit. |
+| service status | Current server reports database/API/GPX as `online`, `readonly` or `offline`. | Rails tests exercise all service states. | Preserve projected service state for the consumer; do not infer retries/network actions inside osm-d. | online/readonly/offline fixtures; invalid state rejection. |
 | offline validation | No server may be available. | Editors use defaults/fallbacks. | Format decoding remains separate from target uploadability. `CapabilityProfile.unbounded()` performs semantic upload checks without target-specific size caps; callers may provide explicit offline policy limits. | same sequence valid unbounded but invalid against smaller profile. |
 
-Sources: N1, R5.
+M12 capability evidence was refreshed on **2026-11-04** against the current
+OpenStreetMap Rails capabilities builder/controller tests. This local refresh
+does not imply that every older row in this matrix was reverified on that date.
+
+Sources: N1, R5; current OpenStreetMap Rails capabilities builder/tests recorded
+in `docs/design/api-capabilities-projection.md`.
 
 ---
 

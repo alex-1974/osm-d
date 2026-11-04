@@ -24,6 +24,17 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
   part of the public root surface with the v0.2.1 request-aware
   `UploadResultEntry.effectFor` correction.
 
+### Added
+
+- Add the focused `osm.capabilities` facade and bounded XML projection of OSM
+  Editing API capabilities into the existing `CapabilityProfile`.
+  Way-node, Relation-member and Changeset-element limits now come from
+  target-server policy instead of caller hardcoding; API version range,
+  service state and timeout remain available for editing consumers.
+- Add an explicit forward-compatible projection policy for unrelated
+  capabilities: projected fields fail closed while map/Notes/GPX query policy,
+  imagery rules and future unrelated subtrees are boundedly skipped.
+
 ## 0.2.1 - 2026-11-04
 
 ### Fixed

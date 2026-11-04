@@ -193,3 +193,28 @@ HTTP method selection, endpoint URLs, authentication, retry/backoff,
 changeset creation/closing and editor workflow remain application/service
 concerns. This prevents osm-d from becoming an OSM account/network client while
 still keeping OSM-specific response parsing reusable.
+
+
+## Editing API capability discovery boundary
+
+Target-server upload limits are policy, not format constants. osm-d discovers
+the relevant policy through a narrow projection:
+
+```text
+capabilities XML
+    -> EditingApiCapabilities
+    -> CapabilityProfile
+    -> validateUploadChanges
+```
+
+`osm.io.capabilities` reuses the same transport-d/dxml boundary as the other
+XML codecs. It strictly validates the projected API version and
+Way/Relation/Changeset upload limits while boundedly skipping unrelated
+capability families such as map/Notes/GPX query policy and imagery rules.
+
+This asymmetry is deliberate: the parser does not claim to be a lossless
+capabilities-document model. It is a named editing/upload projection whose
+forward-compatible skip policy is part of its contract.
+
+Endpoint selection, HTTP caching, authentication, refresh cadence and behavior
+when the API reports readonly/offline remain consumer/service policy.

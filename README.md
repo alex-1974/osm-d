@@ -115,10 +115,11 @@ facilities live in `osm.pbf`, and XML, osmChange, comparison and upload
 validation use focused facades. The exact v0.2.x promise is in
 `docs/API_STABILITY.md`; v0.1 -> v0.2 migration is in `docs/API_V0_2.md`.
 
-Current `develop` starts the next minor line with an additive
-`osm.upload` facade for parsing OSM API `diffResult` responses. It does not
-change the published v0.2.x contract and does not add HTTP/OAuth policy. See
-`docs/API_V0_3.md`.
+Current `develop` starts the next minor line with additive focused
+facades for Editing API response semantics: `osm.upload` parses
+`diffResult`, while `osm.capabilities` discovers dynamic upload-validation
+limits from the server capability document. Neither changes the published
+v0.2.x contract or adds HTTP/OAuth policy. See `docs/API_V0_3.md`.
 
 ## Reading an in-memory PBF
 

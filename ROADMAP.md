@@ -15,6 +15,7 @@ criteria.
 - **M9 — Editable store ↔ change/upload bridge:** #100
 - **M10 — v0.2.0 release stabilization and API freeze:** #102
 - **M11 — OSM API diffResult codec:** #114
+- **M12 — Editing API capabilities discovery:** #119
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -178,3 +179,19 @@ Tracked by M11: #114.
 The codec ends at the successful OSM Editing API response body. HTTP,
 authentication/OAuth, changeset creation/closing, retry policy and
 application/editor state remain outside osm-d.
+
+
+## Phase 12 — Editing API capabilities discovery
+
+Tracked by M12: #119.
+
+- [x] Define the editing/upload capability projection and current server
+  evidence. #116
+- [x] Implement bounded XML capability parsing and direct
+  `CapabilityProfile` mapping. #117
+- [x] Qualify current Rails structure, service states, unrelated/future
+  capability siblings and capabilities -> upload validation. #118
+
+The projection consumes dynamic target-server policy without turning osm-d
+into an HTTP/account client. JSON capability responses remain additive future
+work only if a real consumer requires them.
