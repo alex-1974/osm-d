@@ -113,6 +113,70 @@ delete/restore, revert and server-ID remapping.
 Store leaf values use the same semantic vocabulary as PBF:
 `TagView`, `MetadataView`, `NodeRefView` and `RelationMemberView`.
 
+## Turn store edits into an upload
+
+The store exports OSM change semantics, not XML:
+
+```d
+import osm;
+import osm.osmchange;
+import osm.validate;
+
+OwnedChangeSequence changes;
+StoreStatus status;
+
+if (!store.collectChanges(changes, status))
+{
+    // unresolved/circular local dependency
+    return;
+}
+
+if (changes.empty)
+    return;
+
+if (!changes.setChangeset(openChangesetId))
+    return;
+
+UploadValidationIssue issue;
+if (!validateUploadChanges(changes, capabilities, issue))
+    return;
+
+// Encode only at the interchange boundary.
+auto sink = new MemorySink();
+OsmChangeWriter writer;
+OsmChangeWriteStatus writeStatus;
+if (!writer.writeChanges(changes, sink, writeStatus))
+    return;
+```
+
+`collectChanges` copies only pending edit state into a durable
+`OwnedChangeSequence`. It does not invent a changeset ID. Created local
+dependencies are ordered so ordinary Node -> Way -> Relation references are
+uploadable; circular local Relation placeholders fail explicitly.
+
+After a successful diff upload, represent the server response without coupling
+the store to XML/HTTP:
+
+```d
+UploadResult result;
+result.entries ~= UploadResultEntry.created(
+    ElementType.node, -1, 101, 1);
+result.entries ~= UploadResultEntry.modified(
+    ElementType.way, 200, 7);
+result.entries ~= UploadResultEntry.deleted(
+    ElementType.relation, 300);
+
+if (!store.applyUploadResult(changes, result, status))
+{
+    // The store changed since 'changes' was materialized, or the result does
+    // not match the request. No acknowledgement was partially applied.
+}
+```
+
+Create and modify acknowledgements preserve the element handle. Create also
+remaps inbound references to the authoritative server ID. A confirmed delete
+invalidates the deleted object's old handle.
+
 ## Loss-aware PBF read/write
 
 Specialized PBF document/preservation/write functionality has a focused facade:
