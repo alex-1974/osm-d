@@ -41,7 +41,7 @@ public:
      * Params:
      *   input = Bytes borrowed through a const-qualified slice by the cursor.
      */
-    this(return scope const(ubyte)[] input) @safe pure nothrow @nogc
+    this(const(ubyte)[] input) @safe pure nothrow @nogc
     {
         _remaining = input;
         _offset = 0;
