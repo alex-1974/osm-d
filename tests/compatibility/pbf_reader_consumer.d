@@ -2,6 +2,12 @@ module pbf_reader_consumer;
 
 import osm;
 import osm.pbf;
+import osm.model.owned : OwnedWayNode;
+import osm.view.way_node : WayNodeView;
+
+// v0.1 compatibility aliases remain available from their old direct modules.
+static assert(is(WayNodeView == NodeRefView));
+static assert(is(OwnedWayNode == OwnedNodeRef));
 
 private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
 {
