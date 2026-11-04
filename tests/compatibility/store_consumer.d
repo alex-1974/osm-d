@@ -2,6 +2,16 @@ module store_consumer;
 
 import osm;
 
+// Preferred v0.2 root stays focused on common semantic/store/traversal APIs.
+static assert(!__traits(compiles, PbfDocument.init),
+    "PbfDocument is intentionally not a root export; import osm.pbf");
+static assert(!__traits(compiles, PbfParallelReader.init),
+    "PbfParallelReader is intentionally not a root export; import osm.pbf");
+static assert(!__traits(compiles, StoreTagView.init),
+    "store leaf values use TagView");
+static assert(!__traits(compiles, StoreMetadataView.init),
+    "store leaf values use MetadataView");
+
 void compileStoreSurface()
 {
     auto store = new OsmStore();
