@@ -201,8 +201,11 @@ jobs:
 
           version="$(tr -d '[:space:]' < RELEASE_VERSION)"
           test -n "$version"
+          line="${version%.*}"
+          test -n "$line"
           grep -Fq "## $version - " CHANGELOG.md
           test -f "docs/releases/v$version.md"
           grep -Fq 'toolchainRequirements dub=">=1.40.0" frontend=">=2.111"' dub.sdl
-          grep -Fq '**v0.1.x**' docs/API_STABILITY.md
+          grep -Fq "**v$line.x**" docs/API_STABILITY.md
           echo "release_version=$version"
+          echo "compatibility_line=v$line.x"
