@@ -23,7 +23,8 @@ public API
     +-- io/
     |    +-- pbf/
     |    +-- xml/
-    |    `-- change/
+    |    +-- osmchange/
+    |    `-- upload/
     +-- store/          compact random-access storage
     +-- wire/           protobuf wire primitives, OSM-agnostic
     +-- memory/         arenas, buffers, ownership
@@ -129,10 +130,13 @@ There is no implicit materialization of every parsed element.
 | `store/compact/*` | allocation-controlled, cache-oriented |
 
 `@system` or `@trusted` code must not spread through the library. Unsafe or
-trusted transitions are isolated and audited. The current production
-`@trusted` islands are:
+trusted transitions are isolated and audited. Notable production
+`@trusted` boundaries include:
 
 - the bounded zlib C-API bridge in `io/pbf/decompress.d`;
+- dxml orchestration in the OSM XML, osmChange and upload-result readers.
+  dxml entities/ranges remain inside the synchronous parse call; public
+  callbacks receive owned semantic values and no parser borrow escapes;
 - the narrow direct-PBF-store adapter in `store/pbf.d`, which bridges the
   older generic reader signature to a scoped public input. Its safety argument
   is that `PbfReader.read` is synchronous and `StoreSink` copies every
@@ -162,3 +166,30 @@ access problem. A compact store may use structure-of-arrays layouts for nodes,
 ways, relations and tag ranges. `mir.ndslice` may be used where benchmarks show
 a benefit for columnar numerical operations, but it is not a parser
 prerequisite.
+
+
+## Editing API upload-response boundary
+
+osm-d owns the OSM semantics and wire formats around a diff upload, but not the
+network session that transports them:
+
+```text
+OsmStore
+   -> OwnedChangeSequence
+   -> osmChange XML
+   -> application/network boundary
+   -> diffResult XML
+   -> UploadResult
+   -> OsmStore.applyUploadResult
+```
+
+`osm.io.upload` parses the successful API 0.6 `diffResult` response through
+the same transport-d/dxml boundary used by ordinary OSM XML and osmChange.
+Entry order and raw old/new ID/version fields are preserved. The parser never
+infers create/modify/delete from response shape; semantic interpretation uses
+the exact uploaded request entry through `UploadResultEntry.effectFor`.
+
+HTTP method selection, endpoint URLs, authentication, retry/backoff,
+changeset creation/closing and editor workflow remain application/service
+concerns. This prevents osm-d from becoming an OSM account/network client while
+still keeping OSM-specific response parsing reusable.
