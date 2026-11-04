@@ -4,12 +4,12 @@
  * This facade contains PBF-specific reading, loss-aware document preservation,
  * writing, parallel summary decoding and PBF comparison helpers. Ordinary OSM
  * semantic values remain available from `import osm;`.
-
  *
  * Authors: Alexander Bernardi
  * Date: 2026-11-04
  * Copyright: Copyright © 2026 Alexander Bernardi
- * License: MIT */
+ * License: MIT
+ */
 module osm.pbf;
 
 public import osm.io.pbf.reader :
