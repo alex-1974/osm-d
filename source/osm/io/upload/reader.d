@@ -726,3 +726,112 @@ unittest // malformed and bounded inputs fail explicitly
         assert(status.error == UploadResultReadError.unsupportedContent);
     }
 }
+
+
+unittest // empty diffResult is a valid empty successful response
+{
+    import transport.source : MemorySource;
+
+    enum xml = "<diffResult version=\"0.6\"/>";
+
+    auto source = new MemorySource(cast(const(ubyte)[]) xml);
+    UploadResult result;
+    UploadResultReadStatus status;
+
+    assert(readUploadResult(source, result, status));
+    assert(status.ok);
+    assert(result.empty);
+}
+
+unittest // missing identity and unsupported entry content fail transactionally
+{
+    import transport.source : MemorySource;
+
+    {
+        enum xml =
+            "<diffResult version=\"0.6\">" ~
+            "<node new_id=\"1\" new_version=\"1\"/>" ~
+            "</diffResult>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        UploadResult result;
+        UploadResultReadStatus status;
+
+        assert(!readUploadResult(source, result, status));
+        assert(result.empty);
+        assert(status.error == UploadResultReadError.missingAttribute);
+    }
+
+    {
+        enum xml =
+            "<diffResult version=\"0.6\">" ~
+            "<way old_id=\"7\"><unexpected/></way>" ~
+            "</diffResult>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        UploadResult result;
+        UploadResultReadStatus status;
+
+        assert(!readUploadResult(source, result, status));
+        assert(result.empty);
+        assert(status.error == UploadResultReadError.unsupportedContent);
+        assert(status.hasElementIdentity);
+        assert(status.elementType == ElementType.way);
+        assert(status.oldId == 7);
+    }
+
+    {
+        enum xml =
+            "<diffResult version=\"0.6\">" ~
+            "<relation old_id=\"0\"/>" ~
+            "</diffResult>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        UploadResult result;
+        UploadResultReadStatus status;
+
+        assert(!readUploadResult(source, result, status));
+        assert(result.empty);
+        assert(status.error == UploadResultReadError.invalidAttribute);
+    }
+}
+
+unittest // streaming summary and callback preserve exact source order
+{
+    import transport.source : MemorySource;
+
+    enum xml =
+        "<diffResult version=\"0.6\">" ~
+        "<way old_id=\"9\" new_id=\"9\" new_version=\"2\"/>" ~
+        "<node old_id=\"-1\" new_id=\"101\" new_version=\"1\"/>" ~
+        "<relation old_id=\"4\"/>" ~
+        "</diffResult>";
+
+    struct Handler
+    {
+        ElementType[] types;
+        OsmId[] ids;
+
+        void entry(UploadResultEntry value) @safe
+        {
+            types ~= value.type;
+            ids ~= value.oldId;
+        }
+    }
+
+    auto source = new MemorySource(cast(const(ubyte)[]) xml);
+    Handler handler;
+    UploadResultReadSummary summary;
+    UploadResultReadStatus status;
+    UploadResultReader reader;
+
+    assert(reader.read(source, handler, summary, status));
+    assert(status.ok);
+    assert(summary.entries == 3);
+    assert(summary.nodes == 1);
+    assert(summary.ways == 1);
+    assert(summary.relations == 1);
+    assert(handler.types ==
+        [ElementType.way, ElementType.node, ElementType.relation]);
+    assert(handler.ids == [9, -1, 4]);
+}
