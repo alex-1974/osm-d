@@ -44,7 +44,12 @@ struct ApiCapabilitiesDocumentInfo
     bool hasLicense;
     OwnedBytes license;
 
-    /** Immutable byte strings may be shared by value copies. */
+    /**
+     * Create an independently mutable metadata value.
+     *
+     * Returns:
+     *   A value copy. Immutable byte strings may safely remain shared.
+     */
     ApiCapabilitiesDocumentInfo deepCopy() const @safe
     {
         return this;
@@ -80,7 +85,12 @@ struct EditingApiCapabilities
     bool hasGpxState;
     ApiServiceState gpxState = ApiServiceState.unknown;
 
-    /** Validation-ready target limits. */
+    /**
+     * Return the validation-ready target upload limits.
+     *
+     * Returns:
+     *   The discovered Way-node, Relation-member and Changeset-element limits.
+     */
     @property CapabilityProfile validationProfile() const
         @safe pure nothrow @nogc
     {
@@ -94,6 +104,12 @@ struct EditingApiCapabilitiesDocument
     ApiCapabilitiesDocumentInfo info;
     EditingApiCapabilities capabilities;
 
+    /**
+     * Create an independently mutable document value.
+     *
+     * Returns:
+     *   A value copy of the projected capability document.
+     */
     EditingApiCapabilitiesDocument deepCopy() const @safe
     {
         EditingApiCapabilitiesDocument result = this;
