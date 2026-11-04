@@ -426,14 +426,6 @@ public:
 /// v0.1 compatibility alias. Prefer StoreNodeRefRange.
 alias StoreWayNodeRange = StoreNodeRefRange;
 
-/** One borrowed ordered Relation member. */
-struct RelationMemberView
-{
-    ElementType type;
-    OsmId id;
-    const(ubyte)[] role;
-}
-
 /** Borrowed ordered Relation-member range. Invalidated by structural mutation. */
 struct StoreRelationMemberRange
 {
