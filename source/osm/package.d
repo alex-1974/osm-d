@@ -9,6 +9,8 @@
  *
  * Editing API response/policy facades remain opt-in: `osm.upload` and
  * `osm.capabilities` are intentionally not re-exported from this root.
+ * Raw upload-result values remain available here for store reconciliation;
+ * request semantics are classified with `UploadResultEntry.effectFor`.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
