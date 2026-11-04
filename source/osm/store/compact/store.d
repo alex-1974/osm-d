@@ -1707,6 +1707,7 @@ public:
         _wayLocationSpans ~= locationSpan;
         const inserted = _wayIndex.insert(value.id, slot);
         assert(inserted);
+        addWayParentEdges(slot, refSpan);
         ++_liveWays;
 
         handle = makeHandle(ElementType.way, slot, _ways.generations[slot]);
@@ -1742,6 +1743,7 @@ public:
         _relationMembers ~= memberSpan;
         const inserted = _relationIndex.insert(value.id, slot);
         assert(inserted);
+        addRelationParentEdges(slot, memberSpan);
         ++_liveRelations;
 
         handle = makeHandle(
@@ -1837,6 +1839,7 @@ public:
             return false;
         }
 
+        addWayParentEdges(slot, refSpan);
         ++_liveWays;
         return true;
     }
@@ -1884,6 +1887,7 @@ public:
             return false;
         }
 
+        addRelationParentEdges(slot, memberSpan);
         ++_liveRelations;
         return true;
     }
@@ -1946,6 +1950,39 @@ public:
                 handle = makeHandle(type, slot, _relations.generations[slot]);
                 return true;
         }
+    }
+
+    /**
+     * Return distinct live Ways that reference nodeId.
+     *
+     * The target Node itself need not exist in this partial store. Lookup is
+     * expected O(1) plus the number of matching reference occurrences.
+     */
+    StoreParentWayRange parentWays(OsmId nodeId)
+        @safe nothrow @nogc
+    {
+        StoreParentWayRange result;
+        result._store = this;
+        result._edge = _nodeWayParents.head(nodeId);
+        result.skipUnavailable();
+        return result;
+    }
+
+    /**
+     * Return distinct live Relations that reference one typed OSM identity.
+     *
+     * The referenced target may be absent from a partial extract.
+     */
+    StoreParentRelationRange parentRelations(
+        ElementType type,
+        OsmId id) @safe nothrow @nogc
+    {
+        StoreParentRelationRange result;
+        result._store = this;
+        result._childType = type;
+        result._edge = relationParentHead(type, id);
+        result.skipUnavailable();
+        return result;
     }
 
     /** Return lifecycle state for a valid handle, including tombstones. */
@@ -2098,10 +2135,16 @@ public:
             return false;
 
         captureWayBaseline(handle._slot);
+        const oldRefs = _wayRefs[handle._slot];
+        const newRefs = appendWayNodes(value.nodes);
+        const newLocations = lastWayLocationSpan;
+        addWayParentEdges(handle._slot, newRefs);
+        deactivateWayParentEdges(oldRefs);
+
         _ways.tags[handle._slot] = appendTags(value.tags);
         _ways.metadata.set(handle._slot, value.metadata, _strings);
-        _wayRefs[handle._slot] = appendWayNodes(value.nodes);
-        _wayLocationSpans[handle._slot] = lastWayLocationSpan;
+        _wayRefs[handle._slot] = newRefs;
+        _wayLocationSpans[handle._slot] = newLocations;
         markModified(_ways, handle._slot);
         return true;
     }
@@ -2128,10 +2171,14 @@ public:
             return false;
 
         captureRelationBaseline(handle._slot);
+        const oldMembers = _relationMembers[handle._slot];
+        const newMembers = appendRelationMembers(value.members);
+        addRelationParentEdges(handle._slot, newMembers);
+        deactivateRelationParentEdges(oldMembers);
+
         _relations.tags[handle._slot] = appendTags(value.tags);
         _relations.metadata.set(handle._slot, value.metadata, _strings);
-        _relationMembers[handle._slot] =
-            appendRelationMembers(value.members);
+        _relationMembers[handle._slot] = newMembers;
         markModified(_relations, handle._slot);
         return true;
     }
@@ -2165,6 +2212,7 @@ public:
                 captureWayBaseline(handle._slot);
                 _ways.deletedFrom[handle._slot] = _ways.states[handle._slot];
                 _ways.states[handle._slot] = StoreElementState.deleted;
+                deactivateWayParentEdges(_wayRefs[handle._slot]);
                 const removed = _wayIndex.remove(_ways.ids[handle._slot]);
                 assert(removed);
                 --_liveWays;
@@ -2174,6 +2222,8 @@ public:
                 _relations.deletedFrom[handle._slot] =
                     _relations.states[handle._slot];
                 _relations.states[handle._slot] = StoreElementState.deleted;
+                deactivateRelationParentEdges(
+                    _relationMembers[handle._slot]);
                 const removed =
                     _relationIndex.remove(_relations.ids[handle._slot]);
                 assert(removed);
@@ -2220,6 +2270,7 @@ public:
                 }
                 _ways.states[handle._slot] =
                     _ways.deletedFrom[handle._slot];
+                reactivateWayParentEdges(_wayRefs[handle._slot]);
                 if (_ways.states[handle._slot] == StoreElementState.clean)
                     _wayBaselines.remove(handle._slot);
                 ++_liveWays;
@@ -2235,6 +2286,8 @@ public:
                 }
                 _relations.states[handle._slot] =
                     _relations.deletedFrom[handle._slot];
+                reactivateRelationParentEdges(
+                    _relationMembers[handle._slot]);
                 if (_relations.states[handle._slot] == StoreElementState.clean)
                     _relationBaselines.remove(handle._slot);
                 ++_liveRelations;
@@ -2528,6 +2581,14 @@ public:
             _wayIndex.logicalBytes +
             _relationIndex.logicalBytes;
 
+        result.parentIndexes =
+            _nodeWayParents.logicalBytes +
+            _nodeRelationParents.logicalBytes +
+            _wayRelationParents.logicalBytes +
+            _relationRelationParents.logicalBytes +
+            _wayParentEdges.length * uint.sizeof +
+            _relationParentEdges.length * uint.sizeof;
+
         foreach (slot, ref value; _nodeBaselines)
             result.editBaselines += ownedNodeBytes(value);
         foreach (slot, ref value; _wayBaselines)
@@ -2560,6 +2621,12 @@ private:
         _relationMemberIds.reserve(plan.relationMembers);
         _relationMemberRoles.reserve(plan.relationMembers);
         _relationMemberTypes.reserve(plan.relationMembers);
+        _wayParentEdges.reserve(plan.wayRefs);
+        _relationParentEdges.reserve(plan.relationMembers);
+        _nodeWayParents.reserveEdges(plan.wayRefs);
+        _nodeRelationParents.reserveEdges(plan.relationMembers);
+        _wayRelationParents.reserveEdges(plan.relationMembers);
+        _relationRelationParents.reserveEdges(plan.relationMembers);
 
         _nodeIndex.prepare(plan.nodes);
         _wayIndex.prepare(plan.ways);
@@ -2582,6 +2649,246 @@ private:
         result._generation = generation;
         result._epoch = _epoch;
         return result;
+    }
+
+    uint relationParentHead(
+        ElementType type,
+        OsmId id) const @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.head(id);
+            case ElementType.way:
+                return _wayRelationParents.head(id);
+            case ElementType.relation:
+                return _relationRelationParents.head(id);
+        }
+    }
+
+    ParentEdge relationParentEdge(
+        ElementType type,
+        uint encoded) const @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.edge(encoded);
+            case ElementType.way:
+                return _wayRelationParents.edge(encoded);
+            case ElementType.relation:
+                return _relationRelationParents.edge(encoded);
+        }
+    }
+
+    bool relationParentActive(
+        ElementType type,
+        uint encoded) const @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.isActive(encoded);
+            case ElementType.way:
+                return _wayRelationParents.isActive(encoded);
+            case ElementType.relation:
+                return _relationRelationParents.isActive(encoded);
+        }
+    }
+
+    uint insertRelationParent(
+        ElementType type,
+        OsmId id,
+        uint parentSlot,
+        uint childIndex) @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.insert(
+                    id, parentSlot, childIndex);
+            case ElementType.way:
+                return _wayRelationParents.insert(
+                    id, parentSlot, childIndex);
+            case ElementType.relation:
+                return _relationRelationParents.insert(
+                    id, parentSlot, childIndex);
+        }
+    }
+
+    void deactivateRelationParent(
+        ElementType type,
+        uint encoded) @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                _nodeRelationParents.deactivate(encoded);
+                return;
+            case ElementType.way:
+                _wayRelationParents.deactivate(encoded);
+                return;
+            case ElementType.relation:
+                _relationRelationParents.deactivate(encoded);
+                return;
+        }
+    }
+
+    void reactivateRelationParent(
+        ElementType type,
+        uint encoded) @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                _nodeRelationParents.reactivate(encoded);
+                return;
+            case ElementType.way:
+                _wayRelationParents.reactivate(encoded);
+                return;
+            case ElementType.relation:
+                _relationRelationParents.reactivate(encoded);
+                return;
+        }
+    }
+
+    void addWayParentEdges(uint parentSlot, Span32 span)
+        @safe nothrow @nogc
+    {
+        assert(_wayParentEdges.length == span.offset);
+        foreach (relative; 0 .. span.length)
+        {
+            const childIndex = span.offset + relative;
+            const encoded = _nodeWayParents.insert(
+                _wayRefIds[childIndex], parentSlot, childIndex);
+            _wayParentEdges ~= encoded;
+        }
+    }
+
+    void addRelationParentEdges(uint parentSlot, Span32 span)
+        @safe nothrow @nogc
+    {
+        assert(_relationParentEdges.length == span.offset);
+        foreach (relative; 0 .. span.length)
+        {
+            const childIndex = span.offset + relative;
+            const type = cast(ElementType)_relationMemberTypes[childIndex];
+            const encoded = insertRelationParent(
+                type,
+                _relationMemberIds[childIndex],
+                parentSlot,
+                childIndex);
+            _relationParentEdges ~= encoded;
+        }
+    }
+
+    void deactivateWayParentEdges(Span32 span) @safe nothrow @nogc
+    {
+        foreach (relative; 0 .. span.length)
+            _nodeWayParents.deactivate(
+                _wayParentEdges[span.offset + relative]);
+    }
+
+    void reactivateWayParentEdges(Span32 span) @safe nothrow @nogc
+    {
+        foreach (relative; 0 .. span.length)
+            _nodeWayParents.reactivate(
+                _wayParentEdges[span.offset + relative]);
+    }
+
+    void deactivateRelationParentEdges(Span32 span) @safe nothrow @nogc
+    {
+        foreach (relative; 0 .. span.length)
+        {
+            const i = span.offset + relative;
+            deactivateRelationParent(
+                cast(ElementType)_relationMemberTypes[i],
+                _relationParentEdges[i]);
+        }
+    }
+
+    void reactivateRelationParentEdges(Span32 span) @safe nothrow @nogc
+    {
+        foreach (relative; 0 .. span.length)
+        {
+            const i = span.offset + relative;
+            reactivateRelationParent(
+                cast(ElementType)_relationMemberTypes[i],
+                _relationParentEdges[i]);
+        }
+    }
+
+    bool wayChildIsCurrent(uint parentSlot, uint childIndex)
+        const @safe pure nothrow @nogc
+    {
+        if (parentSlot >= _wayRefs.length)
+            return false;
+        const span = _wayRefs[parentSlot];
+        return childIndex >= span.offset &&
+               childIndex < span.offset + span.length;
+    }
+
+    bool relationChildIsCurrent(uint parentSlot, uint childIndex)
+        const @safe pure nothrow @nogc
+    {
+        if (parentSlot >= _relationMembers.length)
+            return false;
+        const span = _relationMembers[parentSlot];
+        return childIndex >= span.offset &&
+               childIndex < span.offset + span.length;
+    }
+
+    void remapWayChildren(OsmId oldId, OsmId newId)
+        @safe nothrow @nogc
+    {
+        auto current = _nodeWayParents.head(oldId);
+        while (current != 0)
+        {
+            const oldEdge = _nodeWayParents.edge(current);
+            const next = oldEdge.next;
+            if (wayChildIsCurrent(oldEdge.parentSlot, oldEdge.childIndex) &&
+                _wayRefIds[oldEdge.childIndex] == oldId)
+            {
+                const wasActive = _nodeWayParents.isActive(current);
+                const replacement = _nodeWayParents.insert(
+                    newId, oldEdge.parentSlot, oldEdge.childIndex);
+                if (!wasActive)
+                    _nodeWayParents.deactivate(replacement);
+                _wayRefIds[oldEdge.childIndex] = newId;
+                _wayParentEdges[oldEdge.childIndex] = replacement;
+                _nodeWayParents.deactivate(current);
+            }
+            current = next;
+        }
+    }
+
+    void remapRelationChildren(
+        ElementType type,
+        OsmId oldId,
+        OsmId newId) @safe nothrow @nogc
+    {
+        auto current = relationParentHead(type, oldId);
+        while (current != 0)
+        {
+            const oldEdge = relationParentEdge(type, current);
+            const next = oldEdge.next;
+            if (relationChildIsCurrent(
+                    oldEdge.parentSlot, oldEdge.childIndex) &&
+                _relationMemberIds[oldEdge.childIndex] == oldId &&
+                cast(ElementType)_relationMemberTypes[oldEdge.childIndex] ==
+                    type)
+            {
+                const wasActive = relationParentActive(type, current);
+                const replacement = insertRelationParent(
+                    type, newId, oldEdge.parentSlot, oldEdge.childIndex);
+                if (!wasActive)
+                    deactivateRelationParent(type, replacement);
+                _relationMemberIds[oldEdge.childIndex] = newId;
+                _relationParentEdges[oldEdge.childIndex] = replacement;
+                deactivateRelationParent(type, current);
+            }
+            current = next;
+        }
     }
 
     bool preflightIdAndTags(
