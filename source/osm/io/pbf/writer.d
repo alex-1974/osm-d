@@ -1018,6 +1018,7 @@ unittest
 {
     import osm.io.pbf.document : PbfDocument;
     import osm.io.pbf.document_reader : readPbfDocument;
+    import osm.io.pbf.reader : PbfReadStatus;
     import osm.model.owned :
         OwnedNode,
         OwnedRelation,
@@ -1072,7 +1073,7 @@ unittest
     assert(bytes.length != 0);
 
     PbfDocument decoded;
-    osm.io.pbf.reader.PbfReadStatus readStatus;
+    PbfReadStatus readStatus;
     assert(readPbfDocument(bytes, decoded, readStatus));
     assert(readStatus.ok);
 

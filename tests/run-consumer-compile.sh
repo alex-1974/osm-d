@@ -53,4 +53,12 @@ for compiler in "${compilers[@]}"; do
         --build=debug \
         --force
     echo "PASS: $compiler upload validation DUB consumer compile"
+
+    echo "=== RELEASE API DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/release-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler v0.1 release API consumer compile"
 done

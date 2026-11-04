@@ -118,3 +118,13 @@ configuration "store-layout" {
     importPaths "store"
     mainSourceFile "store/layout_compare.d"
 }
+
+
+configuration "release-io" {
+    targetType "executable"
+    targetName "osm-d-bench-release-io"
+    targetPath "bin"
+    sourcePaths "release"
+    importPaths "release"
+    mainSourceFile "release/io_baseline.d"
+}

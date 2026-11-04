@@ -2,10 +2,12 @@
 
 All notable changes to this project will be documented here.
 
-The project follows semantic versioning once the public API reaches its first
-stable release.
+The project uses semantic versioning. During the pre-1.0 period, the supported
+v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
+
+## 0.1.0 - 2026-11-04
 
 - Added `PbfParallelReader.readSummary`, a bounded producer/worker whole-buffer
   PBF path for parallel OSMData decompression, complete semantic validation, and
