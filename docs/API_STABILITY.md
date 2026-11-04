@@ -176,6 +176,17 @@ Successful create/modify acknowledgements preserve surviving handles. Create
 remaps local IDs and inbound Way/Relation references through current parent
 indexes. Confirmed deletion invalidates the deleted object's former handle.
 
+OSM diffResult field shape is not a complete operation discriminator.
+Conditional `delete if-unused` may return new ID/version when the server
+retains the object; placeholder reuse may also repeat type+oldId in a general
+result. `UploadResultEntry.effectFor` uses the exact uploaded entry as request
+context. A retained store deletion restores its pre-edit baseline as clean;
+an already-deleted acknowledgement finalizes the local tombstone.
+
+The legacy context-free `UploadResultEntry.action` property remains available
+throughout v0.2.x for source compatibility, but consumers must not use it to
+correlate arbitrary raw diffResult entries.
+
 The diff result does not carry complete server timestamp/user metadata; osm-d
 does not fabricate those fields.
 

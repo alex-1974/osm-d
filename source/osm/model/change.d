@@ -302,16 +302,39 @@ struct OwnedChangeSequence
 }
 
 /**
- * One authoritative result entry returned after a successful OSM diff upload.
+ * Request-context interpretation of one OSM API diff-result entry.
+ *
+ * Raw diffResult shape alone is not sufficient to identify every operation:
+ * conditional delete-if-unused may return new ID/version when the object was
+ * retained, and one placeholder may legitimately appear in more than one
+ * result entry in a general diff upload.
+ */
+enum UploadResultEffect : ubyte
+{
+    none,
+    created,
+    modified,
+    deleted,
+    deleteRetained,
+    alreadyDeleted,
+}
+
+/**
+ * One raw authoritative result entry returned after a successful OSM diff upload.
  *
  * The type is format-neutral: XML parsing and HTTP transport are intentionally
- * outside this model. OSM API 0.6 semantics are represented exactly:
+ * outside this model. OSM API 0.6 diffResult fields are preserved without
+ * pretending that field shape always identifies the originating action:
  *
- * - create: negative oldId plus positive newId/newVersion;
- * - modify: positive oldId, identical positive newId, positive newVersion;
- * - delete: positive oldId with no new ID/version.
+ * - create normally has old ID plus positive new ID/version;
+ * - modify normally has old ID plus new ID/version;
+ * - successful delete normally has only old ID;
+ * - delete-if-unused may instead return old ID plus current new ID/version when
+ *   the requested deletion was not performed;
+ * - placeholder reuse can repeat the same type+oldId in a general result.
  *
- * .init is invalid because oldId is zero.
+ * Use effectFor with the matching uploaded request entry when action/effect
+ * semantics matter. .init is invalid because oldId is zero.
  */
 struct UploadResultEntry
 {
@@ -324,7 +347,7 @@ struct UploadResultEntry
     bool hasNewVersion;
     int newVersion;
 
-    /** Construct a create acknowledgement. */
+    /** Construct a create-shaped acknowledgement. */
     static UploadResultEntry created(
         ElementType type,
         OsmId oldId,
@@ -341,7 +364,7 @@ struct UploadResultEntry
         return result;
     }
 
-    /** Construct a modify acknowledgement. */
+    /** Construct a modify-shaped acknowledgement. */
     static UploadResultEntry modified(
         ElementType type,
         OsmId id,
@@ -350,7 +373,7 @@ struct UploadResultEntry
         return created(type, id, id, newVersion);
     }
 
-    /** Construct a delete acknowledgement. */
+    /** Construct a bare delete-shaped acknowledgement. */
     static UploadResultEntry deleted(
         ElementType type,
         OsmId id) @safe pure nothrow @nogc
@@ -361,14 +384,14 @@ struct UploadResultEntry
         return result;
     }
 
-    /** Whether this value has a valid OSM API 0.6 diff-result shape. */
+    /** Whether the raw fields have a representable OSM API diff-result shape. */
     @property bool shapeValid() const @safe pure nothrow @nogc
     {
         if (oldId == 0 || hasNewId != hasNewVersion)
             return false;
 
         if (!hasNewId)
-            return oldId > 0;
+            return true;
 
         if (newId <= 0 || newVersion <= 0)
             return false;
@@ -376,10 +399,77 @@ struct UploadResultEntry
         if (oldId < 0)
             return true;
 
-        return oldId > 0 && newId == oldId;
+        return newId == oldId;
     }
 
-    /** Operation acknowledged by this result entry. Valid only when shapeValid. */
+    /**
+     * Interpret this result against the exact uploaded request entry.
+     *
+     * This is the authoritative operation/effect classifier. In particular,
+     * an oldId/newId/newVersion shape can mean modify, retained
+     * delete-if-unused, or already-deleted conditional delete depending on the
+     * request context.
+     *
+     * Returns false when the raw result cannot acknowledge uploaded.
+     */
+    bool effectFor(
+        scope ref const OwnedChangeEntry uploaded,
+        out UploadResultEffect effect) const
+        @safe pure nothrow @nogc
+    {
+        effect = UploadResultEffect.none;
+
+        if (!shapeValid ||
+            !uploaded.shapeValid ||
+            type != uploaded.type ||
+            oldId != uploaded.id)
+        {
+            return false;
+        }
+
+        final switch (uploaded.action)
+        {
+            case ChangeAction.create:
+                if (uploaded.id >= 0 || !hasNewId)
+                    return false;
+                effect = UploadResultEffect.created;
+                return true;
+
+            case ChangeAction.modify:
+                if (!hasNewId)
+                    return false;
+                effect = UploadResultEffect.modified;
+                return true;
+
+            case ChangeAction.deleteObject:
+                if (!hasNewId)
+                {
+                    effect = UploadResultEffect.deleted;
+                    return true;
+                }
+
+                if (!uploaded.deleteIfUnused ||
+                    !uploaded.metadata.hasVersion ||
+                    uploaded.metadata.versionNumber <= 0 ||
+                    newVersion < uploaded.metadata.versionNumber)
+                {
+                    return false;
+                }
+
+                effect = newVersion == uploaded.metadata.versionNumber
+                    ? UploadResultEffect.deleteRetained
+                    : UploadResultEffect.alreadyDeleted;
+                return true;
+        }
+    }
+
+    /**
+     * Legacy context-free shape guess retained for v0.2.x source compatibility.
+     *
+     * Do not use this property to correlate a generic diffResult with its
+     * request: conditional delete-if-unused can have the same raw shape as a
+     * modify. Prefer effectFor when the uploaded entry is available.
+     */
     @property ChangeAction action() const @safe pure nothrow @nogc
     in (shapeValid)
     {
@@ -392,8 +482,10 @@ struct UploadResultEntry
 /**
  * Authoritative result of one successful diff-upload request.
  *
- * Entry order is retained from the source response, but consumers must not need
- * to rely on response order: each entry is keyed semantically by type+oldId.
+ * Entry order is retained from the source response. A general OSM diff upload
+ * may legitimately repeat type+oldId when a negative placeholder is reused,
+ * so consumers must correlate entries with the uploaded request rather than
+ * assuming type+oldId is globally unique.
  */
 struct UploadResult
 {
@@ -489,4 +581,44 @@ unittest
     assert(deleted.action == ChangeAction.deleteObject);
 
     assert(!UploadResultEntry.init.shapeValid);
+}
+
+unittest // v0.2.1: diffResult interpretation requires request context
+{
+    foreach (type; [ElementType.node, ElementType.way, ElementType.relation])
+    {
+        OwnedMetadata metadata;
+        metadata.hasVersion = true;
+        metadata.versionNumber = 7;
+
+        const conditional = OwnedChangeEntry.deletion(type, 42, metadata, true);
+
+        const retained = UploadResultEntry.modified(type, 42, 7);
+        UploadResultEffect effect;
+        assert(retained.effectFor(conditional, effect));
+        assert(effect == UploadResultEffect.deleteRetained);
+        assert(retained.action == ChangeAction.modify);
+
+        const alreadyDeleted = UploadResultEntry.modified(type, 42, 8);
+        assert(alreadyDeleted.effectFor(conditional, effect));
+        assert(effect == UploadResultEffect.alreadyDeleted);
+
+        const unconditional = OwnedChangeEntry.deletion(type, 42, metadata, false);
+        assert(!retained.effectFor(unconditional, effect));
+        assert(effect == UploadResultEffect.none);
+
+        const deleted = UploadResultEntry.deleted(type, 42);
+        assert(deleted.effectFor(conditional, effect));
+        assert(effect == UploadResultEffect.deleted);
+    }
+
+    const placeholderDelete = UploadResultEntry.deleted(ElementType.node, -1);
+    assert(placeholderDelete.shapeValid);
+    assert(placeholderDelete.action == ChangeAction.deleteObject);
+
+    UploadResult repeated;
+    repeated.entries ~= UploadResultEntry.created(ElementType.node, -1, 101, 1);
+    repeated.entries ~= UploadResultEntry.created(ElementType.node, -1, 101, 2);
+    repeated.entries ~= placeholderDelete;
+    assert(repeated.entries.length == 3);
 }

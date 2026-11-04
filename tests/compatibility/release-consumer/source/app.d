@@ -87,6 +87,11 @@ import transport.source : MemorySink, MemorySource;
         oldId: -1,
         newId: 1001,
         newVersion: 1);
+    UploadResultEffect effect;
+    assert(uploadResult.entries[0].effectFor(
+        uploaded: uploadChanges.entries[0],
+        effect: effect));
+    assert(effect == UploadResultEffect.created);
     assert(editable.applyUploadResult(
         uploaded: uploadChanges,
         result: uploadResult,

@@ -114,3 +114,29 @@ city-scale consumers.
 Rejected because `revert` would then appear able to resurrect an object that
 the server has already deleted. Surviving object handles remain stable; a
 confirmed deleted identity does not survive.
+
+
+## v0.2.1 correction — conditional delete result context
+
+The initial v0.2.0 model assumed that diffResult field shape uniquely implied
+the originating action and that type+oldId uniquely keyed every result entry.
+Current OpenStreetMap server behavior disproves both assumptions.
+
+For `delete if-unused`, the server can catch an already-deleted/precondition
+failure and return `new_id` plus `new_version` while reporting success. A
+general diff upload can also reuse one negative placeholder across create,
+modify and delete, producing repeated type+oldId entries.
+
+The corrected contract therefore preserves raw result fields and interprets
+them against the exact uploaded request entry. `UploadResultEntry.effectFor`
+classifies create, modify, confirmed delete, retained conditional delete and
+already-deleted conditional delete. The old context-free `action` property is
+retained only for v0.2.x source compatibility.
+
+For `OsmStore.applyUploadResult`, a retained conditional delete restores the
+saved authoritative baseline and keeps the handle valid; an already-deleted
+conditional result finalizes the tombstone. All classification and stale-state
+checks still complete before visible acknowledgement mutation.
+
+This correction does not add HTTP/account policy and does not change the
+single-writer store model.
