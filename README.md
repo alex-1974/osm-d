@@ -22,7 +22,7 @@ A third rule follows from both:
 
 ## Scope
 
-Planned scope includes:
+The v0.1 release scope includes:
 
 - the OSM object model: nodes, ways, relations, tags and metadata;
 - streaming and owned representations;
@@ -61,6 +61,9 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `ARCHITECTURE.md` — module boundaries and data flow
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
+- `docs/RELEASE_BASELINE.md` — v0.1.0 compatibility/performance baseline
+- `docs/API_STABILITY.md` — supported v0.1.x API and compatibility policy
+- `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
 - `docs/adr/` — architecture decision records
@@ -73,12 +76,29 @@ workspace documents are linked only into `.workspace/`. Repo-root documents
 remain repository-specific. The helper `tools/link-workspace-docs.sh` manages
 only `.workspace/`.
 
-## Build
+## Install and build
+
+Add the first standalone release to a DUB package:
+
+```sdl
+dependency "osm-d" version="~>0.1.0"
+```
+
+Then build normally:
+
+```bash
+dub build
+```
+
+For an osm-d checkout, the ordinary development checks are:
 
 ```bash
 dub build
 dub test
 ```
+
+See `docs/GETTING_STARTED.md` for complete small programs covering PBF
+traversal, the editable store, loss-aware PBF rewriting, OSM XML and osmChange.
 
 The reference compiler for release-performance benchmarks is LDC. DMD remains
 the fast development/correctness compiler. Fast CI uses DMD 2.111.0 and
@@ -86,11 +106,11 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package is still pre-1.0. `import osm;` is the curated package root and
-now exposes the whole-buffer PBF reader boundary without re-exporting the
-low-level codec or wire implementation surface. The supported direct-import
-surface and the distinction between semantic API, evolving codec API, and
-implementation modules are documented in `docs/DEVELOPMENT.md`.
+The package is pre-1.0 and the first deliberate standalone release is v0.1.0.
+`import osm;` is the curated package root for PBF and store workflows; XML,
+osmChange and upload validation use the supported `osm.xml`, `osm.osmchange`
+and `osm.validate` facades. The v0.1.x source-compatibility promise and
+supported direct-import surface are defined in `docs/API_STABILITY.md`.
 
 ## Reading an in-memory PBF
 
@@ -445,49 +465,27 @@ from either editor. XML whitespace, quote style, attribute order, action-group
 layout, and writer generator strings may legitimately differ after a round
 trip.
 
-## Status
+## Release status
 
-The first substantial PBF implementation slice is in place. Implemented
-components include bounded PBF framing/decompression, HeaderBlock capability
-handling, PrimitiveBlock layout and StringTable indexing, DenseNodes including
-tags and DenseInfo, regular Node, Way, and Relation decoding, and reproducible
-microbenchmarks for the current entity hot paths.
+v0.1.0 is the first deliberately qualified standalone release line. Its
+supported high-level capabilities are:
 
-DenseNodes scalar hot-path research has progressed through experiments A2-A11b.
-The retained A8e implementation reuses the already validated sole DenseNodes
-payload for implicit-all-tagless groups, A9a removes a duplicate post-layout
-DenseNodes column-length guard under the validated-layout contract, A10a uses
-the completed DenseTags preflight to avoid repeating StringTable-ID semantic
-validation while partitioning tags during internal emission, and A10b carries
-that construction-controlled proof into `DenseTagRange` pair decoding. A11a
-applies the same validated-state principle to DenseInfo emission, avoiding
-repeated semantic arithmetic and ID-domain checks after complete preflight.
-Public defensive validation and StringTable materialization checks remain
-intact. A11b investigated reuse of preflight-discovered canonical packed
-DenseInfo column locations. Its fixed per-group saving was measurable under
-amplification but not robust on the measured real-PBF workload, so the
-additional fast path was not retained.
-Detailed evidence and rejected alternatives are recorded in
-`docs/BENCHMARKS.md`.
+- validated borrowed and parallel-summary PBF reading;
+- durable/loss-aware PBF document read and write;
+- streaming OSM XML and osmChange read/write;
+- deterministic upload-readiness validation;
+- compact editable `OsmStore` with primary and parent indexes;
+- direct transactional PBF-to-store construction.
 
-The format-independent borrowed `ElementView` identity contract is now in
-place, and the codec-owned regular Node, DenseNode, Way, and Relation PBF views
-conform to it without changing their specialized representations. The current
-PBF vertical slice performs fail-closed structural validation and complete
-per-group element preflight before observable sink emission. Dataset/reference
-and operation-specific validation remain separate higher layers. The
-consumer-facing whole-buffer PBF reader now unifies regular and dense nodes
-behind one concrete semantic `NodeView`. Bounded block-parallel validation and
-summary decoding are implemented through `PbfParallelReader`; generic ordered
-parallel delivery of worker-borrowed element views is intentionally not part of
-Phase 3 (ADR 0017). Loss-aware PBF writing, ordinary streaming OSM XML,
-streaming osmChange read/write support, and deterministic upload validation are
-now implemented. Editor interoperability is backed by semantic compatibility
-fixtures; literal JOSM-export provenance remains a separate evidence claim.
-M5 XML/osmChange interoperability is complete. Literal JOSM-export provenance
-is tracked separately in #85 as evidence hardening, not as a semantic/API
-blocker. The compact editable store remains future work.
+The release does not freeze low-level wire/codec implementation modules, a
+persistent store format, concurrent store mutation, rendering, spatial
+indexing, or transport policy. See `docs/API_STABILITY.md` for the exact
+compatibility boundary and `docs/RELEASE_BASELINE.md` for the evidence behind
+release claims.
+
+Literal JOSM-export provenance remains tracked separately in #85 as evidence
+hardening; it is not a semantic/API blocker for v0.1.0.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
-workspace reorganization on 2026-09-18. The repository and DUB package now use
-the `osm-d` name.
+workspace reorganization on 2026-09-18. The repository and DUB package use the
+`osm-d` name.
