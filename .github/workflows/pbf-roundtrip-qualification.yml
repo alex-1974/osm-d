@@ -2,6 +2,16 @@ name: PBF Round-trip Qualification
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "release/**"
+    paths:
+      - "source/osm/io/pbf/**"
+      - "source/osm/model/**"
+      - "source/osm/package.d"
+      - "source/osm/pbf.d"
+      - "tests/roundtrip/**"
+      - ".github/workflows/pbf-roundtrip-qualification.yml"
 
 permissions:
   contents: read
