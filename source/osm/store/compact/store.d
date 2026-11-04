@@ -4987,3 +4987,336 @@ unittest
     assert(!store.remapId(nodeHandle, 104, 2, status));
     assert(status.error == StoreError.invalidId);
 }
+
+
+unittest // M9: dependency-safe change extraction and cancelled local creates
+{
+    import osm.validation.capability : CapabilityProfile;
+    import osm.validation.change :
+        UploadValidationIssue,
+        validateUploadChanges;
+
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = -1;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = -2;
+    way.nodes ~= OwnedNodeRef(-1);
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    OwnedRelation first;
+    first.id = -3;
+    OsmHandle firstHandle;
+    assert(store.add(first, firstHandle, status));
+
+    OwnedRelation second;
+    second.id = -4;
+    OwnedRelationMember wayMember;
+    wayMember.type = ElementType.way;
+    wayMember.id = -2;
+    second.members ~= wayMember;
+    OsmHandle secondHandle;
+    assert(store.add(second, secondHandle, status));
+
+    // Force a forward relation dependency relative to slot order. Collection
+    // must topologically emit -4 before -3.
+    OwnedRelation firstEdited = first;
+    OwnedRelationMember relationMember;
+    relationMember.type = ElementType.relation;
+    relationMember.id = -4;
+    firstEdited.members ~= relationMember;
+    assert(store.replace(firstHandle, firstEdited, status));
+
+    OwnedNode cancelled;
+    cancelled.id = -5;
+    cancelled.location = LocationView(47_000_000_000L, 15_000_000_000L);
+    OsmHandle cancelledHandle;
+    assert(store.add(cancelled, cancelledHandle, status));
+    assert(store.remove(cancelledHandle, status));
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, status));
+    assert(changes.entries.length == 4);
+    assert(changes.entries[0].type == ElementType.node);
+    assert(changes.entries[0].id == -1);
+    assert(changes.entries[1].type == ElementType.way);
+    assert(changes.entries[1].id == -2);
+    assert(changes.entries[2].type == ElementType.relation);
+    assert(changes.entries[2].id == -4);
+    assert(changes.entries[3].type == ElementType.relation);
+    assert(changes.entries[3].id == -3);
+
+    foreach (ref const entry; changes.entries)
+        assert(entry.action == ChangeAction.create);
+
+    assert(changes.setChangeset(77));
+    CapabilityProfile capabilities;
+    UploadValidationIssue issue;
+    assert(validateUploadChanges(changes, capabilities, issue));
+    assert(issue.ok);
+}
+
+unittest // M9: circular local relation dependencies fail before output
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedRelation a;
+    a.id = -1;
+    OsmHandle aHandle;
+    assert(store.add(a, aHandle, status));
+
+    OwnedRelation b;
+    b.id = -2;
+    OwnedRelationMember aMember;
+    aMember.type = ElementType.relation;
+    aMember.id = -1;
+    b.members ~= aMember;
+    OsmHandle bHandle;
+    assert(store.add(b, bHandle, status));
+
+    OwnedRelation editedA = a;
+    OwnedRelationMember bMember;
+    bMember.type = ElementType.relation;
+    bMember.id = -2;
+    editedA.members ~= bMember;
+    assert(store.replace(aHandle, editedA, status));
+
+    OwnedChangeSequence changes;
+    assert(!store.collectChanges(changes, status));
+    assert(changes.empty);
+    assert(status.error == StoreError.cyclicLocalDependency);
+    assert(status.type == ElementType.relation);
+}
+
+unittest // M9: store -> osmChange -> authoritative result -> clean store
+{
+    import osm.io.osmchange.document : OsmChangeDocument;
+    import osm.io.osmchange.reader :
+        OsmChangeReadStatus,
+        readOsmChangeDocument;
+    import osm.io.osmchange.writer :
+        OsmChangeWriteStatus,
+        OsmChangeWriter;
+    import osm.model.compare : sameChangeSemantics;
+    import osm.model.owned : ownBytes;
+    import osm.validation.capability : CapabilityProfile;
+    import osm.validation.change :
+        UploadValidationIssue,
+        validateUploadChanges;
+    import transport.source : MemorySink, MemorySource;
+
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode existing;
+    existing.id = 10;
+    existing.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    existing.metadata.hasVersion = true;
+    existing.metadata.versionNumber = 3;
+    existing.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"before"));
+    OsmHandle existingHandle;
+    assert(store.add(existing, existingHandle, status));
+
+    OwnedNode modified = existing.deepCopy();
+    modified.location = LocationView(48_000_000_100L, 16_000_000_100L);
+    modified.tags[0].value = ownBytes(cast(const(ubyte)[])"after");
+    assert(store.replace(existingHandle, modified, status));
+
+    OwnedNode localNode;
+    localNode.id = -1;
+    localNode.location =
+        LocationView(48_100_000_000L, 16_100_000_000L);
+    OsmHandle localNodeHandle;
+    assert(store.add(localNode, localNodeHandle, status));
+
+    OwnedWay localWay;
+    localWay.id = -2;
+    localWay.nodes ~= OwnedNodeRef(-1);
+    OsmHandle localWayHandle;
+    assert(store.add(localWay, localWayHandle, status));
+
+    OwnedRelation localRelation;
+    localRelation.id = -3;
+    OwnedRelationMember localWayMember;
+    localWayMember.type = ElementType.way;
+    localWayMember.id = -2;
+    localRelation.members ~= localWayMember;
+    OsmHandle localRelationHandle;
+    assert(store.add(localRelation, localRelationHandle, status));
+
+    OwnedRelation deletedRelation;
+    deletedRelation.id = 20;
+    deletedRelation.metadata.hasVersion = true;
+    deletedRelation.metadata.versionNumber = 5;
+    OsmHandle deletedHandle;
+    assert(store.add(deletedRelation, deletedHandle, status));
+    assert(store.remove(deletedHandle, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(uploaded.entries.length == 5);
+    assert(uploaded.setChangeset(99));
+
+    CapabilityProfile capabilities;
+    UploadValidationIssue validation;
+    assert(validateUploadChanges(uploaded, capabilities, validation));
+
+    auto sink = new MemorySink();
+    OsmChangeWriter writer;
+    OsmChangeWriteStatus writeStatus;
+    assert(writer.writeChanges(uploaded, sink, writeStatus));
+
+    auto source = new MemorySource(sink.data);
+    OsmChangeDocument reread;
+    OsmChangeReadStatus readStatus;
+    assert(readOsmChangeDocument(source, reread, readStatus));
+    assert(sameChangeSemantics(uploaded, reread.changes));
+
+    UploadResult server;
+    // Deliberately shuffled: reconciliation is identity-based, not positional.
+    server.entries ~= UploadResultEntry.deleted(
+        ElementType.relation, 20);
+    server.entries ~= UploadResultEntry.modified(
+        ElementType.node, 10, 4);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.relation, -3, 103, 1);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.way, -2, 102, 1);
+    server.entries ~= UploadResultEntry.created(
+        ElementType.node, -1, 101, 1);
+
+    assert(store.applyUploadResult(reread.changes, server, status));
+
+    OsmHandle found;
+    assert(store.find(ElementType.node, 101, found));
+    assert(found == localNodeHandle);
+    assert(store.find(ElementType.way, 102, found));
+    assert(found == localWayHandle);
+    assert(store.find(ElementType.relation, 103, found));
+    assert(found == localRelationHandle);
+
+    StoreNodeView nodeView;
+    assert(store.node(existingHandle, nodeView, status));
+    assert(nodeView.state == StoreElementState.clean);
+    assert(nodeView.metadata.hasVersion);
+    assert(nodeView.metadata.versionNumber == 4);
+    assert(nodeView.metadata.hasChangeset);
+    assert(nodeView.metadata.changesetId == 99);
+
+    StoreWayView wayView;
+    assert(store.way(localWayHandle, wayView, status));
+    assert(wayView.nodes.front.id == 101);
+
+    StoreRelationView relationView;
+    assert(store.relation(localRelationHandle, relationView, status));
+    assert(relationView.members.front.id == 102);
+
+    auto parentWays = store.parentWays(101);
+    assert(!parentWays.empty);
+    assert(parentWays.front.id == 102);
+
+    auto parentRelations =
+        store.parentRelations(ElementType.way, 102);
+    assert(!parentRelations.empty);
+    assert(parentRelations.front.id == 103);
+
+    StoreElementState deletedState;
+    assert(!store.state(deletedHandle, deletedState, status));
+    assert(status.error == StoreError.invalidHandle);
+    assert(!store.find(ElementType.relation, 20, found));
+
+    OwnedChangeSequence remaining;
+    assert(store.collectChanges(remaining, status));
+    assert(remaining.empty);
+}
+
+unittest // M9: stale/malformed acknowledgement is validation-atomic
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode a;
+    a.id = 1;
+    a.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    a.metadata.hasVersion = true;
+    a.metadata.versionNumber = 1;
+    OsmHandle aHandle;
+    assert(store.add(a, aHandle, status));
+
+    OwnedNode b = a;
+    b.id = 2;
+    OsmHandle bHandle;
+    assert(store.add(b, bHandle, status));
+
+    OwnedNode editedA = a;
+    editedA.location = LocationView(48_000_000_100L, 16_000_000_000L);
+    assert(store.replace(aHandle, editedA, status));
+
+    OwnedNode editedB = b;
+    editedB.location = LocationView(48_000_000_200L, 16_000_000_000L);
+    assert(store.replace(bHandle, editedB, status));
+
+    OwnedChangeSequence uploaded;
+    assert(store.collectChanges(uploaded, status));
+    assert(uploaded.setChangeset(123));
+
+    // A newer local edit arrives after the upload snapshot was materialized.
+    editedA.location = LocationView(48_000_000_300L, 16_000_000_000L);
+    assert(store.replace(aHandle, editedA, status));
+
+    UploadResult server;
+    server.entries ~= UploadResultEntry.modified(ElementType.node, 1, 2);
+    server.entries ~= UploadResultEntry.modified(ElementType.node, 2, 2);
+
+    assert(!store.applyUploadResult(uploaded, server, status));
+    assert(status.error == StoreError.staleUploadState);
+
+    StoreElementState state;
+    assert(store.state(aHandle, state, status));
+    assert(state == StoreElementState.modified);
+    assert(store.state(bHandle, state, status));
+    assert(state == StoreElementState.modified);
+
+    StoreNodeView bView;
+    assert(store.node(bHandle, bView, status));
+    assert(bView.metadata.versionNumber == 1);
+}
+
+unittest // M9: modify then delete exports only authoritative deletion metadata
+{
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = 7;
+    node.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    node.metadata.hasVersion = true;
+    node.metadata.versionNumber = 6;
+    OsmHandle handle;
+    assert(store.add(node, handle, status));
+
+    OwnedNode edited = node;
+    edited.metadata.versionNumber = 999; // local payload edit must not leak.
+    edited.location = LocationView(49_000_000_000L, 17_000_000_000L);
+    assert(store.replace(handle, edited, status));
+    assert(store.remove(handle, status));
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, status));
+    assert(changes.entries.length == 1);
+    ref const deletion = changes.entries[0];
+    assert(deletion.action == ChangeAction.deleteObject);
+    assert(deletion.objectState == ChangeObjectState.identityOnly);
+    assert(deletion.metadata.hasVersion);
+    assert(deletion.metadata.versionNumber == 6);
+}
