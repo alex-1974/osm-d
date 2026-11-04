@@ -7,6 +7,9 @@
  * upload results and capability discovery use their corresponding focused
  * facades.
  *
+ * Editing API response/policy facades remain opt-in: `osm.upload` and
+ * `osm.capabilities` are intentionally not re-exported from this root.
+ *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
  * Copyright: Copyright © 2026 Alexander Bernardi
