@@ -2755,6 +2755,100 @@ private:
         return true;
     }
 
+    ref ParentIndex relationParentIndex(ElementType type)
+        @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents;
+            case ElementType.way:
+                return _wayRelationParents;
+            case ElementType.relation:
+                return _relationRelationParents;
+        }
+    }
+
+    ParentEdge relationParentEdge(ElementType type, uint encoded)
+        @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.edge(encoded);
+            case ElementType.way:
+                return _wayRelationParents.edge(encoded);
+            case ElementType.relation:
+                return _relationRelationParents.edge(encoded);
+        }
+    }
+
+    uint relationParentHead(ElementType type, OsmId id)
+        @safe nothrow @nogc
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                return _nodeRelationParents.head(id);
+            case ElementType.way:
+                return _wayRelationParents.head(id);
+            case ElementType.relation:
+                return _relationRelationParents.head(id);
+        }
+    }
+
+    void deactivateWayParents(Span32 refs) @safe nothrow @nogc
+    {
+        foreach (i; 0 .. refs.length)
+        {
+            const childIndex = refs.offset + i;
+            _nodeWayParents.deactivate(_wayParentEdges[childIndex]);
+        }
+    }
+
+    void reactivateWayParents(Span32 refs, uint parentSlot)
+        @safe nothrow @nogc
+    {
+        foreach (i; 0 .. refs.length)
+        {
+            const childIndex = refs.offset + i;
+            const edge = _nodeWayParents.insert(
+                _wayRefIds[childIndex],
+                parentSlot,
+                childIndex);
+            _wayParentEdges[childIndex] = edge;
+        }
+    }
+
+    void deactivateRelationParents(Span32 members)
+        @safe nothrow @nogc
+    {
+        foreach (i; 0 .. members.length)
+        {
+            const childIndex = members.offset + i;
+            const type =
+                cast(ElementType)_relationMemberTypes[childIndex];
+            relationParentIndex(type).deactivate(
+                _relationParentEdges[childIndex]);
+        }
+    }
+
+    void reactivateRelationParents(Span32 members, uint parentSlot)
+        @safe nothrow @nogc
+    {
+        foreach (i; 0 .. members.length)
+        {
+            const childIndex = members.offset + i;
+            const type =
+                cast(ElementType)_relationMemberTypes[childIndex];
+            const edge = relationParentIndex(type).insert(
+                _relationMemberIds[childIndex],
+                parentSlot,
+                childIndex);
+            _relationParentEdges[childIndex] = edge;
+        }
+    }
+
     Span32 appendBorrowedTags(Range)(Range source)
         @safe nothrow @nogc
     {
@@ -2814,8 +2908,9 @@ private:
         return true;
     }
 
-    Span32 appendBorrowedWayNodes(Range)(Range source)
-        @safe nothrow @nogc
+    Span32 appendBorrowedWayNodes(Range)(
+        Range source,
+        uint parentSlot) @safe nothrow @nogc
     {
         Span32 refs;
         refs.offset = cast(uint)_wayRefIds.length;
@@ -2827,7 +2922,11 @@ private:
         while (!source.empty)
         {
             const value = source.front;
+            const childIndex = cast(uint)_wayRefIds.length;
             _wayRefIds ~= value.id;
+            const parentEdge =
+                _nodeWayParents.insert(value.id, parentSlot, childIndex);
+            _wayParentEdges ~= parentEdge;
             ++refs.length;
 
             if (value.hasLocation)
@@ -2850,8 +2949,9 @@ private:
         return refs;
     }
 
-    Span32 appendBorrowedRelationMembers(Range)(Range source)
-        @safe nothrow @nogc
+    Span32 appendBorrowedRelationMembers(Range)(
+        Range source,
+        uint parentSlot) @safe nothrow @nogc
     {
         Span32 result;
         result.offset = cast(uint)_relationMemberIds.length;
@@ -2859,9 +2959,15 @@ private:
         while (!source.empty)
         {
             const value = source.front;
+            const childIndex = cast(uint)_relationMemberIds.length;
             _relationMemberIds ~= value.id;
             _relationMemberTypes ~= cast(ubyte)value.type;
             _relationMemberRoles ~= _strings.intern(value.role);
+            const parentEdge = relationParentIndex(value.type).insert(
+                value.id,
+                parentSlot,
+                childIndex);
+            _relationParentEdges ~= parentEdge;
             ++result.length;
             source.popFront();
         }
@@ -2890,7 +2996,9 @@ private:
         return result;
     }
 
-    Span32 appendWayNodes(scope const(OwnedWayNode)[] values) @safe
+    Span32 appendWayNodes(
+        scope const(OwnedWayNode)[] values,
+        uint parentSlot) @safe
     {
         assert(_wayRefIds.length <= uint.max);
         assert(values.length <= uint.max);
@@ -2906,7 +3014,12 @@ private:
 
         foreach (i, ref const value; values)
         {
+            const childIndex = cast(uint)_wayRefIds.length;
             _wayRefIds ~= value.id;
+            const parentEdge =
+                _nodeWayParents.insert(value.id, parentSlot, childIndex);
+            _wayParentEdges ~= parentEdge;
+
             if (value.hasLocation)
             {
                 SparseWayLocation entry;
@@ -2925,7 +3038,8 @@ private:
     }
 
     Span32 appendRelationMembers(
-        scope const(OwnedRelationMember)[] values) @safe
+        scope const(OwnedRelationMember)[] values,
+        uint parentSlot) @safe
     {
         assert(_relationMemberIds.length <= uint.max);
         assert(values.length <= uint.max);
@@ -2937,9 +3051,15 @@ private:
 
         foreach (ref const value; values)
         {
+            const childIndex = cast(uint)_relationMemberIds.length;
             _relationMemberIds ~= value.id;
             _relationMemberTypes ~= cast(ubyte)value.type;
             _relationMemberRoles ~= _strings.intern(value.role);
+            const parentEdge = relationParentIndex(value.type).insert(
+                value.id,
+                parentSlot,
+                childIndex);
+            _relationParentEdges ~= parentEdge;
         }
 
         return result;
