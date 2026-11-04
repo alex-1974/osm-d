@@ -1,4 +1,4 @@
-name: Store Layout Qualification
+name: M6 Store Qualification
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   bremen-layout:
-    name: Bremen compact-store layout
+    name: Direct PBF store + Bremen qualification
     runs-on: ubuntu-24.04
 
     steps:
@@ -36,16 +36,20 @@ jobs:
           "$DC" --version
           dub --version
 
-      - name: Fetch pinned Bremen workload
+      - name: Fetch pinned M6 workloads
         shell: bash
         run: |
-          for attempt in 1 2 3 4 5; do
-            if bash benchmark/fetch-datasets.sh fetch bremen-260901; then
-              exit 0
-            fi
-            sleep $((attempt * 5))
+          for dataset in monaco-260901 liechtenstein-260901 bremen-260901; do
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if bash benchmark/fetch-datasets.sh fetch "$dataset"; then
+                ok=1
+                break
+              fi
+              sleep $((attempt * 5))
+            done
+            test "$ok" = 1
           done
-          exit 1
 
       - name: Build layout benchmark
         shell: bash
@@ -57,6 +61,18 @@ jobs:
             --build=release \
             --build-mode=allAtOnce \
             --force
+
+      - name: Direct semantic parity on pinned small datasets
+        shell: bash
+        run: |
+          for dataset in monaco-260901 liechtenstein-260901; do
+            benchmark/bin/osm-d-bench-store-layout \
+              --variant=direct-parity \
+              "benchmark/data/geofabrik-2026-09-01/$dataset.osm.pbf" \
+              | tee "benchmark/store/direct-parity-$dataset.txt"
+            grep -qx 'integrity=pass' \
+              "benchmark/store/direct-parity-$dataset.txt"
+          done
 
       - name: Run straightforward reference
         shell: bash
@@ -114,8 +130,32 @@ jobs:
 
           ref_rss="$(get_value final_incremental_rss_kib "$ref")"
           cmp_rss="$(get_value final_incremental_rss_kib "$cmp")"
+          cmp_peak="$(get_value peak_incremental_rss_kib "$cmp")"
           ref_owned="$(get_value owned_bytes "$ref")"
           cmp_owned="$(get_value owned_bytes "$cmp")"
+
+          materialized_decode="$(get_value source_decode_ns "$materialized")"
+          materialized_layout="$(get_value layout_build_ns "$materialized")"
+          direct_build="$(get_value layout_build_ns "$cmp")"
+
+          awk -v d="$direct_build" -v md="$materialized_decode" -v ml="$materialized_layout" 'BEGIN {
+            mt = md + ml;
+            printf "direct_build_ms=%.3f\n", d / 1000000.0;
+            printf "materialized_build_ms=%.3f\n", mt / 1000000.0;
+            if (d > 0)
+              printf "materialized_over_direct_ratio=%.6f\n", mt / d;
+          }' | tee benchmark/store/direct-build-decision.txt
+
+          awk -v p="$cmp_peak" -v f="$cmp_rss" 'BEGIN {
+            if (f <= 0) {
+              print "direct_peak_ratio=unavailable";
+              print "direct_peak_1_5_target=UNAVAILABLE";
+            } else {
+              printf "direct_peak_ratio=%.6f\n", p / f;
+              print "direct_peak_1_5_target=" (p <= 1.5 * f ? "PASS" : "FAIL");
+              if (p > 1.5 * f) exit 1;
+            }
+          }' | tee -a benchmark/store/direct-build-decision.txt
 
           awk -v r="$ref_rss" -v c="$cmp_rss" 'BEGIN {
             if (r <= 0) {
@@ -155,4 +195,7 @@ jobs:
             benchmark/store/compact-owned-bremen.txt
             benchmark/store/compact-bremen.txt
             benchmark/store/bremen-decision.txt
+            benchmark/store/direct-build-decision.txt
+            benchmark/store/direct-parity-monaco-260901.txt
+            benchmark/store/direct-parity-liechtenstein-260901.txt
           if-no-files-found: error
