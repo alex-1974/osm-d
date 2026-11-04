@@ -96,10 +96,10 @@ Each OSM element type has its own compact open-addressed ID table:
 The tables keep the ADR 0021 expected-O(1) lookup contract and avoid the
 per-entry overhead of D associative arrays in the production layout.
 
-Production reverse/parent indexes remain #63. #62 uses the same packed
-benchmark-only parent index on both reference and candidate sides so reverse
-navigation is included fairly in the layout decision without pre-empting the
-#63 design.
+At the #62 decision point production reverse/parent indexes were intentionally
+left to #63. ADR 0023 now records the accepted incremental parent-index
+representation; the original #62 measurements below remain the layout-decision
+baseline.
 
 ### Stable handles
 
@@ -152,10 +152,9 @@ This makes the edit path slower than direct replacement in the straightforward
 object-graph reference but keeps the baseline proportional to the edited
 subset and preserves stable slots.
 
-The package-internal `remapKnown` kernel proves the layout can rewrite a local
-ID and known inbound references while retaining the handle. #63 will supply
-those inbound locations from production parent indexes and expose the complete
-coherent operation.
+ADR 0023 completes this boundary: production parent indexes discover inbound
+references, and public `remapId` rewrites them coherently while retaining the
+handle.
 
 ### No mir.ndslice dependency
 
@@ -248,6 +247,6 @@ load cost by eliminating the materialized intermediate entirely.
 - String interning and compact pools materially reduce city-scale memory.
 - Full-store traversal and edit/revert are slower than the straightforward
   object graph, but remain small in absolute editor-scale time.
-- Parent-index mutation/coherence is still #63.
-- Public direct PBF-to-store construction is still #64.
+- Parent-index mutation/coherence is implemented by ADR 0023 / #63.
+- Public direct PBF-to-store construction remains #64.
 - Persistence/mmap remains deliberately unfrozen.
