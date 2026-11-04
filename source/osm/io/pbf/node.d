@@ -14,6 +14,8 @@
 module osm.io.pbf.node;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -41,22 +43,54 @@ import osm.wire.varint : readSVarint64, readVarint32;
 /** One validated regular Node with exact borrowed provenance. */
 struct NodeView
 {
+public:
     /// Signed OSM object ID.
     long id;
+
+package(osm):
     /// Exact latitude in nanodegrees after granularity/offset conversion.
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
+
+public:
+    /** Semantic location with exact backing and lazy degree conversion. */
+    pragma(inline, true)
+    @property LocationView location() const scope
+        @safe pure nothrow @nogc
+    {
+        return LocationView(latNano, lonNano);
+    }
+
     /// Borrowed ordered normal-element tags.
     TagRange tags;
+
+package(osm):
     /// Optional merged Info metadata.
     InfoView info;
 
+public:
+    /** Format-independent OSM metadata without PBF encoding vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const return scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
+
+package(osm):
     /// Complete original serialized Node payload, excluding group key/length.
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
 
+public:
     /// Semantic OSM element kind.
     @property ElementType type() const scope
         @safe pure nothrow @nogc
@@ -174,6 +208,120 @@ bool decodeNodes(Sink)(
         sink.put(node);
         ++summary.nodeCount;
         summary.tagCount += parsed.tags.tagCount;
+    }
+
+    if (summary.nodeCount != preflightCount ||
+        summary.tagCount != preflightTagCount)
+    {
+        status = PbfStatus.failure(PbfError.nodeCountMismatch, 0, 1);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Decode regular Nodes until the supplied sink requests foreach termination.
+ *
+ * This package-internal variant exists only for the high-level foreach adapter.
+ * It preserves the same complete regular-node preflight as `decodeNodes`, then
+ * returns the sink's exact non-zero control value immediately after the node
+ * that produced it. A zero control value means the complete regular-node
+ * sequence was emitted.
+ *
+ * The ordinary `decodeNodes` path remains unchanged and retains its
+ * `nothrow @nogc` sink contract.
+ */
+package(osm)
+bool decodeNodesUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref Sink sink,
+    out int control,
+    out NodeDecodeSummary summary,
+    out PbfStatus status)
+{
+    control = 0;
+    summary = NodeDecodeSummary.init;
+
+    if (group.nodeOccurrences == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    size_t preflightCount;
+    size_t preflightTagCount;
+    auto preflight = NodeMessageCursor(group.raw);
+
+    while (true)
+    {
+        NodeMessageRef nodeRef;
+        bool hasNode;
+        if (!preflight.next(nodeRef, hasNode, status))
+            return false;
+        if (!hasNode)
+            break;
+
+        ParsedNode parsed;
+        if (!parseNode(block, nodeRef, table, parsed, status))
+            return false;
+
+        ++preflightCount;
+        preflightTagCount += parsed.tags.tagCount;
+    }
+
+    if (preflightCount != group.nodeOccurrences)
+    {
+        status = PbfStatus.failure(PbfError.nodeCountMismatch, 0, 1);
+        return false;
+    }
+
+    auto nodes = NodeMessageCursor(group.raw);
+
+    while (true)
+    {
+        NodeMessageRef nodeRef;
+        bool hasNode;
+        if (!nodes.next(nodeRef, hasNode, status))
+            return false;
+        if (!hasNode)
+            break;
+
+        ParsedNode parsed;
+        if (!parsePrevalidatedNode(block, nodeRef, table, parsed, status))
+            return false;
+
+        TagRange tags;
+        if (!buildTagRange(
+                nodeRef.bytes,
+                nodeRef.rawOffset,
+                table,
+                parsed.tags,
+                tags,
+                status))
+            return false;
+
+        NodeView node = NodeView(
+            parsed.id,
+            parsed.latNano,
+            parsed.lonNano,
+            tags,
+            parsed.info,
+            nodeRef.bytes,
+            nodeRef.rawOffset);
+
+        control = sink.put(node);
+        ++summary.nodeCount;
+        summary.tagCount += parsed.tags.tagCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
     }
 
     if (summary.nodeCount != preflightCount ||
@@ -686,9 +834,9 @@ unittest
 
     auto tags = sink.node.tags;
     assert(tags.length == 2);
-    assert(tags.front.keySid == 1 && tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     tags.popFront();
-    assert(tags.front.keySid == 3 && tags.front.valueSid == 4);
+    assert(tags.frontKeyStringId == 3 && tags.frontValueStringId == 4);
 
     assert(sink.node.info.hasVersion && sink.node.info.version_ == 7);
     assert(sink.node.info.hasTimestamp);

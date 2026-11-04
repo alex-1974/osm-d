@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="osm-d-fixture">
+  <create>
+    <node id="-1" lat="48.2081743" lon="16.3738189" changeset="42">
+      <tag k="amenity" v="bench"/>
+      <tag k="name" v="A &amp; B"/>
+    </node>
+  </create>
+  <modify>
+    <way id="10" version="3" changeset="42">
+      <nd ref="-1"/>
+      <nd ref="2"/>
+      <tag k="highway" v="service"/>
+    </way>
+  </modify>
+  <delete if-unused="true">
+    <relation id="20" version="2" changeset="42"/>
+    <node id="30" version="4" changeset="42" lat="48.21" lon="16.38">
+      <tag k="note" v="complete delete payload"/>
+    </node>
+  </delete>
+  <create>
+    <node id="-2" lat="48.209" lon="16.374" changeset="42"/>
+  </create>
+</osmChange>

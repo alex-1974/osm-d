@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" upload="never" generator="JOSM">
+  <bounds minlat="48.2000000" minlon="16.3000000" maxlat="48.3000000" maxlon="16.4000000" origin="JOSM"/>
+  <node id="100" version="4" timestamp="2026-11-03T20:00:00Z" changeset="40" uid="7" user="mapper" visible="true" lat="48.2081700" lon="16.3738100">
+    <tag k="name" v="Existing node"/>
+  </node>
+  <node id="-3" visible="true" lat="48.2081800" lon="16.3738200">
+    <tag k="amenity" v="bench"/>
+  </node>
+  <node id="-2" visible="true" lat="48.2081900" lon="16.3738300"/>
+  <way id="-1" visible="true">
+    <nd ref="-3"/>
+    <nd ref="-2"/>
+    <nd ref="100"/>
+    <tag k="highway" v="service"/>
+  </way>
+  <relation id="-4" visible="true">
+    <member type="way" ref="-1" role="outer"/>
+    <member type="node" ref="-3" role="label"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="name" v="Local relation"/>
+  </relation>
+</osm>

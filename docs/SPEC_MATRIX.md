@@ -264,8 +264,11 @@ canonical serialization.
 | block order | Conventional/documented entity block order is nodes, ways, relations; blocks may be absent and IDs need not be sorted. | Reader does not require ID sorting. Writer may choose deterministic type order but must document semantic vs format roundtrip mode. | unsorted IDs; missing type blocks. |
 | negative IDs | Negative IDs occur in editor files. | Preserve signed IDs. | JOSM-style local objects. |
 | metadata presence | Metadata/user/version details vary between API, extracts, history and editor files. | Explicit optional metadata fields; no sentinels. | omitmeta/editor variants. |
-| unknown attributes/elements | JOSM/Overpass and other producers have extensions/flavours. | Raw XML layer preserves supported unknown metadata/extension structures for loss-aware roundtrip, or marks rewrite unsafe. **Never convert unknown attributes into OSM tags implicitly.** | custom root/element attribute and child extension. |
+| unknown attributes/elements | JOSM/Overpass and other producers have extensions/flavours. | The M5 semantic XML codec fails explicitly on unsupported unknown attributes/elements rather than dropping them. **Never convert unknown attributes into OSM tags implicitly.** Arbitrary lexical/extension preservation requires a separately designed raw XML representation. | custom root/element attribute and child extension fail closed; represented extensions round-trip when later added. |
 | lexical XML identity | Whitespace, quote style, attribute order, entity spelling and comments are not OSM semantics. | First production contract is semantic/loss-aware roundtrip, **not byte-identical XML**. Exact lexical preservation is out of scope unless separately designed. | semantically equivalent XML. |
+| JOSM root `upload` metadata | JOSM ordinary `.osm` files commonly write `upload='never'` on the root document. | Preserve the exact root upload-policy value in `OsmXmlDocumentInfo` and emit it again on semantic XML write. | root `upload='never'` read/write roundtrip. |
+| JOSM editor action attributes | JOSM working files may carry element `action='modify'` attributes. They describe editor state, not an ordinary complete-dataset field in `OwnedNode/Way/Relation`. | Ordinary `OsmXmlReader` fails with `unsupportedContent`; no action is silently discarded. Change/editor import policy is qualified in #60. | JOSM-style `action='modify'` rejection. |
+| coordinate precision beyond nanodegrees | Real JOSM test fixtures contain decimal coordinates with more than nine non-zero fractional digits. | Current semantic location is exact signed nanodegrees. Values requiring finer precision fail with `precisionLoss`; no implicit rounding. | 9-digit exact value; trailing-zero extension; non-zero 10th digit rejection. |
 
 Sources: N3, R2.
 
@@ -275,16 +278,33 @@ Sources: N3, R2.
 
 | Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
-| actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** change model contains whole-object states. | tag-only logical edit still serializes full object. |
-| modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
-| placeholder IDs | Negative local IDs are the safe interoperable placeholder convention; Rails substitution effectively requires negative refs for replacement. | iD/JOSM use negative local IDs. | **MUST:** generated create placeholders are negative and unique within upload scope. | create node -> way -> relation chain. |
-| dependency order | Current API rejects forward references to placeholders. | iD sorts new relations by dependencies and orders create node->way->relation. | **MUST:** build dependency graph/topological order; detect cycles/unresolvable placeholder graphs before network call. | forward ref, nested relations, cycle. |
+| actions | `create`, `modify`, `delete` act on whole elements, not individual tags. | iD emits the three groups. | **MUST:** `OwnedChangeEntry` represents the operation independently of XML and carries whole-object state. | tag-only logical edit still serializes full object. |
+| modify representation | API update requires the complete intended object; omitted tags/refs/members disappear. | iD entity serializers emit full state. | **MUST:** create/modify use `ChangeObjectState.complete`; never serialize a partial object as modify. Baseline/current graph difference drives changes. | missing unchanged tag/ref would be detected pre-upload. |
+| placeholder IDs | Negative local IDs are the safe interoperable placeholder convention; Rails substitution effectively requires negative refs for replacement. | iD/JOSM use negative local IDs. | **MUST:** create placeholders are negative and unique within their typed element namespace. `validateUploadChanges` enforces this for an upload sequence. | create node -> way -> relation chain; same numeric placeholder in different type namespaces; duplicate typed placeholder. |
+| dependency order | Current API rejects forward references to placeholders. | iD sorts new relations by dependencies and orders create node->way->relation. | Upload validation requires every negative/local reference to resolve to an earlier create of the correct type. It does not silently reorder input; a future builder may topologically order a graph before validation. | forward ref, nested create dependencies, unresolved local member. |
 | modify order | iD emits node->way->relation. | Useful deterministic policy. | **SHOULD:** deterministic dependency-safe order where applicable; correctness does not rely on arbitrary source order. | stable serializer test. |
-| delete order | iD emits relation->way->node and `if-unused=true`. | Mature editor policy. | API layer chooses an explicit deletion policy. Default should be conservative and documented; do not accidentally inject `if-unused`. | used object deletion with/without policy. |
+| delete order | iD emits relation->way->node and `if-unused=true`. | Mature editor policy. | Source order is preserved by the change model. `deleteIfUnused` is explicit per delete entry; codecs never inject it. A future API layer may apply an explicit dependency/deletion policy before upload. | used object deletion with/without policy; source-order preservation. |
+| osmChange action-section order | Action groups are serialization containers around whole elements. | Editors commonly group operations, but grouping is not the semantic model. | Reader appends entries in source order. Writer only coalesces consecutive entries with equal action/delete policy and may repeat action sections to preserve order. | create -> modify -> delete -> create round-trip. |
+| minimal delete ambiguity | A delete may contain only identity/version metadata. An empty Way/Relation body is lexically indistinguishable from a complete but empty object. | Upload clients typically send minimal deletes. | **MUST:** represent empty delete Way/Relation conservatively as `identityOnly`; never invent complete content. A delete Node is complete only when both lat and lon are present. | minimal relation delete; complete node delete; one-coordinate delete rejection. |
+| delete metadata/version | Version/changeset and other metadata are attributes on the deleted object when supplied; upload validity is stricter than mere format representability. | API uploads require operation-specific metadata. | Codec preserves present metadata exactly and never fabricates absent version/changeset. Upload-readiness rules are enforced by #60, not parser defaults. | missing version preserved as missing; version round-trip; upload validation later rejects when required. |
 | diff upload transaction | One diff upload request is transactional: all applied or none. A whole changeset spanning requests is not globally atomic. | Editors use diff upload. | **MUST:** transaction boundary represented as request, not changeset object. | simulated failure mid-diff => no local commit. |
 | diffResult | Server maps uploaded IDs and returns new IDs/versions for successful create/modify results as applicable. | Editors update local graph from server response. | **MUST:** apply returned mapping/version; never assume version increment or server ID. | old->new placeholder mapping. |
 
 Sources: N1, N4, R4.
+
+### Implemented upload-readiness boundary
+
+`validateUploadChanges` is deliberately stronger than XML/osmChange decoding.
+It rejects incomplete create/modify states, zero IDs, invalid create/existing ID
+signs, duplicate typed create placeholders, missing/non-positive changesets,
+missing/non-positive modify/delete versions, out-of-world or non-1e-7 Node
+coordinates, invalid/duplicate/overlong tags, unrepresentable Way-node
+locations, zero references and unresolved negative/local references. Positive
+references may remain unresolved locally.
+
+The validator uses a temporary hash index proportional to created placeholders.
+The changeset-element capability applies to the supplied sequence/request, not
+to earlier requests in the same server-side changeset.
 
 ---
 
@@ -309,8 +329,8 @@ actual values may change.
 
 | Topic | Rule | Reference behavior | `osm-d` decision | Required tests |
 | --- | --- | --- | --- | --- |
-| capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **MUST:** API validators take a `CapabilityProfile`; no current server limit is hardcoded as normative model truth. | mocked capability changes. |
-| offline validation | No server may be available. | Editors use defaults/fallbacks. | Separate *format validity* from *target-server uploadability*. Offline policy may carry explicit configured defaults. | same object valid format but invalid against smaller server cap. |
+| capability values | Query server capabilities; values are server/policy state, not format constants. | iD has defaults then updates at least way-node/changeset limits from API status. | **IMPLEMENTED:** `CapabilityProfile` supplies optional changeset-element, Way-node and Relation-member limits to `validateUploadChanges`; zero means unspecified. No current server limit is hardcoded as normative truth. | mocked smaller Way/member/change limits. |
+| offline validation | No server may be available. | Editors use defaults/fallbacks. | Format decoding remains separate from target uploadability. `CapabilityProfile.unbounded()` performs semantic upload checks without target-specific size caps; callers may provide explicit offline policy limits. | same sequence valid unbounded but invalid against smaller profile. |
 
 Sources: N1, R5.
 
@@ -334,6 +354,12 @@ Do **not** treat as lossless behavior:
 
 Therefore JOSM is an editor-behavior reference, not a raw roundtrip oracle.
 
+M5 qualification includes independently authored JOSM-compatible ordinary XML
+and osmChange fixtures. Their `generator="JOSM"` value is input metadata used
+to exercise the codec; it is **not** a provenance claim that JOSM itself wrote
+those bytes. Literal JOSM-export provenance must be recorded separately before
+making such a release claim.
+
 ### iD
 
 Borrow:
@@ -346,6 +372,11 @@ Borrow:
 
 Do not copy browser-specific numeric/string/JSON representation choices into the
 codec without independent justification.
+
+M5 also includes an independently authored iD-compatible osmChange fixture with
+dependency-safe create Node->Way->Relation order, modify
+Node->Way->Relation order, and delete Relation->Way->Node order. Qualification
+is semantic rather than byte-identical.
 
 ### libosmium / protozero
 
@@ -427,15 +458,14 @@ These remain deliberately unresolved rather than guessed:
    `bytes`, OSM text validity and lossless preservation policy.
 2. **Unknown protobuf field rewrite:** preserve individual unknown wire fields
    versus preserve untouched encoded submessage/block as opaque bytes.
-3. **XML extension preservation:** exact scope of unknown attributes/elements
-   promised by `formatRoundtrippable`.
-4. **Canonical validated tag container:** ordered `Tag[]` + index, small-vector
+3. **Canonical validated tag container:** ordered `Tag[]` + index, small-vector
    representation, or another structure that preserves stable ordering without
    sacrificing lookup speed.
-5. **Canonical coordinate conversion:** precise rule for accepting exact PBF
+4. **Canonical coordinate conversion:** precise rule for accepting exact PBF
    coordinates into the normal OSM 1e-7 model without rounding.
-6. **Delete policy:** default use of API `if-unused` belongs in the future API
-   layer and must be explicit.
+5. **API delete-policy selection:** the change representation and codecs keep
+   `if-unused` explicit; a future API layer still needs an explicit default
+   policy for constructing upload requests.
 
 Each resolved item should update this matrix and, when architectural, gain an
 ADR.

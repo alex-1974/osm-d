@@ -16,12 +16,14 @@ run_negative()
     local diagnostic_pattern="$3"
 
     local base
+    local compiler_id
     local log
     local object
 
     base="$(basename "$source" .d)"
-    log="$TMPDIR/${base}-${compiler}.log"
-    object="$TMPDIR/${base}-${compiler}.o"
+    compiler_id="$(basename "$compiler")"
+    log="$TMPDIR/${base}-${compiler_id}.log"
+    object="$TMPDIR/${base}-${compiler_id}.o"
 
     if "$compiler" \
         -preview=dip1000 \
@@ -71,6 +73,36 @@ for compiler in "${compilers[@]}"; do
         "$compiler" \
         "$CASES/string_table_escape.d" \
         'returning scope variable|return table'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/node_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/node_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/way_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/relation_iterable_input_escape.d" \
+        'local variable|scope|escape|return'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/way_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
+
+    run_negative \
+        "$compiler" \
+        "$CASES/relation_foreach_view_escape.d" \
+        'scope|escape|local variable|lifetime|address'
 done
 
 if (( failures != 0 )); then

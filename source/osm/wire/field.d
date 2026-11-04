@@ -55,7 +55,7 @@ struct FieldHeader
  * Returns:
  *   `true` when a valid protobuf field key was decoded; `false` otherwise.
  */
-bool readFieldHeader(ref WireCursor cursor, out FieldHeader header, out WireStatus status)
+bool readFieldHeader(scope ref WireCursor cursor, out FieldHeader header, out WireStatus status)
     @safe nothrow @nogc
 {
     const start = cursor.offset;
@@ -150,6 +150,66 @@ bool readLengthDelimited(
     return true;
 }
 
+
+/**
+ * Read a length-delimited field payload as a borrowed child cursor.
+ *
+ * This is the DIP1000-friendly counterpart of `readLengthDelimited` for
+ * callers that already hold a `scope` cursor. The returned child cursor
+ * borrows the same backing bytes and cannot outlive the source cursor.
+ *
+ * Params:
+ *   cursor = Cursor positioned at the field's encoded length.
+ *   fieldNumber = Field number used for error reporting.
+ *   ok = Receives true when a complete payload was available.
+ *   status = Receives success or a precise length/payload decoding failure.
+ *
+ * Returns:
+ *   A cursor spanning exactly the payload bytes on success, or an empty cursor
+ *   when `ok` is false.
+ */
+WireCursor readLengthDelimitedCursor(
+    return scope ref WireCursor cursor,
+    uint fieldNumber,
+    out bool ok,
+    out WireStatus status)
+    @safe nothrow @nogc
+{
+    const start = cursor.offset;
+
+    ulong encodedLength;
+    if (!readVarint64(cursor, encodedLength, status))
+    {
+        ok = false;
+        if (status.fieldNumber == 0)
+            status.fieldNumber = fieldNumber;
+        return WireCursor.init;
+    }
+
+    if (encodedLength > cast(ulong)size_t.max)
+    {
+        ok = false;
+        status = WireStatus.failure(
+            WireError.lengthOverflow,
+            start,
+            fieldNumber);
+        return WireCursor.init;
+    }
+
+    auto payload = cursor.takeCursor(cast(size_t)encodedLength, ok);
+    if (!ok)
+    {
+        status = WireStatus.failure(
+            WireError.truncatedInput,
+            start,
+            fieldNumber);
+        return WireCursor.init;
+    }
+
+    status = WireStatus.init;
+    return payload;
+}
+
 /**
  * Skip one primitive protobuf field value.
  *
@@ -167,7 +227,7 @@ bool readLengthDelimited(
  *   `true` if the complete field value was safely skipped; `false` otherwise.
  */
 bool skipFieldValue(
-    ref WireCursor cursor,
+    scope ref WireCursor cursor,
     FieldHeader header,
     out WireStatus status)
     @safe nothrow @nogc
@@ -197,8 +257,10 @@ bool skipFieldValue(
             return true;
 
         case WireType.lengthDelimited:
-            const(ubyte)[] ignored;
-            return readLengthDelimited(cursor, header.number, ignored, status);
+            bool ok;
+            auto ignored =
+                readLengthDelimitedCursor(cursor, header.number, ok, status);
+            return ok;
 
         case WireType.fixed32:
             if (!cursor.skip(4))
@@ -239,6 +301,25 @@ unittest
     const(ubyte)[] expected = [0x4f, 0x53, 0x4d];
     assert(payload == expected);
     assert(cursor.empty);
+}
+
+unittest
+{
+    const(ubyte)[] bytes = [0x03, 0x4f, 0x53, 0x4d, 0x7f];
+    auto cursor = WireCursor(bytes);
+
+    bool ok;
+    WireStatus status;
+    auto payload = readLengthDelimitedCursor(cursor, 1, ok, status);
+    assert(ok && status.ok);
+    assert(payload.remaining == 3);
+    assert(cursor.remaining == 1);
+
+    ubyte value;
+    assert(payload.readByte(value) && value == 0x4f);
+    assert(payload.readByte(value) && value == 0x53);
+    assert(payload.readByte(value) && value == 0x4d);
+    assert(payload.empty);
 }
 
 unittest

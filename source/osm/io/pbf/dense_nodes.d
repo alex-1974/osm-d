@@ -15,6 +15,8 @@
 module osm.io.pbf.dense_nodes;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
 import osm.io.pbf.dense_info :
     DenseInfoNodeCursor,
     DenseInfoValidationSummary,
@@ -43,16 +45,46 @@ import osm.wire.varint : readSVarint64FailureOnly;
 /** One validated dense node with exact coordinates in nanodegrees. */
 struct DenseNodeView
 {
+public:
     /// Signed OSM object ID after delta accumulation.
     long id;
+
+package(osm):
     /// Exact latitude in nanodegrees after granularity/offset conversion.
     long latNano;
     /// Exact longitude in nanodegrees after granularity/offset conversion.
     long lonNano;
+
+public:
+    /** Semantic location with exact backing and lazy degree conversion. */
+    pragma(inline, true)
+    @property LocationView location() const scope
+        @safe pure nothrow @nogc
+    {
+        return LocationView(latNano, lonNano);
+    }
+
     /// Borrowed ordered tags for this node.
     DenseTagRange tags;
+
+package(osm):
     /// Optional decoded metadata from the DenseInfo columns.
     DenseInfoView info;
+
+public:
+    /** Format-independent OSM metadata without DenseInfo vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const return scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
 
     /// Semantic OSM element kind, independent of DenseNodes encoding.
     @property ElementType type() const scope
@@ -172,6 +204,76 @@ bool decodeDenseNodes(Sink)(
 }
 
 /**
+ * Decode DenseNodes until the supplied sink requests foreach termination.
+ *
+ * This package-internal variant is reserved for the semantic foreach adapter.
+ * It retains complete DenseNodes coordinate, metadata, and tag preflight before
+ * the first callback, but may stop the emission pass after any delivered node.
+ * `control` receives the exact non-zero value returned by the foreach
+ * delegate; zero means complete DenseNodes emission.
+ *
+ * The ordinary `decodeDenseNodes` implementation remains unchanged and keeps
+ * its `nothrow @nogc` hot-path contract.
+ */
+package(osm)
+bool decodeDenseNodesUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref Sink sink,
+    out int control,
+    out DenseNodeDecodeSummary summary,
+    out PbfStatus status)
+{
+    control = 0;
+    summary = DenseNodeDecodeSummary.init;
+
+    if (!group.hasDenseNodes)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    if (!preflightCoordinates(block, group, status))
+        return false;
+
+    DenseInfoValidationSummary infoValidation;
+    if (!validateDenseInfo(block, group, table, infoValidation, status))
+        return false;
+
+    DenseTagValidationSummary tagValidation;
+    if (!validateDenseTags(group, table, tagValidation, status))
+        return false;
+
+    const hasTags = tagValidation.tagCount != 0;
+    const hasInfo = infoValidation.hasVersion ||
+        infoValidation.hasTimestamp ||
+        infoValidation.hasChangeset ||
+        infoValidation.hasUid ||
+        infoValidation.hasUser ||
+        infoValidation.hasVisible;
+
+    if (hasTags)
+    {
+        if (hasInfo)
+            return dispatchDenseNodesUntilStop!(true, true)(
+                block, group, table, tagValidation, infoValidation,
+                sink, control, summary, status);
+        return dispatchDenseNodesUntilStop!(true, false)(
+            block, group, table, tagValidation, infoValidation,
+            sink, control, summary, status);
+    }
+
+    if (hasInfo)
+        return dispatchDenseNodesUntilStop!(false, true)(
+            block, group, table, tagValidation, infoValidation,
+            sink, control, summary, status);
+    return dispatchDenseNodesUntilStop!(false, false)(
+        block, group, table, tagValidation, infoValidation,
+        sink, control, summary, status);
+}
+
+/**
  * Dispatch to one compile-time-specialized DenseNodes emitter.
  *
  * This wrapper is intentionally not inlined into `decodeDenseNodes`: keeping
@@ -195,6 +297,23 @@ private bool dispatchDenseNodes(bool HasTags, bool HasInfo, Sink)(
     return emitDenseNodes!(HasTags, HasInfo)(
         block, group, table, tagValidation, infoValidation,
         sink, summary, status);
+}
+
+pragma(inline, false)
+private bool dispatchDenseNodesUntilStop(bool HasTags, bool HasInfo, Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    DenseTagValidationSummary tagValidation,
+    DenseInfoValidationSummary infoValidation,
+    ref Sink sink,
+    ref int control,
+    ref DenseNodeDecodeSummary summary,
+    out PbfStatus status)
+{
+    return emitDenseNodesUntilStop!(HasTags, HasInfo)(
+        block, group, table, tagValidation, infoValidation,
+        sink, control, summary, status);
 }
 
 /**
@@ -357,6 +476,179 @@ private bool emitDenseNodes(bool HasTags, bool HasInfo, Sink)(
     // Publish it once after the complete emission succeeds instead of updating
     // the externally visible summary on every node.
     summary.nodeCount = group.dense.nodeCount;
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Stop-aware DenseNodes emission used only by the foreach adapter.
+ *
+ * The complete DenseNodes sequence has already passed the same preflight as
+ * the direct decoder. Returning early therefore skips only further emission;
+ * it does not weaken validation of the DenseNodes sequence that contained the
+ * yielded node.
+ */
+pragma(inline, true)
+private bool emitDenseNodesUntilStop(bool HasTags, bool HasInfo, Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    DenseTagValidationSummary tagValidation,
+    DenseInfoValidationSummary infoValidation,
+    ref Sink sink,
+    ref int control,
+    ref DenseNodeDecodeSummary summary,
+    out PbfStatus status)
+{
+    static if (HasTags)
+        DenseTagNodeCursor tagNodes = DenseTagNodeCursor(group, table);
+    static if (HasInfo)
+        DenseInfoNodeCursor infoNodes = DenseInfoNodeCursor(
+            block, group, table, infoValidation);
+
+    static if (HasTags)
+    {
+        DenseColumnCursor ids = DenseColumnCursor(group.raw, 1);
+        DenseColumnCursor lats = DenseColumnCursor(group.raw, 8);
+        DenseColumnCursor lons = DenseColumnCursor(group.raw, 9);
+    }
+    else
+    {
+        DenseColumnCursor ids = DenseColumnCursor(group, 1);
+        DenseColumnCursor lats = DenseColumnCursor(group, 8);
+        DenseColumnCursor lons = DenseColumnCursor(group, 9);
+    }
+
+    long id;
+    long lat;
+    long lon;
+    const coordinateFactor = cast(long)block.granularity;
+
+    foreach (_; 0 .. group.dense.nodeCount)
+    {
+        long idDelta;
+        long latDelta;
+        long lonDelta;
+        bool hasId;
+        bool hasLat;
+        bool hasLon;
+
+        if (!ids.next(idDelta, hasId, status) ||
+            !lats.next(latDelta, hasLat, status) ||
+            !lons.next(lonDelta, hasLon, status))
+            return false;
+
+        if (!hasId || !hasLat || !hasLon)
+        {
+            status = PbfStatus.failure(
+                PbfError.denseNodeColumnLengthMismatch,
+                0,
+                2);
+            return false;
+        }
+
+        id += idDelta;
+        lat += latDelta;
+        lon += lonDelta;
+
+        const latNano = block.latOffset + coordinateFactor * lat;
+        const lonNano = block.lonOffset + coordinateFactor * lon;
+
+        static if (!HasTags && !HasInfo &&
+            __traits(compiles,
+                sink.putDenseNodeScalars(id, latNano, lonNano)))
+        {
+            control = sink.putDenseNodeScalars(id, latNano, lonNano);
+        }
+        else
+        {
+            DenseTagRange tags;
+            static if (HasTags)
+            {
+                if (!tagNodes.nextPrevalidatedNode(tags, status))
+                    return false;
+                summary.tagCount += tags.length;
+            }
+
+            DenseInfoView info;
+            static if (HasInfo)
+            {
+                if (!infoNodes.nextPrevalidatedNode(info, status))
+                    return false;
+            }
+
+            DenseNodeView node = DenseNodeView(
+                id,
+                latNano,
+                lonNano,
+                tags,
+                info);
+            control = sink.put(node);
+        }
+
+        ++summary.nodeCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
+    }
+
+    long ignored;
+    bool hasExtra;
+    if (!ids.next(ignored, hasExtra, status))
+        return false;
+    if (hasExtra)
+    {
+        status = PbfStatus.failure(
+            PbfError.denseNodeColumnLengthMismatch,
+            0,
+            1);
+        return false;
+    }
+    if (!lats.next(ignored, hasExtra, status))
+        return false;
+    if (hasExtra)
+    {
+        status = PbfStatus.failure(
+            PbfError.denseNodeColumnLengthMismatch,
+            0,
+            8);
+        return false;
+    }
+    if (!lons.next(ignored, hasExtra, status))
+        return false;
+    if (hasExtra)
+    {
+        status = PbfStatus.failure(
+            PbfError.denseNodeColumnLengthMismatch,
+            0,
+            9);
+        return false;
+    }
+
+    static if (HasTags)
+    {
+        if (!tagNodes.finish(status))
+            return false;
+    }
+    static if (HasInfo)
+    {
+        if (!infoNodes.finish(status))
+            return false;
+    }
+
+    if (summary.nodeCount != group.dense.nodeCount ||
+        summary.tagCount != tagValidation.tagCount)
+    {
+        status = PbfStatus.failure(
+            PbfError.denseTagNodeCountMismatch,
+            0,
+            10);
+        return false;
+    }
 
     status = PbfStatus.init;
     return true;

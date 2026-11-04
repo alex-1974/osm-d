@@ -1,0 +1,8 @@
+name "osm-d-release-consumer"
+description "v0.1.x external compatibility probe for osm-d"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../../.."

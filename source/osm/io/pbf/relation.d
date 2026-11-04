@@ -21,6 +21,8 @@
 module osm.io.pbf.relation;
 
 import osm.view.element : ElementType, isElementView;
+import osm.view.metadata : MetadataView;
+import osm.view.relation_member : RelationMemberView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -36,7 +38,7 @@ import osm.io.pbf.tags :
     validateTags;
 import osm.util.checked : checkedAdd;
 import osm.wire.cursor : WireCursor;
-import osm.wire.error : WireStatus;
+import osm.wire.error : WireError, WireStatus;
 import osm.wire.field :
     FieldHeader,
     WireType,
@@ -47,29 +49,6 @@ import osm.wire.varint :
     readSVarint64,
     readVarint32,
     readVarint64;
-
-
-/** Validated OSMPBF Relation member type. */
-enum RelationMemberType : ubyte
-{
-    node = 0,
-    way = 1,
-    relation = 2,
-}
-
-
-/** One validated borrowed Relation member. */
-struct RelationMemberView
-{
-    /// OSM element type of the referenced member.
-    RelationMemberType type;
-    /// Absolute signed OSM member ID reconstructed from `memids` deltas.
-    long id;
-    /// Validated StringTable ID of the role. Zero denotes the empty role.
-    uint roleSid;
-    /// Borrowed raw role bytes. Empty for role StringTable ID zero.
-    const(ubyte)[] role;
-}
 
 
 /** Validation summary for one Relation's three parallel member columns. */
@@ -93,6 +72,15 @@ struct RelationMemberValidationSummary
 }
 
 
+private struct DecodedRelationMember
+{
+    ElementType type;
+    long id;
+    uint roleSid;
+    size_t roleOffset;
+}
+
+
 /** Borrowed input range over one validated Relation's ordered members. */
 struct RelationMemberRange
 {
@@ -108,21 +96,21 @@ private:
 public:
     /** Returns `true` when no Relation member remains. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of Relation members not yet consumed. */
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current validated Relation member. */
     pragma(inline, true)
-    @property RelationMemberView front() const @safe nothrow @nogc
+    @property RelationMemberView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
@@ -130,7 +118,7 @@ public:
 
     /** Advance to the next already validated Relation member. */
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
@@ -141,23 +129,54 @@ public:
         }
 
         PbfStatus ignored;
-        RelationMemberView next;
-        if (!decodeValidatedMember(
-            _roles,
-            _ids,
-            _types,
-            _table,
-            _currentId,
-            next,
-            ignored))
+        if (!advance(ignored))
         {
             // The backing bytes were completely preflighted and must remain unchanged.
             _remaining = 0;
             _front = RelationMemberView.init;
-            return;
+        }
+    }
+
+private:
+    pragma(inline, true)
+    bool advance(out PbfStatus status) scope @safe nothrow @nogc
+    {
+        DecodedRelationMember decoded;
+        if (!decodeValidatedMemberScalars(
+                _roles,
+                _ids,
+                _types,
+                _table.entries.length,
+                _currentId,
+                decoded,
+                status))
+            return false;
+
+        if (cast(size_t)decoded.roleSid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.relationRoleStringIdOutOfRange,
+                decoded.roleOffset,
+                8);
+            return false;
         }
 
-        _front = next;
+        const item = _table.entries[cast(size_t)decoded.roleSid];
+        const start = cast(size_t)item.offset;
+        const finish = start + cast(size_t)item.length;
+        if (finish < start || finish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.relationRoleStringIdOutOfRange,
+                decoded.roleOffset,
+                8);
+            return false;
+        }
+
+        const role = _table.rawBlock[start .. finish];
+        _front = RelationMemberView(decoded.type, decoded.id, role);
+        status = PbfStatus.init;
+        return true;
     }
 }
 
@@ -165,20 +184,40 @@ public:
 /** One validated regular Relation with exact borrowed provenance. */
 struct RelationView
 {
+public:
     /// Signed OSM object ID as encoded by the Relation `int64` field.
     long id;
     /// Borrowed ordered normal-element tags.
     TagRange tags;
     /// Borrowed ordered Relation members.
     RelationMemberRange members;
+
+package(osm):
     /// Optional merged Info metadata.
     InfoView info;
 
+public:
+    /** Format-independent OSM metadata without PBF encoding vocabulary. */
+    pragma(inline, true)
+    @property MetadataView metadata() const return scope
+        @safe pure nothrow @nogc
+    {
+        return MetadataView(
+            info.hasVersion, info.version_,
+            info.hasTimestamp, info.timestampMillis,
+            info.hasChangeset, info.changeset,
+            info.hasUid, info.uid,
+            info.hasUser, info.user,
+            info.hasVisible, info.visible);
+    }
+
+package(osm):
     /// Complete original serialized Relation payload, excluding group key/length.
     const(ubyte)[] raw;
     /// Byte offset of `raw` within `PrimitiveGroupLayout.raw`.
     size_t rawOffset;
 
+public:
     /// Semantic OSM element kind.
     @property ElementType type() const scope
         @safe pure nothrow @nogc
@@ -321,6 +360,136 @@ bool decodeRelations(Sink)(
         ++summary.relationCount;
         summary.tagCount += parsed.tags.tagCount;
         summary.memberCount += parsed.members.memberCount;
+    }
+
+    if (summary.relationCount != preflightCount ||
+        summary.tagCount != preflightTagCount ||
+        summary.memberCount != preflightMemberCount)
+    {
+        status = PbfStatus.failure(
+            PbfError.relationCountMismatch,
+            0,
+            4);
+        return false;
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+
+/**
+ * Decode Relations until the sink requests foreach termination.
+ *
+ * The complete Relation sequence is semantically preflighted before the first
+ * callback exactly as in decodeRelations. A non-zero sink result stops the
+ * already-validated emission pass and is returned unchanged through
+ * `control`.
+ */
+package(osm)
+bool decodeRelationsUntilStop(Sink)(
+    ref const PrimitiveBlockLayout block,
+    ref const PrimitiveGroupLayout group,
+    StringTableView table,
+    ref Sink sink,
+    out int control,
+    out RelationDecodeSummary summary,
+    out PbfStatus status)
+{
+    control = 0;
+    summary = RelationDecodeSummary.init;
+
+    if (group.relationOccurrences == 0)
+    {
+        status = PbfStatus.init;
+        return true;
+    }
+
+    size_t preflightCount;
+    size_t preflightTagCount;
+    size_t preflightMemberCount;
+    auto preflight = RelationMessageCursor(group.raw);
+
+    while (true)
+    {
+        RelationMessageRef relationRef;
+        bool hasRelation;
+        if (!preflight.next(relationRef, hasRelation, status))
+            return false;
+        if (!hasRelation)
+            break;
+
+        ParsedRelation parsed;
+        if (!parseRelation(block, relationRef, table, parsed, status))
+            return false;
+
+        ++preflightCount;
+        preflightTagCount += parsed.tags.tagCount;
+        preflightMemberCount += parsed.members.memberCount;
+    }
+
+    if (preflightCount != group.relationOccurrences)
+    {
+        status = PbfStatus.failure(
+            PbfError.relationCountMismatch,
+            0,
+            4);
+        return false;
+    }
+
+    auto relations = RelationMessageCursor(group.raw);
+
+    while (true)
+    {
+        RelationMessageRef relationRef;
+        bool hasRelation;
+        if (!relations.next(relationRef, hasRelation, status))
+            return false;
+        if (!hasRelation)
+            break;
+
+        ParsedRelation parsed;
+        if (!parseRelation(block, relationRef, table, parsed, status))
+            return false;
+
+        TagRange tags;
+        if (!buildTagRange(
+                relationRef.bytes,
+                relationRef.rawOffset,
+                table,
+                parsed.tags,
+                tags,
+                status))
+            return false;
+
+        RelationMemberRange members;
+        if (!buildRelationMemberRange(
+                relationRef.bytes,
+                relationRef.rawOffset,
+                table,
+                parsed.members,
+                members,
+                status))
+            return false;
+
+        RelationView relation = RelationView(
+            parsed.id,
+            tags,
+            members,
+            parsed.info,
+            relationRef.bytes,
+            relationRef.rawOffset);
+
+        control = sink.put(relation);
+        ++summary.relationCount;
+        summary.tagCount += parsed.tags.tagCount;
+        summary.memberCount += parsed.members.memberCount;
+
+        if (control != 0)
+        {
+            status = PbfStatus.init;
+            return true;
+        }
     }
 
     if (summary.relationCount != preflightCount ||
@@ -591,14 +760,7 @@ bool buildRelationMemberRange(
         return true;
     }
 
-    if (!decodeValidatedMember(
-        range._roles,
-        range._ids,
-        range._types,
-        table,
-        range._currentId,
-        range._front,
-        status))
+    if (!range.advance(status))
     {
         range = RelationMemberRange.init;
         return false;
@@ -610,17 +772,17 @@ bool buildRelationMemberRange(
 
 
 pragma(inline, true)
-private bool decodeValidatedMember(
-    ref Int32FieldCursor roles,
-    ref SInt64FieldCursor ids,
-    ref Int32FieldCursor types,
-    StringTableView table,
+private bool decodeValidatedMemberScalars(
+    scope ref Int32FieldCursor roles,
+    scope ref SInt64FieldCursor ids,
+    scope ref Int32FieldCursor types,
+    size_t stringCount,
     ref long currentId,
-    out RelationMemberView member,
+    out DecodedRelationMember member,
     out PbfStatus status)
     @safe nothrow @nogc
 {
-    member = RelationMemberView.init;
+    member = DecodedRelationMember.init;
 
     int roleSidValue;
     long idDelta;
@@ -653,8 +815,7 @@ private bool decodeValidatedMember(
     }
 
     const roleSid = cast(uint)roleSidValue;
-    const(ubyte)[] role;
-    if (!table.get(cast(size_t)roleSid, role))
+    if (cast(size_t)roleSid >= stringCount)
     {
         status = PbfStatus.failure(
             PbfError.relationRoleStringIdOutOfRange,
@@ -683,11 +844,10 @@ private bool decodeValidatedMember(
     }
 
     currentId = nextId;
-    member = RelationMemberView(
-        cast(RelationMemberType)typeValue,
-        nextId,
-        roleSid,
-        role);
+    member.type = cast(ElementType)typeValue;
+    member.id = nextId;
+    member.roleSid = roleSid;
+    member.roleOffset = roles.lastValueOffset;
 
     status = PbfStatus.init;
     return true;
@@ -766,6 +926,88 @@ public:
 }
 
 
+pragma(inline, true)
+private bool skipRelationFieldValue(
+    scope ref WireCursor cursor,
+    FieldHeader header,
+    out WireStatus status)
+    @safe nothrow @nogc
+{
+    final switch (header.wireType)
+    {
+        case WireType.varint:
+            ulong ignored;
+            if (!readVarint64(cursor, ignored, status))
+            {
+                if (status.fieldNumber == 0)
+                    status.fieldNumber = header.number;
+                return false;
+            }
+            return true;
+
+        case WireType.fixed64:
+            if (!cursor.skip(8))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    cursor.offset,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.lengthDelimited:
+            const start = cursor.offset;
+            ulong encodedLength;
+            if (!readVarint64(cursor, encodedLength, status))
+            {
+                if (status.fieldNumber == 0)
+                    status.fieldNumber = header.number;
+                return false;
+            }
+            if (encodedLength > cast(ulong)size_t.max)
+            {
+                status = WireStatus.failure(
+                    WireError.lengthOverflow,
+                    start,
+                    header.number);
+                return false;
+            }
+            if (!cursor.skip(cast(size_t)encodedLength))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    start,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.fixed32:
+            if (!cursor.skip(4))
+            {
+                status = WireStatus.failure(
+                    WireError.truncatedInput,
+                    cursor.offset,
+                    header.number);
+                return false;
+            }
+            status = WireStatus.init;
+            return true;
+
+        case WireType.startGroup:
+        case WireType.endGroup:
+            status = WireStatus.failure(
+                WireError.unsupportedGroup,
+                header.offset,
+                header.number);
+            return false;
+    }
+}
+
+
 /** Logical cursor over one repeated protobuf int32/enum field. */
 private struct Int32FieldCursor
 {
@@ -789,13 +1031,13 @@ public:
         _fieldNumber = fieldNumber;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     bool next(out int value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -860,22 +1102,49 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(
-                        _message,
-                        field.number,
-                        packed,
-                        wire))
+                    const lengthOffset = _message.offset;
+                    ulong encodedLength;
+                    if (!readVarint64(_message, encodedLength, wire))
                     {
+                        if (wire.fieldNumber == 0)
+                            wire.fieldNumber = field.number;
                         status = PbfStatus.fromRelationWire(
                             wire,
                             _baseOffset);
                         return false;
                     }
 
-                    _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                    if (encodedLength > cast(ulong)size_t.max)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.lengthOverflow,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    const payloadOffset = _message.offset;
+                    bool tookPayload;
+                    auto packed = _message.takeCursor(
+                        cast(size_t)encodedLength,
+                        tookPayload);
+                    if (!tookPayload)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.truncatedInput,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    _packedBase = _baseOffset + payloadOffset;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
@@ -884,7 +1153,7 @@ public:
                     continue;
                 }
 
-                if (!skipFieldValue(_message, field, wire))
+                if (!skipRelationFieldValue(_message, field, wire))
                 {
                     status = PbfStatus.fromRelationWire(
                         wire,
@@ -929,13 +1198,13 @@ public:
         _fieldNumber = fieldNumber;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     bool next(out long value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -996,22 +1265,49 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(
-                        _message,
-                        field.number,
-                        packed,
-                        wire))
+                    const lengthOffset = _message.offset;
+                    ulong encodedLength;
+                    if (!readVarint64(_message, encodedLength, wire))
                     {
+                        if (wire.fieldNumber == 0)
+                            wire.fieldNumber = field.number;
                         status = PbfStatus.fromRelationWire(
                             wire,
                             _baseOffset);
                         return false;
                     }
 
-                    _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                    if (encodedLength > cast(ulong)size_t.max)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.lengthOverflow,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    const payloadOffset = _message.offset;
+                    bool tookPayload;
+                    auto packed = _message.takeCursor(
+                        cast(size_t)encodedLength,
+                        tookPayload);
+                    if (!tookPayload)
+                    {
+                        wire = WireStatus.failure(
+                            WireError.truncatedInput,
+                            lengthOffset,
+                            field.number);
+                        status = PbfStatus.fromRelationWire(
+                            wire,
+                            _baseOffset);
+                        return false;
+                    }
+
+                    _packedBase = _baseOffset + payloadOffset;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
@@ -1020,7 +1316,7 @@ public:
                     continue;
                 }
 
-                if (!skipFieldValue(_message, field, wire))
+                if (!skipRelationFieldValue(_message, field, wire))
                 {
                     status = PbfStatus.fromRelationWire(
                         wire,
@@ -1116,28 +1412,25 @@ unittest
 
     auto tags = sink.relation.tags;
     assert(tags.length == 1);
-    assert(tags.front.keySid == 1);
-    assert(tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1);
+    assert(tags.frontValueStringId == 2);
 
     auto members = sink.relation.members;
     assert(members.length == 3);
 
-    assert(members.front.type == RelationMemberType.node);
+    assert(members.front.type == ElementType.node);
     assert(members.front.id == 10);
-    assert(members.front.roleSid == 0);
     assert(members.front.role.length == 0);
     members.popFront();
 
-    assert(members.front.type == RelationMemberType.way);
+    assert(members.front.type == ElementType.way);
     assert(members.front.id == 12);
-    assert(members.front.roleSid == 3);
     const(ubyte)[] from = ['f', 'r', 'o', 'm'];
     assert(members.front.role == from);
     members.popFront();
 
-    assert(members.front.type == RelationMemberType.relation);
+    assert(members.front.type == ElementType.relation);
     assert(members.front.id == 11);
-    assert(members.front.roleSid == 4);
     const(ubyte)[] to = ['t', 'o'];
     assert(members.front.role == to);
     members.popFront();
@@ -1205,7 +1498,7 @@ unittest
     foreach (_; 0 .. 3)
     {
         assert(!members.empty);
-        assert(members.front.type == RelationMemberType.node);
+        assert(members.front.type == ElementType.node);
         assert(members.front.id == 5);
         members.popFront();
     }
@@ -1537,8 +1830,7 @@ unittest
 
     auto members = sink.relation.members;
     assert(members.front.id == -1);
-    assert(members.front.type == RelationMemberType.relation);
-    assert(members.front.roleSid == 0);
+    assert(members.front.type == ElementType.relation);
     members.popFront();
     assert(members.empty);
 }

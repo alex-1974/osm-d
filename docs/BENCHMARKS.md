@@ -72,6 +72,194 @@ PBF -> model/raw representation -> PBF
 
 Measure both throughput and semantic equality.
 
+## PBF memory and thread-scaling baselines
+
+The production reader now has two durable whole-buffer measurement tools.
+
+`benchmark/parser/memory_baseline.d` reuses one `PbfReaderWorkspace` across
+complete validated serial reads and reports per-pass D-GC allocation deltas and
+collection-count deltas. `benchmark/run-memory-baseline.sh` wraps the process
+with `/usr/bin/time -v` to capture peak RSS; its default pinned datasets are
+Bremen (city) and Austria (country). File loading remains part of process RSS
+because the public API is currently whole-buffer, but it is outside the
+per-decode GC-allocation deltas.
+
+`benchmark/parser/parallel_summary.d` compares the ordered serial summary
+path with `PbfParallelReader.readSummary`. The corresponding
+`benchmark/run-parallel-summary-scaling.sh`:
+
+- verifies exact serial/parallel `PbfReadSummary` parity before timing;
+- measures a serial baseline and bounded parallel worker counts;
+- defaults to worker counts 1, 2, 4, and 8 when the host has enough CPUs;
+- caps the default series at eight workers to avoid benchmark-only
+  oversubscription;
+- uses a queue capacity proportional to worker count;
+- reports median elapsed time, speedup versus serial, speedup versus one
+  worker, and median peak RSS;
+- records raw CSV evidence for later comparison.
+
+The scaling runner defaults to the pinned Bremen city workload. Country-scale
+qualification can use `D_OSM_SCALING_DATASET=austria-260901`. Exact
+performance and memory numbers are machine-specific and are recorded only
+after a controlled LDC run; benchmark availability by itself is not a
+throughput claim.
+
+The source-level allocation audit that motivated these tools is narrow:
+framing, Blob parsing, D-side decompression glue, DenseNodes, regular Node,
+Way emission from caller-provided plan storage, and Relation decoding retain
+their `@nogc` inner contracts. The deliberate allocation boundary is reusable
+workspace growth plus the fixed parallel queue/worker setup, not per-element
+allocation.
+
+### Bremen parallel-reader qualification — 2026-11-02
+
+The final pipeline candidate `d34dd81ad9de1e631b2f9165428379ac869b5ffa`
+was exercised on the pinned `bremen-260901` dataset with LDC 1.41.0 on a
+GitHub-hosted Ubuntu runner exposing four logical CPUs. This run is retained as
+functional/scaling evidence for the architecture, not as a substitute for the
+controlled workstation performance baseline.
+
+Serial and parallel summaries matched exactly for one, two, and four workers:
+
+- nodes: 1,662,874;
+- ways: 328,626;
+- relations: 5,985;
+- tags: 2,073,595.
+
+The bounded queue used two slots per worker. Three measured samples per mode
+produced:
+
+| Mode | p50 elapsed | Speedup vs serial | p50 peak RSS |
+| --- | ---: | ---: | ---: |
+| serial `PbfReader` | 700.879 ms | 1.00x | 28,580 KiB |
+| parallel, 1 worker | 728.658 ms | 0.96x | 33,188 KiB |
+| parallel, 2 workers | 387.254 ms | 1.81x | 34,104 KiB |
+| parallel, 4 workers | 330.516 ms | 2.12x | 46,456 KiB |
+
+One worker is intentionally not a faster serial implementation: it pays the
+bounded queue/thread orchestration cost while doing the same block work.
+Two workers nearly halve the measured wall time; four workers improve further,
+with diminishing scaling as serial framing, synchronization, memory bandwidth,
+and other non-parallel work become material.
+
+The reusable-workspace allocation baseline on the same Bremen input measured
+4,694,192 D-GC bytes on the first complete read while scratch buffers grew.
+The second and third complete reads each measured **0 D-GC bytes** and
+**0 collections**. The dedicated baseline process recorded 28,512 KiB peak
+RSS. This qualifies the intended steady-state contract: after workspace
+warm-up, repeated serial decode of an equal-or-smaller workload performs no
+D-GC allocation in the measured reader path.
+
+Country-scale Austria was additionally exercised on the pinned
+`austria-260901` dataset against production code at
+`d7519dbf218de4eeec9ad13f0b27469697f11de3` with LDC 1.41.0 on a
+GitHub-hosted Ubuntu 24.04 runner. The input was 808,820,532 bytes. Two
+complete serial reads reused the same `PbfReaderWorkspace`: the first pass
+measured 11,067,568 D-GC allocated bytes and 0 collections; the second measured
+**0 D-GC bytes** and **0 collections**. The process peak RSS was 807,020 KiB.
+
+This is retained as country-scale CI stress and steady-state allocation
+evidence. The runner is ephemeral and the whole-buffer API keeps the complete
+input resident, so the number is not a controlled-workstation throughput or
+hardware-specific memory claim. A controlled workstation run remains required
+before publishing such claims.
+
+## Node foreach adapter qualification — 2026-11-02
+
+Question: does the first public `PbfReader.nodes` / `opApply` convenience
+adapter add material overhead compared with the existing direct semantic sink?
+
+The controlled comparison used the same candidate commit for both paths so the
+measurement isolates adapter cost rather than unrelated parser changes:
+
+- candidate: `af6e112d5120a38aa5b45a8af708d438d159d16c`;
+- pinned dataset: `bremen-260901`;
+- compiler: LDC 1.41.0 release build;
+- one pinned logical CPU;
+- five balanced four-position blocks per mode;
+- 30-second post-build and inter-mode cooldowns;
+- identical whole-file validation scope for complete traversal.
+
+Two consumer workloads were measured:
+
+- `core`: node ID, location, and metadata;
+- `tags`: the same work plus full semantic node-tag traversal.
+
+Semantic outputs matched exactly:
+
+- nodes: 1,662,874;
+- tag values traversed in `tags`: 438,639;
+- metadata nodes: 1,662,874;
+- checksums identical between direct sink and foreach in both modes.
+
+Median results:
+
+| Mode | Direct sink p50 | Foreach p50 | Foreach/direct |
+| --- | ---: | ---: | ---: |
+| core | 738.976 ms | 744.649 ms | +0.77% |
+| tags | 829.832 ms | 828.084 ms | -0.21% |
+
+The tag series showed substantial run-to-run spread, so the small negative
+delta is not interpreted as a speedup. The architectural conclusion is
+performance parity: the convenience adapter does not impose a material
+whole-reader regression on the measured city workload.
+
+## Way and Relation foreach adapter qualification — 2026-11-02
+
+Question: what whole-reader cost do the element-specific
+`PbfReader.ways` and `PbfReader.relations` convenience adapters add while
+preserving the direct reader's semantic and validation contracts?
+
+The final qualification used the clean implementation candidate
+`fa596f88b4b3caf7692a0b9a4dc933198d6744a3` with:
+
+- pinned dataset: `bremen-260901`;
+- compiler: LDC 1.41.0 release build;
+- one pinned logical CPU;
+- five balanced four-position blocks per mode;
+- 30-second post-build and inter-mode cooldowns;
+- identical complete-file semantic outputs between direct sink and foreach.
+
+The four workloads separated callback overhead from traversal of borrowed
+semantic subranges:
+
+- `way-core`: Way ID and metadata;
+- `way-full`: core plus all semantic tags and ordered `way.nodes`;
+- `relation-core`: Relation ID and metadata;
+- `relation-full`: core plus all semantic tags and relation members.
+
+Semantic parity passed exactly:
+
+| Mode | Elements | Tags | Children | Metadata elements | Checksum |
+| --- | ---: | ---: | ---: | ---: | --- |
+| way-core | 328,626 | 0 | 0 | 328,626 | `334b17850d539666` |
+| way-full | 328,626 | 1,598,076 | 2,381,867 | 328,626 | `1e287f51aa587cb4` |
+| relation-core | 5,985 | 0 | 0 | 5,985 | `83cdcd3068e35332` |
+| relation-full | 5,985 | 36,880 | 309,645 | 5,985 | `cda1efa4ab0a7cbe` |
+
+Median results:
+
+| Mode | Direct sink p50 | Foreach p50 | Foreach/direct |
+| --- | ---: | ---: | ---: |
+| way-core | 663.739 ms | 698.460 ms | +5.23% |
+| way-full | 715.853 ms | 749.011 ms | +4.63% |
+| relation-core | 643.219 ms | 674.320 ms | +4.84% |
+| relation-full | 653.335 ms | 687.349 ms | +5.21% |
+
+The result is accepted as a bounded convenience trade-off rather than a
+regression in the primary hot path. `PbfReader.read` remains the
+maximum-throughput statically dispatched API; Way and Relation foreach provide
+the idiomatic element-specific surface at about five percent whole-file cost
+on this workload.
+
+Focused diagnostics tested stop-aware decoder overhead, ordinary delegate
+forwarding, explicit `opApply` versus foreach lowering, attribute-specialized
+delegates, forced inline/noinline boundaries, and stateless sinks for
+non-selected validation. None produced a robust improvement without changing
+the measured question. No speculative tuning from those experiments was
+retained in production code.
+
+
 ## First executable microbenchmark: varint
 
 `benchmark/micro/varint.d` establishes the first hot-path baseline. After the
@@ -2970,3 +3158,66 @@ This negative result is retained deliberately. The idea should be reconsidered
 only if a future measured consumer has materially smaller DenseInfo groups, or
 if preflight structure can be reused with substantially less additional
 production complexity.
+
+## PbfReader orchestration qualification (2026-11-01)
+
+The first consumer-facing whole-buffer `PbfReader` moved the complete
+decode-count orchestration from benchmark-local code into production while
+retaining the same framing, Blob, HeaderBlock, PrimitiveBlock, StringTable,
+PrimitiveGroup, and element decoders.
+
+The acceptance question was narrow: does introducing the public reader boundary
+change observable decode semantics or add material whole-file overhead?
+
+A temporary GitHub Actions qualification step compared:
+
+- baseline: `1032f15d69a47753c7f842fc5fff17a058d7d2bf`, using the previous
+  benchmark-local direct orchestration;
+- candidate: the feature branch after `benchmark/parser/decode_count.d` was
+  migrated to the production `PbfReader`;
+- compiler: LDC 1.41.0;
+- build: release, `allAtOnce`;
+- corpus: pinned `bremen-260901` Geofabrik extract;
+- 12 measured process samples per side in alternating balanced order;
+- each measured process retained its existing internal untimed warm-up.
+
+The complete decode-count outputs were byte-for-byte identical for:
+
+```text
+bytes
+header_blocks
+data_blocks
+primitive_groups
+nodes
+ways
+relations
+tags
+```
+
+Result:
+
+| Variant | p50 |
+| --- | ---: |
+| direct orchestration baseline | 695.884 ms |
+| production `PbfReader` | 697.025 ms |
+| candidate vs baseline | +0.164% |
+
+Raw baseline samples in milliseconds:
+
+```text
+709.451 696.077 689.122 687.789 698.245 702.385
+689.015 696.865 696.780 689.757 695.692 689.129
+```
+
+Raw reader samples in milliseconds:
+
+```text
+698.666 693.549 691.900 689.726 709.503 696.965
+689.761 696.794 697.544 709.013 697.085 718.905
+```
+
+**Classification: KEEP.** Semantic parity passed and the observed +0.164%
+median difference is not a material regression. The run used a shared GitHub
+runner rather than the controlled local benchmark host, so these absolute
+times are retained only as an orchestration-overhead qualification and do not
+replace the controlled libosmium throughput baseline.

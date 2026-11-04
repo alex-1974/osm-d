@@ -1,0 +1,33 @@
+name: Feature
+description: Propose a consumer-visible osm-d capability.
+title: ""
+labels:
+  - "type: feature"
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Consumer need
+      description: What real consumer problem should osm-d solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: contract
+    attributes:
+      label: Proposed contract
+      description: Describe the smallest useful public behavior, not an implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: integrity
+    attributes:
+      label: Integrity and resource semantics
+      description: Describe relevant losslessness, ordering, malformed-input, ownership, allocation, streaming, or bounded-resource expectations.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What can callers do today, and why is that insufficient?

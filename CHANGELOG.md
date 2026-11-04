@@ -2,10 +2,78 @@
 
 All notable changes to this project will be documented here.
 
-The project follows semantic versioning once the public API reaches its first
-stable release.
+The project uses semantic versioning. During the pre-1.0 period, the supported
+v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
+
+## 0.1.0 - 2026-11-04
+
+- Added `PbfParallelReader.readSummary`, a bounded producer/worker whole-buffer
+  PBF path for parallel OSMData decompression, complete semantic validation, and
+  aggregate counting. Queued jobs borrow immutable Blob slices from the input;
+  each worker owns and reuses one `PbfReaderWorkspace`; the queue has fixed
+  capacity; worker failures are reduced to the deterministic earliest file
+  block; and no borrowed semantic element crosses a worker boundary.
+  `PbfReader.read` remains the ordered consumer-sink API.
+- Added durable PBF memory/allocation and thread-scaling benchmarks. Fast CI
+  compiles both benchmark targets on DMD 2.111.0 and LDC 1.41.0; the scaling
+  runner verifies serial/parallel summary parity before reporting elapsed time,
+  speedup, and peak RSS.
+
+- Added semantic Way and Relation `foreach` adapters through
+  `PbfReader.ways` and `PbfReader.relations`. Both use D `opApply` over
+  the synchronous push decoder, preserve exact early-stop control, retain
+  whole-file validation on natural completion, and expose borrowed
+  `WayView`/`RelationView` values without per-element materialization.
+  External `@safe` consumer probes and DIP1000 compile-negative tests cover
+  iterable/input and callback-view lifetime escapes. Final Bremen LDC 1.41.0
+  qualification matched direct-sink semantics exactly and measured median
+  convenience overheads of +5.23% (Way core), +4.63% (Way full), +4.84%
+  (Relation core), and +5.21% (Relation full). The direct sink remains the
+  primary maximum-throughput API.
+
+- Added a node-only semantic `foreach` adapter through `PbfReader.nodes`.
+  The adapter uses D `opApply` over the existing synchronous push decoder,
+  yields the same borrowed `NodeView` for regular and DenseNodes encoding,
+  propagates real foreach early-stop control, and performs no per-node
+  materialization. Complete traversal preserves whole-file validation; early
+  exit explicitly leaves the unvisited suffix unvalidated. DMD 2.111.0 and
+  LDC 1.41.0 compile/lifetime gates reject iterable and `NodeView` escapes.
+  Controlled Bremen LDC 1.41.0 comparison with the direct sink measured median
+  deltas of +0.77% for core access and -0.21% for tag traversal, treated as
+  performance parity.
+
+
+- Unified regular Node and DenseNodes delivery at the high-level `PbfReader`
+  boundary behind one concrete semantic `NodeView`. The callback-scoped view
+  is a small non-copyable borrow over unchanged codec-specific representations;
+  `node.tags` produces one independent zero-allocation cursor copy on demand.
+  Controlled LDC 1.41.0 Bremen A/B qualification retained exact semantic parity
+  and measured median deltas of -1.02% for core node access, -0.86% for tag-range
+  materialization, and -0.62% for full node-tag traversal versus the pre-change
+  baseline.
+
+- Tightened the semantic reader boundary: direct PBF coordinate, Info/DenseInfo, raw provenance, and Way parallel ref/location representation fields are now package-internal while codec tests and benchmarks retain access. External `import osm;` compile probes verify that ordinary consumers use `location`, `metadata`, `nodes`, tags, and relation members instead.
+
+- Added one format-independent `TagView` for regular and DenseNodes tags. Consumer-facing tags now expose only exact borrowed key/value bytes; PBF StringTable IDs remain inside codec ranges for validation and internal benchmark/diagnostic use, preserving the existing tag-ID benchmark semantics.
+
+- Added format-independent `WayNodeView` and semantic `way.nodes` iteration. Way node IDs and optional `LocationsOnWays` coordinates are now presented as one ordered lazy range without allocation, node lookup, or geometry construction; the existing PBF `refs` / `locations` ranges remain available during the pre-1.0 transition.
+
+- Fixed DIP1000 usability of borrowed reader ranges from `scope ref` callbacks. Normal tags, DenseNodes tags, Way references, Way locations, and relation members can now be iterated from external `@safe nothrow @nogc` consumers without `@trusted`; length-delimited wire traversal uses a scope-returning child cursor so backing slices remain lifetime-bound.
+
+- Added format-independent `RelationMemberView` using `ElementType`, `OsmId`, and borrowed role bytes. PBF `role_sid` remains internal to StringTable decoding, and the duplicate public `RelationMemberType` enum no longer crosses the consumer boundary.
+
+- Added format-independent `MetadataView` for OSM element version, timestamp, changeset, independently optional user ID/username, and visibility. Regular Node, DenseNodes-backed Node, Way, and Relation views expose the same `metadata` property without changing decoder storage; raw PBF timestamp units and StringTable IDs remain below the consumer boundary.
+
+- Added format-independent `LocationView` with exact nanodegree access and lazy latitude/longitude degree conversion. Regular and DenseNodes-backed node views now expose the same `location` property, optional `LocationsOnWays` coordinates reuse the same semantic type, and the curated `osm` root exports `OsmId`, `ElementType`, and `LocationView` for consumer discovery.
+
+- Optimized regular Way decoding with a package-internal caller-owned preflight
+  plan that reuses canonical packed-field locations during emission while
+  preserving the generic protobuf fallback and fail-closed group semantics.
+  Final qualified Bremen whole-PBF decoding was 26.5% faster than the clean
+  production baseline with LDC 1.41.0; four pinned real-data extracts retained
+  exact semantic parity with the baseline and libosmium reference.
 
 - Added allocation-free regular Relation decoding with complete group preflight,
   borrowed ordered member ranges, packed/unpacked segmented member-column
@@ -92,6 +160,27 @@ stable release.
 
 
 ### Added
+
+- Add the M6 compact editable `OsmStore` with stable opaque handles,
+  deterministic per-type traversal, typed expected-O(1) ID lookup,
+  create/replace/delete/restore/revert lifecycle support, lazy edit baselines,
+  pooled variable children, shared string interning, compact primary indexes,
+  and deterministic ownership for the high-volume store core.
+- Add reproducible pinned-Bremen store-layout qualification covering retained
+  RSS/owned bytes, build cost, primary and parent lookup, full traversal,
+  10,000 representative edits, parent-index rebuild, revert and local-ID
+  remapping. ADR 0022 records the accepted #62 trade-off and evidence.
+- Add production incremental parent indexes to `OsmStore`: distinct
+  Node-to-Way and typed element-to-Relation navigation, coherent maintenance
+  across add/replace/delete/restore/revert, and authoritative local-ID remap
+  through `remapId`. ADR 0023 records the representation and Bremen trade-off.
+- Add public transactional `readPbfStore` construction. Validated PBF semantic
+  views feed the fully indexed compact store directly without a
+  `PbfDocument`/`OwnedDataset` intermediate. Pinned Monaco, Liechtenstein and
+  Bremen parity passed; Bremen direct construction was 2.29x faster than the
+  materialized path with a 1.070x peak/final RSS ratio. ADR 0024 records the
+  decision to keep M6 direct construction single-writer rather than add an
+  unmeasured parallel staging/merge layer.
 
 - Initial repository structure.
 - Data-integrity contract.

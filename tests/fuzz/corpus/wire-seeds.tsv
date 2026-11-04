@@ -1,0 +1,12 @@
+# name<TAB>mode<TAB>hex bytes (contiguous; "-" means empty)
+empty	any	-
+truncated-varint	varint-reject	80
+overflow-varint	varint-reject	ffffffffffffffffff02
+invalid-wire-type	field-reject	0e
+truncated-fixed32	field-value-reject	25010203
+partial-frame-prefix	frame-reject	000000
+segmented-packed-dense	group-accept	12160a01024201044a01060a01044201024a010152020200
+repeated-unpacked-dense	group-accept	12060802400a48051206080440014804
+mixed-primitive-group	group-reject	12001a00
+dense-column-mismatch	group-reject	120b0a0202024201024a020202
+pathological-length	any	0affffffffffffffffff01

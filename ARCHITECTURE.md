@@ -40,25 +40,25 @@ file / stream
     |
     v
 framing reader
-    | BlockJob(sequence, kind, owned compressed buffer)
+    | whole-buffer API: borrowed immutable Blob slice
+    | future streaming API: owned/pool-backed bytes when required
     v
 bounded work queue
     |
     +---------------- worker N ----------------+
     | decompress into reusable worker buffer   |
     | scan protobuf -> block layout             |
-    | index StringTable in worker arena         |
+    | index StringTable in worker workspace     |
     | decode PrimitiveGroups                    |
     | decode varints / zigzag / deltas          |
     | structural validation                     |
-    | emit NodeView / WayView / RelationView    |
+    | decode into worker-local sink/summary    |
     +-------------------------------------------+
     |
     v
-ordered merge when required
-    |
-    v
-range boundary / sink / compact store
+owned reduction / future direct store construction
+
+Ordered borrowed semantic traversal remains on the serial reader path.
 ```
 
 ### Inner boundary
@@ -68,7 +68,7 @@ The innermost decoder is intentionally simple and push-based:
 ```d
 DecodeStatus decodeBlock(Sink)(
     scope const(ubyte)[] block,
-    ref BlockArena arena,
+    ref WorkerWorkspace workspace,
     ref Sink sink
 ) @nogc;
 ```
@@ -98,7 +98,15 @@ the codec retains its own cursor and backing-state representation.
 ## Borrowed and owned data
 
 A borrowed view may reference the current decompressed block, StringTable or
-worker arena. It must not outlive that block.
+reader workspace. It must not outlive that block. Whole-buffer parallel jobs
+may borrow immutable Blob slices directly from the caller's complete input
+because every worker is joined before the read returns. Worker decompression
+and decode scratch remains worker-owned and reusable.
+
+The parallel summary reader intentionally exports no worker-borrowed semantic
+views. ADR 0017 keeps ordered consumer-visible borrowed traversal on the serial
+reader path and defers parallel decoded-element publication to a future owned
+destination/store contract.
 
 Long-lived data is created explicitly:
 

@@ -1,0 +1,29 @@
+name: Research
+description: Track an evidence-producing technical question.
+title: ""
+labels:
+  - "type: research"
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: State the narrow question the research must answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence plan
+      description: Describe corpora, malformed cases, reference implementations, compilers, controls, or measurements.
+    validations:
+      required: true
+
+  - type: textarea
+    id: promotion
+    attributes:
+      label: Promotion criterion
+      description: What result would justify a production change, and what result would reject it?
+    validations:
+      required: true

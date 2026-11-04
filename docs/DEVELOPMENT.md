@@ -6,15 +6,32 @@ DMD is suitable for fast edit/build/test cycles. LDC is the reference compiler
 for release-performance measurements because the production hot paths are
 intended to benefit from LLVM optimization.
 
-During pre-1.0 development, the currently supported and tested compiler matrix is:
+During pre-1.0 development, compiler qualification is intentionally split by
+branch trust level.
+
+The Fast CI baseline used for every `develop` push and pull request is:
 
 - DMD 2.111.0;
 - LDC 1.41.0 using DMD frontend 2.111.0.
 
-No compatibility guarantee is currently made for older D frontends. A historical
-minimum frontend will be fixed only when there is evidence that supporting it is
-useful and the corresponding compiler matrix can be tested deliberately. Newer
-compiler releases are added to the supported matrix only after validation.
+The full Release Gate used for promotion/release qualification covers three
+frontend generations in both compiler families:
+
+- DMD 2.111.0;
+- DMD 2.112.1;
+- DMD 2.113.0;
+- LDC 1.41.0 using DMD frontend 2.111.0;
+- LDC 1.42.0 using DMD frontend 2.112.1;
+- LDC 1.43.0 using DMD frontend 2.113.0.
+
+DUB remains fixed at 1.40.0 in CI so compiler qualification does not
+simultaneously change the build tool.
+
+No compatibility guarantee is currently made for frontends older than 2.111.
+The 2.111 generation is therefore the current tested compatibility floor, while
+the two newer generations are release canaries and qualification targets.
+Raising the floor remains a deliberate compatibility decision rather than an
+incidental consequence of adopting a newer compiler.
 
 The canonical local correctness checks are:
 
@@ -22,14 +39,32 @@ The canonical local correctness checks are:
 dub test --compiler=dmd --force
 dub test --compiler=ldc2 --force
 dub build --compiler=ldc2 --build=release --force
+bash tests/run-consumer-compile.sh
 tests/run-dip1000-negative.sh
+bash tests/fuzz/run-wire-seeds.sh
 ```
 
-GitHub Actions runs the supported DMD/LDC matrix for pushes to `main` and pull
-requests. Each compiler job runs its unit tests and DIP1000 lifetime-negative
-checks; the LDC job additionally performs the release build.
+GitHub Actions separates checks by branch trust level.
 
-## Public module surface during pre-1.0
+For pushes to `develop` and pull requests targeting `develop`, Fast CI runs the
+supported DMD 2.111.0 and LDC 1.41.0 matrix. Each compiler job runs unit tests,
+external DUB consumer probes, deterministic JOSM-/iD-compatible edit
+interoperability fixtures, DIP1000 lifetime-negative checks, the deterministic
+wire malformed-input seed corpus, PBF round-trip smoke tests, and release/
+benchmark builds. The DMD baseline additionally generates osmChange output with
+`osm-d` and requires Ubuntu's `osmium-tool`/libosmium to parse it successfully.
+
+For pull requests targeting `main`, pushes to `main`, and release/hotfix
+branches, the Release Gate runs the full six-compiler qualification matrix,
+reruns the deterministic malformed-input, round-trip, and editor
+interoperability gates, compiles the external consumers, and builds the parser
+decode-count benchmark. The baseline DMD job also repeats the osmChange
+`osmium-tool` interoperability check. This
+keeps expensive cross-generation qualification out of ordinary `develop`
+commits while requiring it before release promotion. `main` remains the
+release line; normal development targets `develop`.
+
+## Public module surface and v0.1.x compatibility
 
 D module visibility and package support are separate concerns. A source module
 being directly importable does not by itself make every declaration in that
@@ -37,15 +72,82 @@ module part of a compatibility promise.
 
 The current pre-1.0 surface is classified as follows:
 
-- `osm` is the curated package root. It intentionally does not re-export the
-  evolving implementation surface yet.
-- `osm.view.element` is a supported semantic direct-import API. Its
-  `ElementType`, `OsmId`, and structural `isElementView` contract form the
-  format-independent borrowed element identity boundary described by ADR 0016.
-- `osm.io.pbf.*` is an evolving codec-development surface. Its documented
-  decoding APIs may be used directly during pre-1.0 development, but their
-  module organization and callable signatures are not frozen until the public
-  PBF reader/range boundary is established.
+- `osm` is the curated package root. It re-exports the consumer-facing
+  whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
+  `PbfNodeIterable`, `PbfWayIterable`, `PbfRelationIterable`,
+  `PbfParallelReader`, `PbfParallelReadOptions`, `PbfReadSummary`,
+  `PbfReadStatus`, `PbfReadError`) plus the
+  format-independent semantic node/way/relation/identity/location/metadata/tag/
+  member/way-node vocabulary (`NodeView`, `WayView`, `RelationView`,
+  `OsmId`, `ElementType`, `LocationView`, `MetadataView`, `TagView`,
+  `RelationMemberView`, `WayNodeView`). `NodeView` is the one concrete
+  callback/foreach value type used for regular Node and DenseNodes encoding.
+  `PbfNodeIterable`, `PbfWayIterable`, and `PbfRelationIterable` are the
+  element-specific convenience adapters returned by `PbfReader.nodes`,
+  `PbfReader.ways`, and `PbfReader.relations`; they use `opApply` rather
+  than pretending the synchronous decoder is a resumable Phobos InputRange.
+  The package root does not re-export the evolving low-level PBF or wire
+  implementation surface.
+- `osm.view.element`, `osm.view.location`, `osm.view.metadata`,
+  `osm.view.tag`, `osm.view.relation_member`, and `osm.view.way_node` are
+  supported semantic direct-import APIs. The `ElementType`, `OsmId`,
+  structural `isElementView` contract, `LocationView`, `MetadataView`,
+  `TagView`, `RelationMemberView`, and `WayNodeView` form the current
+  format-independent borrowed semantic boundary described by ADR 0016 and the
+  consumer API design. The package-root `NodeView` is callback-scoped and
+  deliberately non-copyable; semantic subviews and tag-range copies remain
+  ordinary values.
+- `osm.model.owned` is the format-independent durable semantic model for
+  M4 and later codecs/stores. The curated root exports its owned Node/Way/
+  Relation/tag/metadata/member/reference/dataset values. Immutable byte strings
+  may share backing storage; mutable child arrays follow normal D aliasing
+  semantics and `deepCopy` creates independently mutable arrays.
+- `osm.raw.pbf` and `osm.io.pbf.document` form the PBF read/modify/write
+  preservation boundary. The ordinary owned model contains no protobuf field
+  IDs, StringTable IDs, block offsets or compression state. `PbfDocument`
+  combines known HeaderBlock semantics, an `OwnedDataset`, and explicit raw
+  preservation state. Semantic rewrite and exact-source reproduction are
+  separate contracts.
+- `osm.store` is the supported compact editable-store facade. The curated
+  root exports `OsmStore`, stable `OsmHandle` values, store semantic views,
+  typed primary lookup, parent navigation, lifecycle mutation, authoritative
+  `remapId`, and transactional `readPbfStore`. The direct PBF store reader
+  owns all durable semantics on success and does not expose codec representation
+  details or require a `PbfDocument`/`OwnedDataset` intermediate.
+- `readPbfDocument` and `PbfWriter` are the M4 durable PBF boundaries
+  exported by `osm`. Semantic writing is fail-closed when raw preservation
+  detects unrepresented source content or when required HeaderBlock feature
+  declarations are missing. `writeOriginalSource` is explicitly distinct
+  from semantic writing and reproduces only the captured source bytes.
+- `comparePbfSemantics` reports the first structured semantic difference;
+  the boolean `samePbfSemantics` helper remains available when diagnostics
+  are not needed. M4 qualification uses the structured comparator plus an
+  independent libosmium differential check.
+- `osm.io.pbf.reader` is the supported direct-import module for the ordered
+  consumer-facing PBF reader boundary exported by `osm`. The curated root also
+  exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
+  module `osm.io.pbf.parallel_reader` is supported for the same summary-only
+  API.
+- `osm.xml` is the supported high-level ordinary OSM XML facade.
+  It exports document-envelope metadata plus `OsmXmlReader`,
+  `readOsmXmlDocument`, and `OsmXmlWriter` with their status/options types.
+  The facade deliberately does not expose dxml parser/writer entities.
+  `ByteSource` and `ByteSink` remain transport-d concepts rather than an
+  osm-d-specific stream hierarchy.
+- `osm.osmchange` is the supported high-level osmChange facade.
+  It reuses `OwnedChangeSequence` and exports streaming/materializing reader
+  and writer boundaries without exposing XML parser entities. Source entry
+  order and explicit delete `if-unused` policy are semantic contracts.
+- `osm.validate` is the supported upload-readiness validation facade.
+  `CapabilityProfile` carries target-server limits; `validateUploadChanges`
+  reports the first deterministic semantic/upload failure without reordering
+  or repairing the input. The convenience validator allocates a temporary
+  placeholder hash index proportional to create entries; it is not part of a
+  parser hot path.
+- Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
+  Their documented decoding APIs may be used directly during pre-1.0
+  development, but their module organization and callable signatures are not
+  part of the high-level reader compatibility promise.
 - `osm.wire.*` and `osm.util.*` are implementation-oriented modules. They are
   technically importable because D source modules are visible to consumers, but
   no source-compatibility promise is made for direct external use.
@@ -55,10 +157,19 @@ provenance boundary. Construction-controlled invariants must rely on actual
 representation/construction control rather than on a caller being outside a D
 package namespace.
 
-Before a stable API freeze, this classification must be reviewed against real
-consumers. Stable direct imports, callable parameter names, template
-instantiability, and representative named-argument forms must then be protected
-by external-consumer compile tests across the supported compiler matrix.
+For v0.1.x this classification is frozen by `docs/API_STABILITY.md` and the
+external release-consumer compile probe. Supported direct imports, callable
+parameter names, representative named-argument forms, ownership/lifetime
+semantics, and failure-state contracts are release compatibility surface.
+
+The element-specific foreach boundaries have additional executable lifetime
+checks. External `@safe` consumer compilation verifies normal Node, Way, and
+Relation foreach use. DIP1000 compile-negative tests verify that iterables
+borrowing stack-local input bytes cannot escape and that pointers to
+callback-scoped `NodeView`, `WayView`, or `RelationView` values cannot
+escape their foreach bodies. A complete traversal has the same whole-file
+validation scope as `PbfReader.read`; an explicit early foreach exit is an
+intentional partial traversal and leaves the unvisited suffix unvalidated.
 
 ## Public API surface
 
@@ -66,7 +177,20 @@ During pre-1.0 development, the package root `osm` remains intentionally small;
 it does not re-export every technically importable implementation module.
 
 Consumer-facing code should use documented high-level decoders, borrowed views,
-ranges, status types, and format-independent contracts. Low-level validation
+ranges, status types, and format-independent contracts. Borrowed ranges reached
+from `PbfReader` callbacks must remain iterable from external `scope ref`
+`@safe` consumers; Fast CI compiles normal tags, DenseNodes tags, semantic
+Way nodes, and Relation members through that boundary. Normal and DenseNodes
+tag ranges both return the same semantic `TagView`; PBF StringTable IDs are
+retained only inside codec ranges for validation and internal diagnostics.
+The direct PBF representation remains available inside `package(osm)` for
+codec tests and benchmarks, but ordinary external reader consumers see only the
+semantic element surface: Node coordinates through `location`, metadata through
+`metadata`, Way references through `nodes`, and no direct raw payload/offset
+provenance fields. The external consumer compile probe protects this visibility
+boundary.
+
+Low-level validation
 summaries and validate/prevalidated-build entry points are implementation
 details when they exist only to carry proof from one internal decoding pass to
 another. Such declarations use `package(osm)` where cross-module production use
@@ -81,6 +205,23 @@ provenance boundary. A separate source module can deliberately declare itself
 inside the same package namespace. Library correctness therefore does not treat
 `package(osm)` as protection against hostile code; it prevents ordinary external
 imports from depending on unsupported validation internals.
+
+## Parallel reader safety boundary
+
+`PbfParallelReader.readSummary` is intentionally a small `@trusted` boundary.
+The complete input remains alive for the call, queued jobs borrow immutable
+Blob slices from it, the queue has fixed capacity, each worker owns one
+`PbfReaderWorkspace`, and every worker is joined before return. No semantic
+element view crosses a worker boundary.
+
+The parallel API publishes only value-type summary/status results. Ordered
+borrowed consumer callbacks remain the responsibility of `PbfReader.read` and
+the element-specific foreach adapters. ADR 0017 deliberately closes Phase 3
+without a generic ordered parallel borrowed-view API; ADR 0024 resolves the M6 owned-destination case with public single-writer
+`readPbfStore`. A future parallel store-construction path still requires a
+separate measured ownership/ordering/backpressure contract; M6 does not expose
+one because the direct serial construction path already satisfies the city
+throughput and peak-memory targets.
 
 ## Build profiles
 
@@ -147,6 +288,19 @@ Do not optimize from intuition alone. For performance-sensitive changes:
 
 A microbenchmark improvement that worsens the end-to-end city workload is not
 a project improvement.
+
+## External byte-resource I/O
+
+`osm-d` owns PBF/OSM interpretation and serialization, not filesystem, HTTP,
+range, stream, retry, cache or scheduler policy. The workspace package
+`transport-d` is the canonical byte-resource transport layer for those tasks;
+see ADR 0019.
+
+`transport-d` v0.1.1 is tagged and registry-resolvable. M5 therefore uses
+`transport-d ~>0.1.1` as the byte-resource boundary for streaming XML, and
+the external XML consumer compile probe resolves it through DUB. Future
+source/sink adapters use the same contract rather than creating an
+`osm-d`-specific I/O hierarchy.
 
 ## Dependencies
 

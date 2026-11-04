@@ -13,6 +13,7 @@
  */
 module osm.io.pbf.tags;
 
+import osm.view.tag : TagView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.string_table : StringTableView;
 import osm.wire.cursor : WireCursor;
@@ -22,21 +23,9 @@ import osm.wire.field :
     WireType,
     readFieldHeader,
     readLengthDelimited,
+    readLengthDelimitedCursor,
     skipFieldValue;
 import osm.wire.varint : readVarint32;
-
-/** One ordered borrowed tag from normal element `keys`/`vals` arrays. */
-struct TagView
-{
-    /// Validated non-zero StringTable ID of the tag key.
-    uint keySid;
-    /// Validated non-zero StringTable ID of the tag value.
-    uint valueSid;
-    /// Borrowed raw key bytes.
-    const(ubyte)[] key;
-    /// Borrowed raw value bytes.
-    const(ubyte)[] value;
-}
 
 /** Shape validated for one normal element's parallel tag arrays. */
 package(osm)
@@ -54,6 +43,15 @@ struct TagValidationSummary
     }
 }
 
+
+private struct DecodedTagPair
+{
+    uint keySid;
+    uint valueSid;
+    size_t keyOffset;
+    size_t valueOffset;
+}
+
 /** Borrowed input range over one normal element's validated ordered tags. */
 struct TagRange
 {
@@ -62,53 +60,137 @@ private:
     UInt32FieldCursor _vals;
     StringTableView _table;
     TagView _front;
+    uint _frontKeySid;
+    uint _frontValueSid;
     size_t _remaining;
 
 public:
     /** Returns `true` when no tag remains. */
     pragma(inline, true)
-    @property bool empty() const @safe pure nothrow @nogc
+    @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _remaining == 0;
     }
 
     /** Returns the number of tags not yet consumed. */
     pragma(inline, true)
-    @property size_t length() const @safe pure nothrow @nogc
+    @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _remaining;
     }
 
     /** Return the current validated tag. The range must be non-empty. */
     pragma(inline, true)
-    @property TagView front() const @safe nothrow @nogc
+    @property TagView front() const return scope @safe nothrow @nogc
     in (!empty)
     {
         return _front;
     }
 
+package(osm):
+    /** Current PBF StringTable ID of the key, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontKeyStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontKeySid;
+    }
+
+    /** Current PBF StringTable ID of the value, for codec diagnostics/benchmarks. */
+    pragma(inline, true)
+    @property uint frontValueStringId() const scope @safe pure nothrow @nogc
+    in (!empty)
+    {
+        return _frontValueSid;
+    }
+
+public:
     /** Advance to the next validated tag. */
     pragma(inline, true)
-    void popFront() @safe nothrow @nogc
+    void popFront() scope @safe nothrow @nogc
     in (!empty)
     {
         --_remaining;
         if (_remaining == 0)
         {
             _front = TagView.init;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
             return;
         }
 
         PbfStatus ignored;
-        TagView next;
-        if (!decodeValidatedPair(_keys, _vals, _table, next, ignored))
+        if (!advance(ignored))
         {
             // The backing bytes were completely prevalidated and must remain unchanged.
             _remaining = 0;
             _front = TagView.init;
-            return;
+            _frontKeySid = 0;
+            _frontValueSid = 0;
         }
-        _front = next;
+    }
+
+private:
+    pragma(inline, true)
+    bool advance(out PbfStatus status) scope @safe nothrow @nogc
+    {
+        DecodedTagPair decoded;
+        if (!decodeValidatedPairScalars(
+                _keys,
+                _vals,
+                decoded,
+                status))
+            return false;
+
+        if (cast(size_t)decoded.keySid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.keyOffset,
+                2);
+            return false;
+        }
+        if (cast(size_t)decoded.valueSid >= _table.entries.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.valueOffset,
+                3);
+            return false;
+        }
+
+        const keyRef = _table.entries[cast(size_t)decoded.keySid];
+        const valueRef = _table.entries[cast(size_t)decoded.valueSid];
+
+        const keyStart = cast(size_t)keyRef.offset;
+        const keyFinish = keyStart + cast(size_t)keyRef.length;
+        const valueStart = cast(size_t)valueRef.offset;
+        const valueFinish = valueStart + cast(size_t)valueRef.length;
+
+        if (keyFinish < keyStart || keyFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.keyOffset,
+                2);
+            return false;
+        }
+        if (valueFinish < valueStart || valueFinish > _table.rawBlock.length)
+        {
+            status = PbfStatus.failure(
+                PbfError.tagStringIdOutOfRange,
+                decoded.valueOffset,
+                3);
+            return false;
+        }
+
+        _frontKeySid = decoded.keySid;
+        _frontValueSid = decoded.valueSid;
+        _front = TagView(
+            _table.rawBlock[keyStart .. keyFinish],
+            _table.rawBlock[valueStart .. valueFinish]);
+        status = PbfStatus.init;
+        return true;
     }
 }
 
@@ -195,12 +277,52 @@ bool buildTagRange(
 
     if (range._remaining != 0)
     {
-        if (!decodeValidatedPair(
-            range._keys,
-            range._vals,
-            table,
-            range._front,
-            status))
+        if (!range.advance(status))
+        {
+            range = TagRange.init;
+            return false;
+        }
+    }
+
+    status = PbfStatus.init;
+    return true;
+}
+
+/**
+ * Build a borrowed TagRange directly from prevalidated canonical packed
+ * key/value payloads.
+ *
+ * This is the no-search counterpart of `buildTagRange`. The supplied summary
+ * and payloads must describe the same immutable element bytes that were
+ * completely semantically validated before observable emission.
+ */
+package(osm)
+bool buildPrevalidatedPackedTagRange(
+    const(ubyte)[] keyPayload,
+    size_t keyPayloadBase,
+    const(ubyte)[] valuePayload,
+    size_t valuePayloadBase,
+    StringTableView table,
+    TagValidationSummary summary,
+    out TagRange range,
+    out PbfStatus status)
+    @safe nothrow @nogc
+{
+    range = TagRange.init;
+    range._keys = UInt32FieldCursor.fromPrevalidatedPacked(
+        keyPayload,
+        keyPayloadBase,
+        2);
+    range._vals = UInt32FieldCursor.fromPrevalidatedPacked(
+        valuePayload,
+        valuePayloadBase,
+        3);
+    range._table = table;
+    range._remaining = summary.tagCount;
+
+    if (range._remaining != 0)
+    {
+        if (!range.advance(status))
         {
             range = TagRange.init;
             return false;
@@ -243,23 +365,20 @@ private bool validateStringId(
 }
 
 pragma(inline, true)
-private bool decodeValidatedPair(
-    ref UInt32FieldCursor keys,
-    ref UInt32FieldCursor vals,
-    StringTableView table,
-    out TagView tag,
+private bool decodeValidatedPairScalars(
+    scope ref UInt32FieldCursor keys,
+    scope ref UInt32FieldCursor vals,
+    out DecodedTagPair decoded,
     out PbfStatus status)
     @safe nothrow @nogc
 {
-    tag = TagView.init;
+    decoded = DecodedTagPair.init;
 
-    uint keySid;
-    uint valueSid;
     bool hasKey;
     bool hasValue;
 
-    if (!keys.next(keySid, hasKey, status) ||
-        !vals.next(valueSid, hasValue, status))
+    if (!keys.next(decoded.keySid, hasKey, status) ||
+        !vals.next(decoded.valueSid, hasValue, status))
         return false;
 
     if (!hasKey || !hasValue)
@@ -268,29 +387,12 @@ private bool decodeValidatedPair(
         return false;
     }
 
-    const(ubyte)[] key;
-    const(ubyte)[] value;
-    if (!table.get(keySid, key))
-    {
-        status = PbfStatus.failure(
-            PbfError.tagStringIdOutOfRange,
-            keys.lastValueOffset,
-            2);
-        return false;
-    }
-    if (!table.get(valueSid, value))
-    {
-        status = PbfStatus.failure(
-            PbfError.tagStringIdOutOfRange,
-            vals.lastValueOffset,
-            3);
-        return false;
-    }
-
-    tag = TagView(keySid, valueSid, key, value);
+    decoded.keyOffset = keys.lastValueOffset;
+    decoded.valueOffset = vals.lastValueOffset;
     status = PbfStatus.init;
     return true;
 }
+
 
 /** Logical cursor over one repeated uint32 field in a protobuf message. */
 private struct UInt32FieldCursor
@@ -315,14 +417,34 @@ public:
         _fieldNumber = fieldNumber;
     }
 
-    @property size_t lastValueOffset() const @safe pure nothrow @nogc
+    /**
+     * Construct a cursor that starts directly in one already validated packed
+     * repeated-field payload.
+     *
+     * No message-wide field search is performed. The caller must have proved
+     * that this payload represents the complete logical repeated column.
+     */
+    static UInt32FieldCursor fromPrevalidatedPacked(
+        const(ubyte)[] packed,
+        size_t packedBase,
+        uint fieldNumber)
+        @safe nothrow @nogc
+    {
+        UInt32FieldCursor result;
+        result._packed = WireCursor(packed);
+        result._packedBase = packedBase;
+        result._fieldNumber = fieldNumber;
+        return result;
+    }
+
+    @property size_t lastValueOffset() const scope @safe pure nothrow @nogc
     {
         return _lastValueOffset;
     }
 
     pragma(inline, true)
     bool next(out uint value, out bool hasValue, out PbfStatus status)
-        @safe nothrow @nogc
+        scope @safe nothrow @nogc
     {
         value = 0;
         hasValue = false;
@@ -376,16 +498,21 @@ public:
                 if (field.number == _fieldNumber &&
                     field.wireType == WireType.lengthDelimited)
                 {
-                    const(ubyte)[] packed;
-                    if (!readLengthDelimited(_message, field.number, packed, wire))
+                    bool ok;
+                    auto packed = readLengthDelimitedCursor(
+                        _message,
+                        field.number,
+                        ok,
+                        wire);
+                    if (!ok)
                     {
                         status = PbfStatus.fromTagWire(wire, _baseOffset);
                         return false;
                     }
 
                     _packedBase =
-                        _baseOffset + _message.offset - packed.length;
-                    _packed = WireCursor(packed);
+                        _baseOffset + _message.offset - packed.remaining;
+                    _packed = packed;
 
                     if (!_packed.empty)
                         break;
@@ -448,10 +575,10 @@ unittest
 
     const(ubyte)[] a = ['a'];
     const(ubyte)[] b = ['b'];
-    assert(tags.front.keySid == 1 && tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1 && tags.frontValueStringId == 2);
     assert(tags.front.key == a);
     tags.popFront();
-    assert(tags.front.keySid == 3 && tags.front.valueSid == 4);
+    assert(tags.frontKeyStringId == 3 && tags.frontValueStringId == 4);
     assert(tags.front.key == b);
     tags.popFront();
     assert(tags.empty);
@@ -516,6 +643,54 @@ unittest
     TagRange tags;
     assert(buildTagRange(element, 0, table, summary, tags, status));
     assert(tags.length == 1);
-    assert(tags.front.keySid == 1);
-    assert(tags.front.valueSid == 2);
+    assert(tags.frontKeyStringId == 1);
+    assert(tags.frontValueStringId == 2);
+}
+
+
+unittest
+{
+    import osm.io.pbf.string_table : StringRef;
+
+    // Canonical prevalidated packed keys [1,3] and vals [2,4].
+    const(ubyte)[] strings = [0, 'k', 'v', 'n', 'x'];
+    StringRef[5] refs = [
+        StringRef(0, 0),
+        StringRef(1, 1),
+        StringRef(2, 1),
+        StringRef(3, 1),
+        StringRef(4, 1),
+    ];
+    StringTableView table = StringTableView(strings, refs[]);
+
+    const(ubyte)[] keys = [0x01, 0x03];
+    const(ubyte)[] vals = [0x02, 0x04];
+
+    TagValidationSummary summary;
+    summary.keyCount = 2;
+    summary.valueCount = 2;
+
+    TagRange range;
+    PbfStatus status;
+    assert(buildPrevalidatedPackedTagRange(
+        keys,
+        100,
+        vals,
+        200,
+        table,
+        summary,
+        range,
+        status));
+    assert(status.ok);
+    assert(range.length == 2);
+
+    assert(range.frontKeyStringId == 1);
+    assert(range.frontValueStringId == 2);
+    range.popFront();
+
+    assert(range.frontKeyStringId == 3);
+    assert(range.frontValueStringId == 4);
+    range.popFront();
+
+    assert(range.empty);
 }

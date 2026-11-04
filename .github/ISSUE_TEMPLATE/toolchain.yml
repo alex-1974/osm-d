@@ -1,0 +1,41 @@
+name: Toolchain
+description: Track a compiler, Phobos, druntime, DUB, linker, or CI-tool problem.
+title: ""
+labels:
+  - toolchain
+body:
+  - type: textarea
+    id: component
+    attributes:
+      label: Component and versions
+      description: Identify affected DMD/LDC/frontend/Phobos/druntime/DUB/linker/runner versions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: Provide the smallest standalone reproducer and exact command.
+    validations:
+      required: true
+
+  - type: textarea
+    id: matrix
+    attributes:
+      label: Version/platform matrix
+      description: Record affected and unaffected compiler/platform combinations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision or workaround
+      description: State the current workaround, restriction, upstream issue, or reason for no workaround.
+
+  - type: textarea
+    id: workspace
+    attributes:
+      label: Workspace impact
+      description: Note whether the issue belongs in `.workspace/TOOLCHAIN_ISSUES.md` and which libraries may be affected.

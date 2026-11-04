@@ -1,0 +1,16 @@
+name "osm-d-roundtrip-tests"
+description "Semantic and differential PBF round-trip qualification for osm-d"
+authors "Alexander Bernardi"
+copyright "Copyright © 2026 Alexander Bernardi"
+license "MIT"
+
+dependency "osm-d" path="../.."
+
+configuration "pbf-roundtrip" {
+    targetType "executable"
+    targetName "osm-d-pbf-roundtrip"
+    targetPath "bin"
+    sourcePaths "."
+    importPaths "."
+    mainSourceFile "pbf_roundtrip.d"
+}

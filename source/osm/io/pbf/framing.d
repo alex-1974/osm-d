@@ -20,6 +20,7 @@ module osm.io.pbf.framing;
 import osm.io.pbf.blob_header : BlobHeaderView, BlobKind, decodeBlobHeader;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.limits : maxBlobHeaderSize;
+import osm.util.endian : readBigEndianU32;
 import osm.wire.cursor : WireCursor;
 
 /** Result category returned by `readFileBlock`. */
@@ -99,7 +100,13 @@ FrameReadResult readFileBlock(
         return FrameReadResult.error;
     }
 
-    const uint headerLength = decodeNetworkU32(lengthBytes);
+    uint headerLength;
+    if (!readBigEndianU32(lengthBytes, 0, headerLength))
+    {
+        status = PbfStatus.failure(PbfError.truncatedHeaderLength, frameOffset);
+        return FrameReadResult.error;
+    }
+
     if (headerLength >= maxBlobHeaderSize)
     {
         status = PbfStatus.failure(PbfError.blobHeaderTooLarge, frameOffset);
@@ -134,15 +141,6 @@ FrameReadResult readFileBlock(
     cursor = probe;
     status = PbfStatus.init;
     return FrameReadResult.block;
-}
-
-private uint decodeNetworkU32(const(ubyte)[] bytes) @safe pure nothrow @nogc
-in (bytes.length == 4)
-{
-    return (cast(uint)bytes[0] << 24)
-         | (cast(uint)bytes[1] << 16)
-         | (cast(uint)bytes[2] << 8)
-         | cast(uint)bytes[3];
 }
 
 private PbfStatus translateHeaderStatus(PbfStatus status, size_t headerOffset)

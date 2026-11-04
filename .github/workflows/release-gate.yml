@@ -1,0 +1,208 @@
+name: Release Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+      - 'hotfix/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler-gate:
+    name: Release / ${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - dmd-2.111.0
+          - dmd-2.112.1
+          - dmd-2.113.0
+          - ldc-1.41.0
+          - ldc-1.42.0
+          - ldc-1.43.0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install D compiler
+        id: setup-dlang
+        continue-on-error: ${{ startsWith(matrix.compiler, 'dmd-') }}
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ${{ matrix.compiler }}
+          dub: 1.40.0
+
+      - name: Fallback to official D installer for DMD
+        if: startsWith(matrix.compiler, 'dmd-') && steps.setup-dlang.outcome == 'failure'
+        shell: bash
+        run: |
+          bash tools/setup-dmd-ci.sh "${{ matrix.compiler }}" 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          echo "DC=$DC"
+          "$DC" --version
+          dub --version
+
+      - name: Run unit tests
+        shell: bash
+        run: dub test --compiler="$DC" --force
+
+      - name: Compile external consumer surface
+        shell: bash
+        run: |
+          CONSUMER_COMPILERS="$DC" \
+            bash tests/run-consumer-compile.sh
+
+      - name: Build published examples
+        shell: bash
+        run: |
+          EXAMPLE_COMPILERS="$DC" \
+            bash tests/run-examples.sh
+
+      - name: Verify consumer archive
+        if: matrix.compiler == 'dmd-2.111.0' || matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          PACKAGE_SMOKE_COMPILERS="$DC" \
+            bash tests/run-package-smoke.sh
+
+      - name: Qualify osmChange with external toolchain
+        if: matrix.compiler == 'dmd-2.111.0'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          OSMCHANGE_COMPILER="$DC" \
+            bash tests/run-osmchange-toolchain.sh
+
+      - name: Run editor interoperability fixtures
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/edit-interoperability \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Run DIP1000 negative tests
+        shell: bash
+        run: |
+          DIP1000_COMPILERS="$DC" \
+            tests/run-dip1000-negative.sh
+
+      - name: Run deterministic wire malformed-input seeds
+        shell: bash
+        run: |
+          WIRE_FUZZ_COMPILER="$DC" \
+            bash tests/fuzz/run-wire-seeds.sh
+
+      - name: Run deterministic PBF round-trip self-test
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/roundtrip \
+            --config=pbf-roundtrip \
+            --compiler="$DC" \
+            --build=debug \
+            -- \
+            --self-test
+
+      - name: Build release configuration
+        shell: bash
+        run: dub build --compiler="$DC" --build=release --force
+
+      - name: Build parser decode-count benchmark
+        shell: bash
+        run: |
+          cd benchmark
+          dub build \
+            --config=parser-decode-count \
+            --build=release \
+            --build-mode=allAtOnce \
+            --compiler="$DC" \
+            --force
+
+
+  release-io-baseline:
+    name: Release / Monaco write + XML baseline
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Fetch pinned Monaco workload
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch monaco-260901; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
+
+      - name: Build release I/O baseline
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=release-io \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run release I/O baseline
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-release-io \
+            benchmark/data/geofabrik-2026-09-01/monaco-260901.osm.pbf \
+            | tee benchmark/release/io-monaco.txt
+
+      - name: Upload release I/O evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-io-monaco-${{ github.sha }}
+          path: benchmark/release/io-monaco.txt
+          if-no-files-found: error
+
+
+  release-metadata:
+    name: Release / metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify release intent and documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < RELEASE_VERSION)"
+          test -n "$version"
+          grep -Fq "## $version - " CHANGELOG.md
+          test -f "docs/releases/v$version.md"
+          grep -Fq 'toolchainRequirements dub=">=1.40.0" frontend=">=2.111"' dub.sdl
+          grep -Fq '**v0.1.x**' docs/API_STABILITY.md
+          echo "release_version=$version"

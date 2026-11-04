@@ -36,7 +36,7 @@ import osm.wire.zigzag : decodeZigZag32, decodeZigZag64;
  *   failure was detected.
  */
 pragma(inline, true)
-bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
+bool readVarint64(scope ref WireCursor cursor, out ulong value, out WireStatus status)
     @safe nothrow @nogc
 {
     const start = cursor.offset;
@@ -119,7 +119,7 @@ bool readVarint64(ref WireCursor cursor, out ulong value, out WireStatus status)
  *   `true` for every legal protobuf varint; `false` only when the underlying
  *   64-bit varint is malformed or truncated.
  */
-bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
+bool readVarint32(scope ref WireCursor cursor, out uint value, out WireStatus status)
     @safe nothrow @nogc
 {
     ulong wide;
@@ -145,7 +145,7 @@ bool readVarint32(ref WireCursor cursor, out uint value, out WireStatus status)
  *   `true` on success; `false` if the underlying varint is invalid.
  */
 pragma(inline, true)
-bool readSVarint64(ref WireCursor cursor, out long value, out WireStatus status)
+bool readSVarint64(scope ref WireCursor cursor, out long value, out WireStatus status)
     @safe nothrow @nogc
 {
     ulong encoded;
@@ -262,7 +262,7 @@ package(osm)
  *   As for protobuf generated parsers, over-wide legal varints are truncated
  *   to 32 bits before ZigZag decoding.
  */
-bool readSVarint32(ref WireCursor cursor, out int value, out WireStatus status)
+bool readSVarint32(scope ref WireCursor cursor, out int value, out WireStatus status)
     @safe nothrow @nogc
 {
     uint encoded;

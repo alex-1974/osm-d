@@ -1,0 +1,23 @@
+# Consumer package / release archive boundary.
+#
+# Keep production source, package metadata, licence, changelog, README and the
+# documentation/tools referenced by the README. CI, executable benchmark
+# material, tests and workspace-local coordination data remain outside the
+# consumer archive.
+
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.github export-ignore
+/.github/** export-ignore
+/AGENTS.md export-ignore
+/CONTRIBUTING.md export-ignore
+/SECURITY.md export-ignore
+
+/benchmark export-ignore
+/benchmark/** export-ignore
+/tests export-ignore
+/tests/** export-ignore
+/examples export-ignore
+/examples/** export-ignore
+/tools export-ignore
+/tools/** export-ignore

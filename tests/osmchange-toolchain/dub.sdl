@@ -1,0 +1,9 @@
+name "osm-d-osmchange-toolchain"
+description "Generate deterministic osmChange output for external-toolchain qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+stringImportPaths "../fixtures"
+
+dependency "osm-d" path="../.."

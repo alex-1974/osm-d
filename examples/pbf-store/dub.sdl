@@ -1,0 +1,8 @@
+name "osm-d-example-pbf-store"
+description "Direct PBF to editable osm-d store"
+authors "osm-d examples"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."

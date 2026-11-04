@@ -1,0 +1,8 @@
+name "osm-d-example-pbf-read"
+description "Borrowed PBF traversal with osm-d"
+authors "osm-d examples"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."

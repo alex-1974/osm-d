@@ -1,7 +1,13 @@
 name "osm-d"
 description "Safe, loss-aware and high-performance OpenStreetMap data library for D"
+homepage "https://github.com/alex-1974/osm-d"
 authors "Alexander Bernardi"
 copyright "Copyright © 2026 Alexander Bernardi"
 license "MIT"
 targetType "library"
 sourcePaths "source"
+toolchainRequirements dub=">=1.40.0" frontend=">=2.111"
+
+dependency "dxml" version="~>0.4.5"
+dependency "transport-d" version="~>0.1.1"
+stringImportPaths "tests/fixtures"

@@ -1,0 +1,8 @@
+name "osm-d-example-osmchange-roundtrip"
+description "osmChange round trip and validation with osm-d"
+authors "osm-d examples"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
