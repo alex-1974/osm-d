@@ -118,9 +118,9 @@ Tracked by M7: #47.
 
 Tracked by M8: #94.
 
-- [ ] Unify PBF/store leaf semantic view vocabulary.
-- [ ] Adopt `NodeRefView` / `OwnedNodeRef` terminology.
-- [ ] Add direct typed store lookup while preserving stable handles.
-- [ ] Add one-shot PBF convenience and focused `osm.pbf` facade.
-- [ ] Reconcile consumer docs, migration probes and package surface.
-- [ ] Complete workspace primitive reuse audit and preserve only contract-matching dependencies.
+- [x] Unify PBF/store leaf semantic view vocabulary.
+- [x] Adopt `NodeRefView` / `OwnedNodeRef` terminology.
+- [x] Add direct typed store lookup while preserving stable handles.
+- [x] Add one-shot PBF convenience and focused `osm.pbf` facade.
+- [x] Reconcile consumer docs, migration probes and package surface.
+- [x] Complete workspace primitive reuse audit and preserve only contract-matching dependencies.
