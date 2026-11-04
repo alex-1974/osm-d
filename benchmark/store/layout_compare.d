@@ -1,14 +1,11 @@
 /**
  * M6 compact-store layout qualification.
  *
- * This benchmark isolates the in-memory representation decision from the direct
- * PBF-to-store construction work tracked by #64. The pinned PBF is first
- * materialized through the common loss-aware reader, then either retained in a
- * straightforward owned reference store or copied into the compact candidate.
- *
- * Both variants use the same packed benchmark-only parent index so reverse
- * navigation memory/work is present in both sides without prematurely choosing
- * the production #63 reverse-index implementation.
+ * The reference variant materializes the ordinary owned semantic model.
+ * The compact variant uses the public direct PBF-to-store API and therefore
+ * qualifies the complete M6 production path without a PbfDocument/OwnedDataset
+ * intermediate. The compact-owned variant isolates the legacy materialized
+ * construction path for direct-vs-intermediate comparison.
  */
 module osm.benchmark.store.layout_compare;
 
@@ -28,6 +25,9 @@ import osm :
     OwnedWayNode,
     PbfDocument,
     PbfReadStatus,
+    PbfReadSummary,
+    PbfStoreReadStatus,
+    StoreCounts,
     StoreMetadataView,
     StoreElementState,
     StoreNodeView,
@@ -35,9 +35,9 @@ import osm :
     StoreStatus,
     StoreWayView,
     ownBytes,
-    readPbfDocument;
+    readPbfDocument,
+    readPbfStore;
 
-import osm.io.pbf.reader : PbfReadSummary, PbfReader, PbfReaderWorkspace;
 
 import osm.store.compact.store : ManualArray;
 
@@ -1214,55 +1214,16 @@ private void releaseDocument(ref PbfDocument document) @trusted
 }
 
 
-private struct DirectStoreHandler
-{
-    OsmStore store;
-    StoreStatus status;
-    bool failed;
-
-    void node(Node)(scope ref Node value) @safe nothrow @nogc
-    {
-        if (!failed && !store.addBorrowedNode(value, status))
-            failed = true;
-    }
-
-    void way(Way)(scope ref Way value) @safe nothrow @nogc
-    {
-        if (!failed && !store.addBorrowedWay(value, status))
-            failed = true;
-    }
-
-    void relation(Relation)(scope ref Relation value) @safe nothrow @nogc
-    {
-        if (!failed && !store.addBorrowedRelation(value, status))
-            failed = true;
-    }
-}
-
 private long measureDirectStoreBuild(
     scope const(ubyte)[] input,
     out OsmStore store,
     out PbfReadSummary summary,
-    out StoreStatus storeStatus) @safe
+    out PbfStoreReadStatus storeStatus) @safe
 {
-    store = new OsmStore();
-    PbfReader reader;
-    PbfReaderWorkspace workspace;
-    PbfReadStatus readStatus;
-    DirectStoreHandler handler;
-    handler.store = store;
-
-    const elapsed = elapsedNs(() {
-        if (!reader.read(input, workspace, handler, summary, readStatus))
-            throw new Exception("direct PBF reader failed");
+    long elapsed = elapsedNs(() {
+        if (!readPbfStore(input, store, summary, storeStatus))
+            throw new Exception("public direct PBF-to-store read failed");
     });
-
-    storeStatus = handler.status;
-    if (handler.failed)
-        throw new Exception("borrowed store ingest failed");
-
-    // Reader scratch is not retained by the store.
-    workspace = PbfReaderWorkspace.init;
     return elapsed;
 }
 
@@ -2096,11 +2057,12 @@ int main(string[] args)
 
     if ((variant != "reference" &&
          variant != "compact" &&
-         variant != "compact-owned") ||
+         variant != "compact-owned" &&
+         variant != "direct-parity") ||
         filename.length == 0)
     {
         stderr.writefln(
-            "usage: %s --variant=reference|compact|compact-owned FILE.osm.pbf",
+            "usage: %s --variant=reference|compact|compact-owned|direct-parity FILE.osm.pbf",
             args[0]);
         return 2;
     }
@@ -2109,6 +2071,59 @@ int main(string[] args)
     auto storage = cast(ubyte[])read(filename);
     const inputBytes = storage.length;
     const(ubyte)[] input = cast(const(ubyte)[])storage;
+
+    if (variant == "direct-parity")
+    {
+        PbfDocument document;
+        const referenceReadNs = measureSourceDecode(input, document);
+        const referenceChecksum = traverseReference(document.data);
+
+        OsmStore directStore;
+        PbfReadSummary directSummary;
+        PbfStoreReadStatus directStatus;
+        const directBuildNs = measureDirectStoreBuild(
+            input,
+            directStore,
+            directSummary,
+            directStatus);
+        const directChecksum = traverseCompact(directStore);
+
+        const referenceCounts = StoreCounts(
+            document.data.nodes.length,
+            document.data.ways.length,
+            document.data.relations.length,
+            document.data.nodes.length,
+            document.data.ways.length,
+            document.data.relations.length);
+
+        const directCounts = directStore.counts;
+        require(referenceChecksum == directChecksum,
+            "direct semantic parity mismatch");
+        require(referenceCounts.liveNodes == directCounts.liveNodes,
+            "direct Node count mismatch");
+        require(referenceCounts.liveWays == directCounts.liveWays,
+            "direct Way count mismatch");
+        require(referenceCounts.liveRelations == directCounts.liveRelations,
+            "direct Relation count mismatch");
+        require(directSummary.nodes == directCounts.liveNodes,
+            "direct summary Node mismatch");
+        require(directSummary.ways == directCounts.liveWays,
+            "direct summary Way mismatch");
+        require(directSummary.relations == directCounts.liveRelations,
+            "direct summary Relation mismatch");
+
+        writefln("variant=direct-parity");
+        writefln("input_bytes=%s", inputBytes);
+        writefln("reference_read_ns=%s", referenceReadNs);
+        writefln("direct_build_ns=%s", directBuildNs);
+        writefln("nodes=%s", directCounts.liveNodes);
+        writefln("ways=%s", directCounts.liveWays);
+        writefln("relations=%s", directCounts.liveRelations);
+        writefln("reference_checksum=%s", referenceChecksum);
+        writefln("direct_checksum=%s", directChecksum);
+        writefln("integrity=pass");
+        return 0;
+    }
 
     if (variant == "compact-owned")
     {
@@ -2172,7 +2187,7 @@ int main(string[] args)
     }
     else
     {
-        StoreStatus storeStatus;
+        PbfStoreReadStatus storeStatus;
         PbfReadSummary summary;
         sourceDecodeNs = 0;
         layoutBuildNs = measureDirectStoreBuild(

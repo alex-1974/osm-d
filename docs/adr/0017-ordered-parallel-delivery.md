@@ -65,3 +65,16 @@ backpressure contract.
 - direct construction into an owned model/store remains possible later;
 - a future ordered parallel API cannot be inferred from the current
   `PbfParallelReader` contract.
+
+
+## Resolution in M6 / #64 — 2026-11-04
+
+#64 evaluated the deferred owned-destination boundary. ADR 0024 selects a
+public direct `readPbfStore` path using the serial `PbfReader` and one reusable
+workspace. It avoids the materialized object graph and builds the final compact
+store and indexes in one single-writer pass.
+
+No parallel owned-staging/merge API was added: the Bremen direct path already
+measured 2.29x faster than materialized construction with a 1.070x peak/final
+RSS ratio. A parallel store-construction API therefore remains future work only
+if a representative consumer workload demonstrates a material bottleneck.

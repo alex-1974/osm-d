@@ -170,6 +170,57 @@ therefore do not need to zip PBF reference and coordinate columns themselves.
 The remaining semantic-view unification is tracked separately from the reader
 orchestration.
 
+### Loading an editable store directly from PBF
+
+Consumers that need durable random access can construct the compact store
+directly from the validated PBF stream:
+
+```d
+import osm;
+
+const(ubyte)[] pbfBytes = ...;
+
+OsmStore store;
+PbfReadSummary summary;
+PbfStoreReadStatus status;
+
+if (!readPbfStore(pbfBytes, store, summary, status))
+{
+    if (!status.pbf.ok)
+    {
+        // PBF/framing/semantic decode failure.
+    }
+    else
+    {
+        // The file decoded, but editable-store semantics were rejected.
+        // Inspect status.store.
+    }
+}
+else
+{
+    OsmHandle node;
+    if (store.find(ElementType.node, 123, node))
+    {
+        StoreNodeView view;
+        StoreStatus storeStatus;
+        if (store.node(node, view, storeStatus))
+        {
+            // view borrows from the durable store, not from pbfBytes.
+        }
+    }
+
+    auto parentWays = store.parentWays(123);
+    auto parentRelations =
+        store.parentRelations(ElementType.node, 123);
+}
+```
+
+The input bytes need to remain alive only for the call. On success the store
+owns all semantic state, primary indexes and parent indexes. No
+`PbfDocument` or `OwnedDataset` object graph is materialized. The selected M6
+construction path is single-writer with one reusable reader workspace; see ADR
+0024 for the parallel-staging decision and city-scale evidence.
+
 ### Parallel validated summary decoding
 
 When only complete-file validation and aggregate counts are required,

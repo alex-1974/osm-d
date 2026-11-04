@@ -108,6 +108,12 @@ The current pre-1.0 surface is classified as follows:
   combines known HeaderBlock semantics, an `OwnedDataset`, and explicit raw
   preservation state. Semantic rewrite and exact-source reproduction are
   separate contracts.
+- `osm.store` is the supported compact editable-store facade. The curated
+  root exports `OsmStore`, stable `OsmHandle` values, store semantic views,
+  typed primary lookup, parent navigation, lifecycle mutation, authoritative
+  `remapId`, and transactional `readPbfStore`. The direct PBF store reader
+  owns all durable semantics on success and does not expose codec representation
+  details or require a `PbfDocument`/`OwnedDataset` intermediate.
 - `readPbfDocument` and `PbfWriter` are the M4 durable PBF boundaries
   exported by `osm`. Semantic writing is fail-closed when raw preservation
   detects unrepresented source content or when required HeaderBlock feature
@@ -211,9 +217,11 @@ element view crosses a worker boundary.
 The parallel API publishes only value-type summary/status results. Ordered
 borrowed consumer callbacks remain the responsibility of `PbfReader.read` and
 the element-specific foreach adapters. ADR 0017 deliberately closes Phase 3
-without a generic ordered parallel borrowed-view API; future parallel decoded
-element publication requires an explicit owned destination/store or a new
-lifetime/backpressure contract.
+without a generic ordered parallel borrowed-view API; ADR 0024 resolves the M6 owned-destination case with public single-writer
+`readPbfStore`. A future parallel store-construction path still requires a
+separate measured ownership/ordering/backpressure contract; M6 does not expose
+one because the direct serial construction path already satisfies the city
+throughput and peak-memory targets.
 
 ## Build profiles
 

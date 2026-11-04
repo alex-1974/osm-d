@@ -182,3 +182,36 @@ locality for incremental edit coherence. The static packed reference is faster
 for pure parent lookup but cannot remain coherent after edits without a
 whole-store rebuild. The production result retains the <=75% reference-RSS,
 <=512 MiB, and <=384 MiB M6 memory gates.
+
+
+## M6 direct PBF-to-store qualification — 2026-11-04
+
+ADR 0024 selects direct single-writer construction through `readPbfStore`.
+The public path feeds validated borrowed `PbfReader` semantics directly into
+the compact store and production indexes; it allocates no worker queue and no
+block-local durable staging store.
+
+Pinned Monaco and Liechtenstein complete semantic checksums matched the
+materialized reference. Bremen additionally matched all store semantic,
+primary/parent lookup, edit, revert and ID-remap checks.
+
+Bremen, LDC 1.41.0 release/allAtOnce:
+
+- direct PBF -> fully indexed store: **2,268.417 ms**;
+- materialized PBF -> `PbfDocument`: **4,139.849 ms**;
+- materialized `OwnedDataset` -> store: **1,045.288 ms**;
+- combined materialized path: **5,185.137 ms = 2.285795x direct**;
+- final incremental RSS: **357,908 KiB (349.520 MiB)**;
+- peak incremental RSS: **383,104 KiB**;
+- peak/final RSS: **1.070398x**, target <=1.5x: **PASS**;
+- logical owned store bytes: **308,976,077**;
+- parent-index bytes: **73,415,112**.
+
+The <=512 MiB city and <=384 MiB stretch budgets remain PASS.
+
+A parallel owned-destination staging/merge path is not selected for M6.
+`OsmStore` is intentionally single-writer, and the direct serial path already
+cuts the measured materialized load time by more than half while remaining far
+inside the peak-memory budget. Parallel construction may be reconsidered only
+with a measured consumer bottleneck and an explicit bounded ownership/ordering
+contract.

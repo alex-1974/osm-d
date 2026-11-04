@@ -172,6 +172,13 @@ stable release.
   Node-to-Way and typed element-to-Relation navigation, coherent maintenance
   across add/replace/delete/restore/revert, and authoritative local-ID remap
   through `remapId`. ADR 0023 records the representation and Bremen trade-off.
+- Add public transactional `readPbfStore` construction. Validated PBF semantic
+  views feed the fully indexed compact store directly without a
+  `PbfDocument`/`OwnedDataset` intermediate. Pinned Monaco, Liechtenstein and
+  Bremen parity passed; Bremen direct construction was 2.29x faster than the
+  materialized path with a 1.070x peak/final RSS ratio. ADR 0024 records the
+  decision to keep M6 direct construction single-writer rather than add an
+  unmeasured parallel staging/merge layer.
 
 - Initial repository structure.
 - Data-integrity contract.
