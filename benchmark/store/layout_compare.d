@@ -27,6 +27,7 @@ import osm :
     PbfReadStatus,
     PbfReadSummary,
     PbfStoreReadStatus,
+    StoreCounts,
     StoreMetadataView,
     StoreElementState,
     StoreNodeView,
@@ -2056,11 +2057,12 @@ int main(string[] args)
 
     if ((variant != "reference" &&
          variant != "compact" &&
-         variant != "compact-owned") ||
+         variant != "compact-owned" &&
+         variant != "direct-parity") ||
         filename.length == 0)
     {
         stderr.writefln(
-            "usage: %s --variant=reference|compact|compact-owned FILE.osm.pbf",
+            "usage: %s --variant=reference|compact|compact-owned|direct-parity FILE.osm.pbf",
             args[0]);
         return 2;
     }
@@ -2069,6 +2071,59 @@ int main(string[] args)
     auto storage = cast(ubyte[])read(filename);
     const inputBytes = storage.length;
     const(ubyte)[] input = cast(const(ubyte)[])storage;
+
+    if (variant == "direct-parity")
+    {
+        PbfDocument document;
+        const referenceReadNs = measureSourceDecode(input, document);
+        const referenceChecksum = traverseReference(document.data);
+
+        OsmStore directStore;
+        PbfReadSummary directSummary;
+        PbfStoreReadStatus directStatus;
+        const directBuildNs = measureDirectStoreBuild(
+            input,
+            directStore,
+            directSummary,
+            directStatus);
+        const directChecksum = traverseCompact(directStore);
+
+        const referenceCounts = StoreCounts(
+            document.data.nodes.length,
+            document.data.ways.length,
+            document.data.relations.length,
+            document.data.nodes.length,
+            document.data.ways.length,
+            document.data.relations.length);
+
+        const directCounts = directStore.counts;
+        require(referenceChecksum == directChecksum,
+            "direct semantic parity mismatch");
+        require(referenceCounts.liveNodes == directCounts.liveNodes,
+            "direct Node count mismatch");
+        require(referenceCounts.liveWays == directCounts.liveWays,
+            "direct Way count mismatch");
+        require(referenceCounts.liveRelations == directCounts.liveRelations,
+            "direct Relation count mismatch");
+        require(directSummary.nodes == directCounts.liveNodes,
+            "direct summary Node mismatch");
+        require(directSummary.ways == directCounts.liveWays,
+            "direct summary Way mismatch");
+        require(directSummary.relations == directCounts.liveRelations,
+            "direct summary Relation mismatch");
+
+        writefln("variant=direct-parity");
+        writefln("input_bytes=%s", inputBytes);
+        writefln("reference_read_ns=%s", referenceReadNs);
+        writefln("direct_build_ns=%s", directBuildNs);
+        writefln("nodes=%s", directCounts.liveNodes);
+        writefln("ways=%s", directCounts.liveWays);
+        writefln("relations=%s", directCounts.liveRelations);
+        writefln("reference_checksum=%s", referenceChecksum);
+        writefln("direct_checksum=%s", directChecksum);
+        writefln("integrity=pass");
+        return 0;
+    }
 
     if (variant == "compact-owned")
     {
