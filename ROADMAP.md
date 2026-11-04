@@ -14,6 +14,7 @@ criteria.
 - **M8 — API ergonomics and workspace primitive reuse:** #94
 - **M9 — Editable store ↔ change/upload bridge:** #100
 - **M10 — v0.2.0 release stabilization and API freeze:** #102
+- **M11 — OSM API diffResult codec:** #114
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -162,3 +163,18 @@ Tracked by M10: #102.
 
 Feature/API freeze checkpoints are immutable engineering evidence. The final
 release tag alone is the publication trigger.
+
+
+## Phase 11 — OSM API diffResult codec
+
+Tracked by M11: #114.
+
+- [x] Define the current OSM API diffResult wire contract and upstream evidence. #111
+- [x] Implement bounded streaming/materialized diffResult parsing and the
+  focused `osm.upload` facade. #112
+- [x] Qualify current server result shapes, duplicate placeholders,
+  conditional-delete semantics and parser -> store reconciliation. #113
+
+The codec ends at the successful OSM Editing API response body. HTTP,
+authentication/OAuth, changeset creation/closing, retry policy and
+application/editor state remain outside osm-d.
