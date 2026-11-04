@@ -16,6 +16,7 @@ criteria.
 - **M10 — v0.2.0 release stabilization and API freeze:** #102
 - **M11 — OSM API diffResult codec:** #114
 - **M12 — Editing API capabilities discovery:** #119
+- **M13 — v0.3.0 API freeze and release qualification:** #121
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -195,3 +196,24 @@ Tracked by M12: #119.
 The projection consumes dynamic target-server policy without turning osm-d
 into an HTTP/account client. JSON capability responses remain additive future
 work only if a real consumer requires them.
+
+
+## Phase 13 — v0.3.0 API freeze and release qualification
+
+Tracked by M13: #121.
+
+- [x] Cut `release/0.3` from the exact post-M12 feature-freeze commit.
+- [x] Audit the v0.3 public facade/direct-import surface and remove the
+  ambiguous v0.2-only `UploadResultEntry.action` compatibility guess.
+- [x] Freeze the v0.3.x source contract and v0.2 -> v0.3 migration guidance.
+- [x] Prepare v0.3.0 version intent, changelog, consumer docs and release notes.
+- [ ] Pass the full six-compiler Release Gate and package/archive smoke.
+- [ ] Pass pinned real-data PBF round-trip and city-scale store qualification.
+- [ ] Promote `release/0.3` to `main` with a merge commit.
+- [ ] Verify the annotated v0.3.0 tag, GitHub Release, archive/checksum and
+  post-release qualification.
+- [ ] Forward-integrate the release result to `develop`.
+
+M11/M12 are the complete feature set for v0.3.0. No HTTP/OAuth client,
+changeset lifecycle, JSON capability codec or other new feature family is
+admitted after this feature freeze.
