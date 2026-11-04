@@ -83,6 +83,32 @@ void compileStoreSurface()
     assert(!local.node(9999, missing, status));
     assert(status.error == StoreError.notFound);
 
+    OwnedChangeSequence pending;
+    assert(store.collectChanges(pending, status));
+    assert(pending.empty);
+
+    auto uploadStore = new OsmStore();
+    OwnedNode uploadNode;
+    uploadNode.id = -11;
+    uploadNode.location = LocationView(48_000_000_000L, 16_000_000_000L);
+    OsmHandle uploadHandle;
+    assert(uploadStore.add(uploadNode, uploadHandle, status));
+
+    assert(uploadStore.collectChanges(pending, status));
+    assert(pending.entries.length == 1);
+    assert(pending.setChangeset(77));
+
+    UploadResult uploadResult;
+    uploadResult.entries ~= UploadResultEntry.created(
+        ElementType.node, -11, 1011, 1);
+    assert(uploadStore.applyUploadResult(pending, uploadResult, status));
+
+    StoreNodeView uploadedNode;
+    assert(uploadStore.node(1011, uploadedNode, status));
+    assert(uploadedNode.handle == uploadHandle);
+    assert(uploadedNode.metadata.versionNumber == 1);
+    assert(uploadedNode.metadata.changesetId == 77);
+
     StoreMemoryUsage usage = store.memoryUsage;
     StoreCounts counts = store.counts;
     assert(usage.totalOwnedBytes > 0);
