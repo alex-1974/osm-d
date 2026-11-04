@@ -3896,7 +3896,7 @@ private:
     }
 
     bool preflightBorrowedTags(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         auto outer = source;
@@ -4106,7 +4106,7 @@ private:
         }
     }
 
-    Span32 appendBorrowedTags(Range)(Range source)
+    Span32 appendBorrowedTags(Range)(scope Range source)
         @safe nothrow @nogc
     {
         Span32 result;
@@ -4128,7 +4128,7 @@ private:
 
 
     bool preflightBorrowedWayNodes(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         while (!source.empty)
@@ -4147,7 +4147,7 @@ private:
     }
 
     bool preflightBorrowedRelationMembers(Range)(
-        Range source,
+        scope Range source,
         ref StoreStatus status) @safe nothrow @nogc
     {
         while (!source.empty)
@@ -4166,7 +4166,7 @@ private:
     }
 
     Span32 appendBorrowedWayNodes(Range)(
-        Range source,
+        scope Range source,
         uint parentSlot) @safe nothrow @nogc
     {
         Span32 refs;
@@ -4204,7 +4204,7 @@ private:
     }
 
     Span32 appendBorrowedRelationMembers(Range)(
-        Range source,
+        scope Range source,
         uint parentSlot) @safe nothrow @nogc
     {
         Span32 result;
