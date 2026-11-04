@@ -1,45 +1,40 @@
 /**
  * Public package root for `osm-d`.
  *
- * `osm-d` provides loss-aware, high-performance OpenStreetMap data handling.
- * The public surface is intentionally kept small while the canonical data
- * model, codecs, validation rules, and streaming contracts are established.
- *
- * Authors: Alexander Bernardi
- * Date: 2026-09-12
- * Copyright: Copyright © 2026 Alexander Bernardi
- * License: MIT
+ * `import osm;` exposes the common semantic model, borrowed PBF traversal and
+ * editable store workflows. Format-specialized loss-aware PBF document/write
+ * facilities live in `osm.pbf`; XML, osmChange and upload validation use
+ * their corresponding focused facades.
  */
 module osm;
 
 public import osm.view.element :
     ElementType,
     OsmId;
-public import osm.model.compare :
-    PbfSemanticField,
-    PbfSemanticDifference,
-    comparePbfSemantics,
-    sameOsmSemantics,
-    sameChangeSemantics,
-    samePbfHeaderSemantics,
-    samePbfSemantics,
-    samePbfRawSource;
+public import osm.view.location : LocationView;
+public import osm.view.metadata : MetadataView;
+public import osm.view.node_ref : NodeRefView;
+public import osm.view.relation_member : RelationMemberView;
+public import osm.view.tag : TagView;
+
 public import osm.model.owned :
     OwnedBytes,
     OwnedTag,
     OwnedMetadata,
-    OwnedWayNode,
+    OwnedNodeRef,
     OwnedRelationMember,
     OwnedNode,
     OwnedWay,
     OwnedRelation,
     OwnedDataset,
     ownBytes;
+
 public import osm.model.change :
     ChangeAction,
     ChangeObjectState,
     OwnedChangeEntry,
     OwnedChangeSequence;
+
 public import osm.store :
     OsmHandle,
     OsmStore,
@@ -48,12 +43,8 @@ public import osm.store :
     StoreStatus,
     StoreCounts,
     StoreMemoryUsage,
-    StoreMetadataView,
-    StoreTagView,
     StoreTagRange,
-    StoreWayNodeView,
-    StoreWayNodeRange,
-    StoreRelationMemberView,
+    StoreNodeRefRange,
     StoreRelationMemberRange,
     StoreNodeView,
     StoreWayView,
@@ -65,28 +56,10 @@ public import osm.store :
     StoreRelationRange,
     PbfStoreReadStatus,
     readPbfStore;
-public import osm.raw.pbf :
-    PbfPreservationReason,
-    PbfRawFile,
-    PbfPreservation;
-public import osm.io.pbf.document :
-    PbfHeaderBBox,
-    PbfHeader,
-    PbfDocument;
-public import osm.io.pbf.document_reader : readPbfDocument;
-public import osm.io.pbf.writer :
-    PbfWriteError,
-    PbfWriteStatus,
-    PbfWriteOptions,
-    PbfWriter;
-public import osm.view.location : LocationView;
-public import osm.view.metadata : MetadataView;
+
 public import osm.io.pbf.node_view : NodeView;
 public import osm.io.pbf.way : WayView;
 public import osm.io.pbf.relation : RelationView;
-public import osm.view.relation_member : RelationMemberView;
-public import osm.view.tag : TagView;
-public import osm.view.way_node : WayNodeView;
 
 public import osm.io.pbf.reader :
     PbfNodeIterable,
@@ -95,8 +68,10 @@ public import osm.io.pbf.reader :
     PbfReadError,
     PbfReadStatus,
     PbfReadSummary,
+    PbfReadResult,
     PbfReaderWorkspace,
-    PbfReader;
-public import osm.io.pbf.parallel_reader :
-    PbfParallelReadOptions,
-    PbfParallelReader;
+    PbfReader,
+    readPbf,
+    pbfNodes,
+    pbfWays,
+    pbfRelations;

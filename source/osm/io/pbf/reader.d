@@ -673,6 +673,68 @@ struct PbfReader
     }
 }
 
+
+/**
+ * Result of the one-shot `readPbf` convenience operation.
+ *
+ * `ok` is equivalent to `status.ok`. Summary counters are complete only
+ * when `ok` is true.
+ */
+struct PbfReadResult
+{
+    PbfReadSummary summary;
+    PbfReadStatus status;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return status.ok;
+    }
+}
+
+/**
+ * Decode one complete PBF with a temporary reader workspace.
+ *
+ * This is the ordinary one-shot entry point. Repeated/high-throughput callers
+ * should keep a `PbfReaderWorkspace` and call `PbfReader.read` directly so
+ * scratch capacity is reused across files.
+ */
+PbfReadResult readPbf(Handler)(
+    const(ubyte)[] input,
+    ref Handler handler) @safe
+{
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfReadResult result;
+    reader.read(
+        input,
+        workspace,
+        handler,
+        result.summary,
+        result.status);
+    return result;
+}
+
+/** Return a foreach adapter over semantic Nodes in one PBF input. */
+PbfNodeIterable pbfNodes(return scope const(ubyte)[] input)
+    @safe pure nothrow @nogc
+{
+    return PbfNodeIterable(input);
+}
+
+/** Return a foreach adapter over semantic Ways in one PBF input. */
+PbfWayIterable pbfWays(return scope const(ubyte)[] input)
+    @safe pure nothrow @nogc
+{
+    return PbfWayIterable(input);
+}
+
+/** Return a foreach adapter over semantic Relations in one PBF input. */
+PbfRelationIterable pbfRelations(return scope const(ubyte)[] input)
+    @safe pure nothrow @nogc
+{
+    return PbfRelationIterable(input);
+}
+
 private bool iterateNodes(Sink)(
     const(ubyte)[] input,
     ref PbfReaderWorkspace workspace,

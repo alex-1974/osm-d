@@ -1,6 +1,7 @@
 module app;
 
 import osm;
+import osm.pbf;
 import osm.osmchange;
 import osm.validate;
 import osm.xml;
@@ -49,6 +50,13 @@ import transport.source : MemorySink, MemorySource;
         value: node,
         handle: handle,
         status: status));
+
+    StoreNodeView direct;
+    assert(editable.node(
+        id: -1,
+        value: direct,
+        status: status));
+    assert(direct.handle == handle);
 
     OsmHandle found;
     assert(editable.find(
