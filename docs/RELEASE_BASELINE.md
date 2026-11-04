@@ -1,17 +1,65 @@
-# osm-d v0.2.0 release baseline
-
-**Feature-freeze date:** 2026-11-04  
-**Feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
-
-This document condenses the evidence relevant to the v0.2.0 release. v0.2 is
-primarily a consumer-API and editable-store workflow release, not a parser
-algorithm rewrite. Evidence is therefore split between unchanged v0.1
-performance/reference baselines and v0.2-specific requalification of the
-changed API/store surface.
+# osm-d release baseline
 
 Absolute timings are environment-specific. Durable claims are semantic parity,
 bounded-memory behavior, the supported compiler matrix, source/lifetime
 contracts and the measured performance class on the recorded runners.
+
+## v0.3.0 release candidate
+
+**Feature-freeze date:** 2026-11-04  
+**Feature-freeze commit:** `77c98eaca6ba2cd8f50eb50adc4d4e352d6e719c`
+
+v0.3.0 contains the completed M11/M12 Editing API response/policy slice:
+
+- bounded `diffResult` XML parsing through `osm.upload`;
+- request-context result classification through
+  `UploadResultEntry.effectFor`;
+- bounded Editing API capabilities projection through `osm.capabilities`;
+- direct projection of dynamic Way/Relation/Changeset limits into the existing
+  `CapabilityProfile`.
+
+The production PBF decoder/writer, compact-store representation and city-scale
+store algorithms are unchanged by M11/M12. Existing v0.2 performance/reference
+evidence therefore remains the comparison baseline rather than being relabeled
+as fresh v0.3 measurements.
+
+v0.3-specific correctness evidence before the release branch:
+
+- M11 final PR-head Fast CI 41896048308 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M11 post-merge Fast CI 41896622851 — PASS;
+- M12 final PR-head Fast CI 41909701127 — DMD 2.111.0 PASS,
+  LDC 1.41.0 PASS;
+- M12 post-merge Fast CI 41910215373 — PASS;
+- external `osm.upload` and `osm.capabilities` consumers compile and run on
+  the fast compiler pair;
+- server-shape fixtures cover conditional delete result ambiguity, placeholder
+  reuse, current capability structure/service states, projection evolution and
+  malformed/bounded input.
+
+The v0.3 release candidate must still pass, on one exact release-branch head:
+
+- the full six-compiler Release Gate;
+- package/archive and external-consumer smoke;
+- pinned real-data PBF round-trip;
+- pinned M6/Bremen store qualification;
+- release metadata/version checks;
+- Monaco release-I/O semantic parity evidence.
+
+The API freeze removes the v0.2-only ambiguous
+`UploadResultEntry.action` shape guess and freezes request-aware `effectFor`
+as the supported semantic classifier. No further public API change is admitted
+after that checkpoint.
+
+## Historical v0.2 baseline
+
+**v0.2 feature-freeze date:** 2026-11-04  
+**v0.2 feature-freeze commit:** `fab28b1085138531ad07d95a48ad010d8300383e`
+
+v0.2 was primarily a consumer-API and editable-store workflow release, not a
+parser algorithm rewrite. Evidence is split between unchanged v0.1
+performance/reference baselines and v0.2-specific requalification of the
+changed API/store surface.
 
 ## Publication record
 
