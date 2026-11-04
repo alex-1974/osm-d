@@ -3656,7 +3656,7 @@ private:
         ElementType type,
         uint slot,
         int newVersion,
-        scope ref const OwnedMetadata uploaded) @safe nothrow @nogc
+        scope ref const OwnedMetadata uploaded) @safe nothrow
     {
         final switch (type)
         {
@@ -3683,7 +3683,7 @@ private:
 
     void finalizeAcknowledgedDelete(
         ElementType type,
-        uint slot) @safe nothrow @nogc
+        uint slot) @safe nothrow
     {
         final switch (type)
         {
