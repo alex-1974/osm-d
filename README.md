@@ -64,6 +64,7 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `docs/RELEASE_BASELINE.md` — v0.2.x release qualification baseline
 - `docs/API_STABILITY.md` — supported v0.2.x API and compatibility policy
 - `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
+- `docs/API_V0_3.md` — current next-minor API direction on `develop`
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -113,6 +114,11 @@ OSM/PBF-traversal/store workflows, loss-aware PBF document/write/parallel
 facilities live in `osm.pbf`, and XML, osmChange, comparison and upload
 validation use focused facades. The exact v0.2.x promise is in
 `docs/API_STABILITY.md`; v0.1 -> v0.2 migration is in `docs/API_V0_2.md`.
+
+Current `develop` starts the next minor line with an additive
+`osm.upload` facade for parsing OSM API `diffResult` responses. It does not
+change the published v0.2.x contract and does not add HTTP/OAuth policy. See
+`docs/API_V0_3.md`.
 
 ## Reading an in-memory PBF
 

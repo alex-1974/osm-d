@@ -288,9 +288,15 @@ Sources: N3, R2.
 | minimal delete ambiguity | A delete may contain only identity/version metadata. An empty Way/Relation body is lexically indistinguishable from a complete but empty object. | Upload clients typically send minimal deletes. | **MUST:** represent empty delete Way/Relation conservatively as `identityOnly`; never invent complete content. A delete Node is complete only when both lat and lon are present. | minimal relation delete; complete node delete; one-coordinate delete rejection. |
 | delete metadata/version | Version/changeset and other metadata are attributes on the deleted object when supplied; upload validity is stricter than mere format representability. | API uploads require operation-specific metadata. | Codec preserves present metadata exactly and never fabricates absent version/changeset. Upload-readiness rules are enforced by #60, not parser defaults. | missing version preserved as missing; version round-trip; upload validation later rejects when required. |
 | diff upload transaction | One diff upload request is transactional: all applied or none. A whole changeset spanning requests is not globally atomic. | Editors use diff upload. | **MUST:** transaction boundary represented as request, not changeset object. | simulated failure mid-diff => no local commit. |
-| diffResult | Server maps uploaded IDs and returns new IDs/versions for successful create/modify results as applicable. | Editors update local graph from server response. | **MUST:** apply returned mapping/version; never assume version increment or server ID. | old->new placeholder mapping. |
+| diffResult | Server returns one Node/Way/Relation result occurrence per processed upload occurrence, carrying `old_id` and, when applicable, paired `new_id`/`new_version`. Current Rails behavior can return the paired shape for conditional `delete if-unused` that was not performed, and placeholder reuse can repeat one type+`old_id`. | Current Rails upload tests cover create/modify/delete result shapes, retained conditional deletes and repeated placeholder identities. | **MUST:** preserve raw entry order and fields. The codec never infers create/modify/delete from response shape; semantic effect uses the exact uploaded request entry through `UploadResultEntry.effectFor`. Apply returned mapping/version as authority; never predict server ID/version. | create/modify/delete; retained conditional delete; repeated placeholder old ID; malformed paired fields. |
 
-Sources: N1, N4, R4.
+M11 diffResult evidence was refreshed on **2026-11-04** against the current
+OpenStreetMap Rails implementation and upload integration tests. This local
+refresh does not imply that every older row in this matrix was reverified on
+that date.
+
+Sources: N1, N4, R4; current OpenStreetMap Rails `DiffReader` and upload
+integration tests recorded in `docs/design/diff-result-codec.md`.
 
 ### Implemented upload-readiness boundary
 
