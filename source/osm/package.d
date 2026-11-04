@@ -3,8 +3,9 @@
  *
  * `import osm;` exposes the common semantic model, borrowed PBF traversal and
  * editable store workflows. Format-specialized loss-aware PBF document/write
- * facilities live in `osm.pbf`; XML, osmChange and upload validation use
- * their corresponding focused facades.
+ * facilities live in `osm.pbf`; XML, osmChange, upload validation, API
+ * upload results and capability discovery use their corresponding focused
+ * facades.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-09-12
