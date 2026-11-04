@@ -33,6 +33,11 @@ int main(string[] args)
             " relations=", counts.liveRelations,
             " owned-bytes=", store.memoryUsage.totalOwnedBytes);
 
+    StoreNodeView node;
+    StoreStatus storeStatus;
+    if (store.node(1, node, storeStatus))
+        writeln("node 1 handle valid=", node.handle.valid);
+
     auto parents = store.parentWays(1);
     if (!parents.empty)
         writeln("first Way referencing node 1: ", parents.front.id);

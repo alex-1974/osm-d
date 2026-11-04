@@ -64,112 +64,42 @@ keeps expensive cross-generation qualification out of ordinary `develop`
 commits while requiring it before release promotion. `main` remains the
 release line; normal development targets `develop`.
 
-## Public module surface and v0.1.x compatibility
+## Public module surface
 
-D module visibility and package support are separate concerns. A source module
-being directly importable does not by itself make every declaration in that
-module part of a compatibility promise.
+The published v0.1.x source contract remains frozen in
+`docs/API_STABILITY.md`. Current `develop` intentionally prepares a cleaner
+v0.2 pre-1.0 surface; its migration is documented in `docs/API_V0_2.md`.
 
-The current pre-1.0 surface is classified as follows:
+Preferred v0.2 facades:
 
-- `osm` is the curated package root. It re-exports the consumer-facing
-  whole-buffer PBF reader boundary (`PbfReader`, `PbfReaderWorkspace`,
-  `PbfNodeIterable`, `PbfWayIterable`, `PbfRelationIterable`,
-  `PbfParallelReader`, `PbfParallelReadOptions`, `PbfReadSummary`,
-  `PbfReadStatus`, `PbfReadError`) plus the
-  format-independent semantic node/way/relation/identity/location/metadata/tag/
-  member/way-node vocabulary (`NodeView`, `WayView`, `RelationView`,
-  `OsmId`, `ElementType`, `LocationView`, `MetadataView`, `TagView`,
-  `RelationMemberView`, `WayNodeView`). `NodeView` is the one concrete
-  callback/foreach value type used for regular Node and DenseNodes encoding.
-  `PbfNodeIterable`, `PbfWayIterable`, and `PbfRelationIterable` are the
-  element-specific convenience adapters returned by `PbfReader.nodes`,
-  `PbfReader.ways`, and `PbfReader.relations`; they use `opApply` rather
-  than pretending the synchronous decoder is a resumable Phobos InputRange.
-  The package root does not re-export the evolving low-level PBF or wire
-  implementation surface.
-- `osm.view.element`, `osm.view.location`, `osm.view.metadata`,
-  `osm.view.tag`, `osm.view.relation_member`, and `osm.view.way_node` are
-  supported semantic direct-import APIs. The `ElementType`, `OsmId`,
-  structural `isElementView` contract, `LocationView`, `MetadataView`,
-  `TagView`, `RelationMemberView`, and `WayNodeView` form the current
-  format-independent borrowed semantic boundary described by ADR 0016 and the
-  consumer API design. The package-root `NodeView` is callback-scoped and
-  deliberately non-copyable; semantic subviews and tag-range copies remain
-  ordinary values.
-- `osm.model.owned` is the format-independent durable semantic model for
-  M4 and later codecs/stores. The curated root exports its owned Node/Way/
-  Relation/tag/metadata/member/reference/dataset values. Immutable byte strings
-  may share backing storage; mutable child arrays follow normal D aliasing
-  semantics and `deepCopy` creates independently mutable arrays.
-- `osm.raw.pbf` and `osm.io.pbf.document` form the PBF read/modify/write
-  preservation boundary. The ordinary owned model contains no protobuf field
-  IDs, StringTable IDs, block offsets or compression state. `PbfDocument`
-  combines known HeaderBlock semantics, an `OwnedDataset`, and explicit raw
-  preservation state. Semantic rewrite and exact-source reproduction are
-  separate contracts.
-- `osm.store` is the supported compact editable-store facade. The curated
-  root exports `OsmStore`, stable `OsmHandle` values, store semantic views,
-  typed primary lookup, parent navigation, lifecycle mutation, authoritative
-  `remapId`, and transactional `readPbfStore`. The direct PBF store reader
-  owns all durable semantics on success and does not expose codec representation
-  details or require a `PbfDocument`/`OwnedDataset` intermediate.
-- `readPbfDocument` and `PbfWriter` are the M4 durable PBF boundaries
-  exported by `osm`. Semantic writing is fail-closed when raw preservation
-  detects unrepresented source content or when required HeaderBlock feature
-  declarations are missing. `writeOriginalSource` is explicitly distinct
-  from semantic writing and reproduces only the captured source bytes.
-- `comparePbfSemantics` reports the first structured semantic difference;
-  the boolean `samePbfSemantics` helper remains available when diagnostics
-  are not needed. M4 qualification uses the structured comparator plus an
-  independent libosmium differential check.
-- `osm.io.pbf.reader` is the supported direct-import module for the ordered
-  consumer-facing PBF reader boundary exported by `osm`. The curated root also
-  exports `PbfParallelReader` / `PbfParallelReadOptions`; their implementation
-  module `osm.io.pbf.parallel_reader` is supported for the same summary-only
-  API.
-- `osm.xml` is the supported high-level ordinary OSM XML facade.
-  It exports document-envelope metadata plus `OsmXmlReader`,
-  `readOsmXmlDocument`, and `OsmXmlWriter` with their status/options types.
-  The facade deliberately does not expose dxml parser/writer entities.
-  `ByteSource` and `ByteSink` remain transport-d concepts rather than an
-  osm-d-specific stream hierarchy.
-- `osm.osmchange` is the supported high-level osmChange facade.
-  It reuses `OwnedChangeSequence` and exports streaming/materializing reader
-  and writer boundaries without exposing XML parser entities. Source entry
-  order and explicit delete `if-unused` policy are semantic contracts.
-- `osm.validate` is the supported upload-readiness validation facade.
-  `CapabilityProfile` carries target-server limits; `validateUploadChanges`
-  reports the first deterministic semantic/upload failure without reordering
-  or repairing the input. The convenience validator allocates a temporary
-  placeholder hash index proportional to create entries; it is not part of a
-  parser hot path.
-- Other `osm.io.pbf.*` modules remain an evolving codec-development surface.
-  Their documented decoding APIs may be used directly during pre-1.0
-  development, but their module organization and callable signatures are not
-  part of the high-level reader compatibility promise.
-- `osm.wire.*` and `osm.util.*` are implementation-oriented modules. They are
-  technically importable because D source modules are visible to consumers, but
-  no source-compatibility promise is made for direct external use.
+- `osm`: common OSM identity/semantic values, owned model, borrowed
+  Node/Way/Relation views, one-shot/reusable PBF traversal and editable store;
+- `osm.pbf`: PBF-specific document preservation, writer, parallel summary and
+  PBF semantic-comparison facilities;
+- `osm.store`: editable store facade;
+- `osm.compare`: serialization-independent OSM/change semantic comparison;
+- `osm.xml`: ordinary OSM XML;
+- `osm.osmchange`: osmChange;
+- `osm.validate`: upload-readiness validation.
 
-`package` visibility is not treated as a security, trust, or validated-state
-provenance boundary. Construction-controlled invariants must rely on actual
-representation/construction control rather than on a caller being outside a D
-package namespace.
+Shared semantic leaves are `LocationView`, `MetadataView`, `TagView`,
+`NodeRefView` and `RelationMemberView`. Store ranges keep their own
+lifetime/invalidation machinery but return these same values.
 
-For v0.1.x this classification is frozen by `docs/API_STABILITY.md` and the
-external release-consumer compile probe. Supported direct imports, callable
-parameter names, representative named-argument forms, ownership/lifetime
-semantics, and failure-state contracts are release compatibility surface.
+`OsmHandle` remains the stable editor identity. Typed
+`OsmStore.node/way/relation(OsmId, ...)` is the ordinary direct lookup path;
+generic `find(ElementType, OsmId, OsmHandle)` remains available.
 
-The element-specific foreach boundaries have additional executable lifetime
-checks. External `@safe` consumer compilation verifies normal Node, Way, and
-Relation foreach use. DIP1000 compile-negative tests verify that iterables
-borrowing stack-local input bytes cannot escape and that pointers to
-callback-scoped `NodeView`, `WayView`, or `RelationView` values cannot
-escape their foreach bodies. A complete traversal has the same whole-file
-validation scope as `PbfReader.read`; an explicit early foreach exit is an
-intentional partial traversal and leaves the unvisited suffix unvalidated.
+One-shot PBF consumers may call `readPbf`; repeated callers retain
+`PbfReaderWorkspace` and use `PbfReader.read` so scratch allocations are
+reused.
+
+Other `osm.io.pbf.*`, `osm.wire.*`, `osm.util.*` and
+`osm.store.compact.*` modules are implementation/development surfaces unless
+explicitly listed in the release compatibility document.
+
+`package` visibility is not a security or provenance mechanism. Invariants
+rely on representation/construction control and executable tests.
 
 ## Public API surface
 

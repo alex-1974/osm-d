@@ -7,6 +7,26 @@ v0.1.x source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+### Changed
+
+- Simplify the developing v0.2 consumer surface: `NodeRefView` /
+  `OwnedNodeRef` replace the ambiguous Way-node names, compact-store ranges
+  return the same semantic leaf values as PBF, and typed
+  `store.node/way/relation(id, ...)` lookup avoids a mandatory handle round
+  trip for ordinary reads.
+- Add one-shot `readPbf` and `pbfNodes/pbfWays/pbfRelations` convenience
+  entry points while preserving the reusable-workspace `PbfReader.read` hot
+  path.
+- Add focused `osm.pbf` and `osm.compare` facades for PBF-specialized and
+  serialization-independent semantic comparison workflows respectively; slim
+  `import osm;` to ordinary semantic/PBF-traversal/store concepts.
+- Audit workspace reuse: retain transport-d as the byte-resource boundary;
+  defer containers-d queue reuse because its producer-admission contract does
+  not match PBF blocking backpressure; defer compression-d until it has a
+  stable qualified release; avoid importing concurrency-d's broader executor
+  policy for this reader slice.
+
+
 ## 0.1.0 - 2026-11-04
 
 - Added `PbfParallelReader.readSummary`, a bounded producer/worker whole-buffer

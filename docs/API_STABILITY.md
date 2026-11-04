@@ -1,5 +1,10 @@
 # Public API and compatibility policy
 
+> **Published v0.1.x contract.** This document is normative for the v0.1
+> release line. Current `develop` intentionally evolves selected names and
+> root re-exports for v0.2; see `API_V0_2.md`. Nothing in the development
+> branch retroactively changes the v0.1 compatibility promise.
+
 ## Release line
 
 This document defines the supported source-level API contract for the first

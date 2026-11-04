@@ -23,7 +23,7 @@ module osm.io.pbf.way;
 import osm.view.element : ElementType, isElementView;
 import osm.view.location : LocationView;
 import osm.view.metadata : MetadataView;
-import osm.view.way_node : WayNodeView;
+import osm.view.node_ref : NodeRefView;
 import osm.io.pbf.error : PbfError, PbfStatus;
 import osm.io.pbf.info :
     InfoView,
@@ -260,7 +260,7 @@ public:
  * internally. This range projects them into one OSM-facing sequence without
  * allocation, node lookup, or geometry construction.
  */
-struct WayNodeRange
+struct NodeRefRange
 {
 private:
     WayRefRange _refs;
@@ -278,32 +278,32 @@ package(osm):
     }
 
 public:
-    /** Returns true when no Way node reference remains. */
+    /** Returns true when no node reference remains. */
     pragma(inline, true)
     @property bool empty() const scope @safe pure nothrow @nogc
     {
         return _refs.empty;
     }
 
-    /** Returns the number of Way node references not yet consumed. */
+    /** Returns the number of node references not yet consumed. */
     pragma(inline, true)
     @property size_t length() const scope @safe pure nothrow @nogc
     {
         return _refs.length;
     }
 
-    /** Return the current semantic Way node reference. */
+    /** Return the current semantic node reference. */
     pragma(inline, true)
-    @property WayNodeView front() const scope @safe pure nothrow @nogc
+    @property NodeRefView front() const scope @safe pure nothrow @nogc
     in (!empty)
     {
         if (_locations.empty)
-            return WayNodeView(_refs.front);
+            return NodeRefView(_refs.front);
 
-        return WayNodeView(_refs.front, _locations.front);
+        return NodeRefView(_refs.front, _locations.front);
     }
 
-    /** Advance to the next already validated Way node reference. */
+    /** Advance to the next already validated node reference. */
     pragma(inline, true)
     void popFront() scope @safe nothrow @nogc
     in (!empty)
@@ -313,6 +313,9 @@ public:
             _locations.popFront();
     }
 }
+
+/// v0.1 compatibility alias. Prefer NodeRefRange.
+alias WayNodeRange = NodeRefRange;
 
 /** One validated regular Way with borrowed tags, refs, metadata, and provenance. */
 struct WayView
@@ -333,16 +336,16 @@ package(osm):
 
 public:
     /**
-     * Ordered semantic Way node references with optional aligned locations.
+     * Ordered semantic node references with optional aligned locations.
      *
      * The returned range is lazy and allocation-free. It performs no node
      * lookup and no geometry construction.
      */
     pragma(inline, true)
-    @property WayNodeRange nodes() return scope
+    @property NodeRefRange nodes() return scope
         @safe pure nothrow @nogc
     {
-        return WayNodeRange(refs, locations);
+        return NodeRefRange(refs, locations);
     }
 
     /** Format-independent OSM metadata without PBF encoding vocabulary. */

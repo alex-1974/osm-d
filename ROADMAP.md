@@ -11,6 +11,7 @@ exit criteria.
 - **M5 — XML and osmChange interoperability:** #45
 - **M6 — Compact editable OSM store:** #46
 - **M7 — First stable standalone release:** #47
+- **M8 — API ergonomics and workspace primitive reuse:** #94
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -111,3 +112,15 @@ Tracked by M7: #47.
 - [x] Consumer documentation, examples and package smoke tests. #66
 - [x] Compatibility and performance baseline published. #67
 - [x] Release gate and first tagged release. #69
+
+
+## Phase 8 — API ergonomics and workspace reuse
+
+Tracked by M8: #94.
+
+- [x] Unify PBF/store leaf semantic view vocabulary.
+- [x] Adopt `NodeRefView` / `OwnedNodeRef` terminology.
+- [x] Add direct typed store lookup while preserving stable handles.
+- [x] Add one-shot PBF convenience and focused `osm.pbf` facade.
+- [x] Reconcile consumer docs, migration probes and package surface.
+- [x] Complete workspace primitive reuse audit and preserve only contract-matching dependencies.

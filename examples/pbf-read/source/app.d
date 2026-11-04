@@ -26,21 +26,17 @@ int main(string[] args)
     auto storage = read(args[1]);
     const(ubyte)[] input = cast(const(ubyte)[])storage;
 
-    PbfReader reader;
-    PbfReaderWorkspace workspace;
     Counter counter;
-    PbfReadSummary summary;
-    PbfReadStatus status;
-
-    if (!reader.read(input, workspace, counter, summary, status))
+    const result = readPbf(input, counter);
+    if (!result.ok)
     {
-        stderr.writeln("PBF read failed: ", status.error);
+        stderr.writeln("PBF read failed: ", result.status.error);
         return 1;
     }
 
     writeln("nodes=", counter.nodes,
             " ways=", counter.ways,
             " relations=", counter.relations,
-            " tags=", summary.tags);
+            " tags=", result.summary.tags);
     return 0;
 }

@@ -1,7 +1,7 @@
 module app;
 
-import osm :
-    ElementType,
+import osm : ElementType;
+import osm.compare :
     sameChangeSemantics,
     sameOsmSemantics;
 import osm.osmchange :

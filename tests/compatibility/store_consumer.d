@@ -2,6 +2,16 @@ module store_consumer;
 
 import osm;
 
+// Preferred v0.2 root stays focused on common semantic/store/traversal APIs.
+static assert(!__traits(compiles, PbfDocument.init),
+    "PbfDocument is intentionally not a root export; import osm.pbf");
+static assert(!__traits(compiles, PbfParallelReader.init),
+    "PbfParallelReader is intentionally not a root export; import osm.pbf");
+static assert(!__traits(compiles, StoreTagView.init),
+    "store leaf values use TagView");
+static assert(!__traits(compiles, StoreMetadataView.init),
+    "store leaf values use MetadataView");
+
 void compileStoreSurface()
 {
     auto store = new OsmStore();
@@ -15,13 +25,14 @@ void compileStoreSurface()
     bool added = store.add(node, handle, status);
     assert(added && status.ok);
 
+    StoreNodeView view;
+    assert(store.node(1, view, status));
+    assert(view.id == 1);
+    assert(view.handle == handle);
+
     OsmHandle found;
     assert(store.find(ElementType.node, 1, found));
     assert(found == handle);
-
-    StoreNodeView view;
-    assert(store.node(found, view, status));
-    assert(view.id == 1);
 
     auto nodes = store.nodes;
     if (!nodes.empty)
@@ -41,6 +52,15 @@ void compileStoreSurface()
     assert(state == StoreElementState.deleted);
     assert(store.restore(handle, status));
 
+    // Store leaf values reuse the common semantic view family.
+    static assert(is(typeof(view.metadata) == MetadataView));
+    static assert(is(typeof(view.tags.front) == TagView));
+
+    StoreWayView typeProbeWay;
+    StoreRelationView typeProbeRelation;
+    static assert(is(typeof(typeProbeWay.nodes.front) == NodeRefView));
+    static assert(is(typeof(typeProbeRelation.members.front) == RelationMemberView));
+
     StoreParentWayRange wayParents = store.parentWays(1);
     StoreParentRelationRange relationParents =
         store.parentRelations(ElementType.node, 1);
@@ -54,6 +74,14 @@ void compileStoreSurface()
     OsmHandle localHandle;
     assert(local.add(localNode, localHandle, status));
     assert(local.remapId(localHandle, 1001, 1, status));
+
+    StoreNodeView remapped;
+    assert(local.node(1001, remapped, status));
+    assert(remapped.handle == localHandle);
+
+    StoreNodeView missing;
+    assert(!local.node(9999, missing, status));
+    assert(status.error == StoreError.notFound);
 
     StoreMemoryUsage usage = store.memoryUsage;
     StoreCounts counts = store.counts;

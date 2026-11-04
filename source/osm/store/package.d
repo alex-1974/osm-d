@@ -11,6 +11,11 @@
  */
 module osm.store;
 
+public import osm.view.metadata : MetadataView;
+public import osm.view.node_ref : NodeRefView;
+public import osm.view.relation_member : RelationMemberView;
+public import osm.view.tag : TagView;
+
 public import osm.store.compact.store :
     OsmHandle,
     OsmStore,
@@ -19,12 +24,8 @@ public import osm.store.compact.store :
     StoreStatus,
     StoreCounts,
     StoreMemoryUsage,
-    StoreMetadataView,
-    StoreTagView,
     StoreTagRange,
-    StoreWayNodeView,
-    StoreWayNodeRange,
-    StoreRelationMemberView,
+    StoreNodeRefRange,
     StoreRelationMemberRange,
     StoreNodeView,
     StoreWayView,

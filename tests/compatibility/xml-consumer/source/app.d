@@ -1,7 +1,7 @@
 module app;
 
 import osm.xml;
-import osm.model.compare : sameOsmSemantics;
+import osm.compare : sameOsmSemantics;
 import transport.source : MemorySink, MemorySource;
 
 @safe void main()

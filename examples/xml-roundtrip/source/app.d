@@ -1,6 +1,6 @@
 module app;
 
-import osm.model.compare : sameOsmSemantics;
+import osm.compare : sameOsmSemantics;
 import osm.xml;
 import std.file : read, write;
 import std.stdio : stderr;

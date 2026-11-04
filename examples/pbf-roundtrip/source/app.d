@@ -1,6 +1,7 @@
 module app;
 
 import osm;
+import osm.pbf;
 import std.file : read, write;
 import std.stdio : stderr;
 

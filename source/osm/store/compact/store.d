@@ -29,9 +29,13 @@ import osm.model.owned :
     OwnedRelationMember,
     OwnedTag,
     OwnedWay,
-    OwnedWayNode;
+    OwnedNodeRef;
 import osm.view.element : ElementType, OsmId;
 import osm.view.location : LocationView;
+import osm.view.metadata : MetadataView;
+import osm.view.node_ref : NodeRefView;
+import osm.view.relation_member : RelationMemberView;
+import osm.view.tag : TagView;
 
 
 /**
@@ -226,6 +230,7 @@ enum StoreError : ubyte
     unresolvedLocalReference,
     duplicateTagKey,
     emptyTagKey,
+    notFound,
 }
 
 /** Status returned by fallible store operations. */
@@ -306,35 +311,16 @@ struct StoreMemoryUsage
     }
 }
 
-/** Borrowed metadata view backed by the store's current string pool. */
-struct StoreMetadataView
-{
-    bool hasVersion;
-    int versionNumber;
-    bool hasTimestamp;
-    long timestampMilliseconds;
-    bool hasChangeset;
-    long changesetId;
-    bool hasUserId;
-    int userId;
-    bool hasUsername;
-    const(ubyte)[] username;
-    bool hasVisibility;
-    bool visible;
-
-    @property bool empty() const @safe pure nothrow @nogc
-    {
-        return !hasVersion && !hasTimestamp && !hasChangeset &&
-               !hasUserId && !hasUsername && !hasVisibility;
-    }
-}
-
-/** One borrowed tag. */
-struct StoreTagView
-{
-    const(ubyte)[] key;
-    const(ubyte)[] value;
-}
+/**
+ * v0.1 compatibility aliases for leaf semantic values.
+ *
+ * Preferred v0.2 code receives the shared format-independent semantic values.
+ * The aliases remain in this implementation module only for migration.
+ */
+alias StoreMetadataView = MetadataView;
+alias StoreTagView = TagView;
+alias StoreWayNodeView = NodeRefView;
+alias StoreRelationMemberView = RelationMemberView;
 
 /** Borrowed ordered tag range. Invalidated by structural store mutation. */
 struct StoreTagRange
@@ -351,7 +337,7 @@ public:
         return _position >= _length;
     }
 
-    @property StoreTagView front() @safe nothrow @nogc
+    @property TagView front() @safe nothrow @nogc
     {
         return _store.tagAt(_offset + _position);
     }
@@ -368,16 +354,8 @@ public:
     }
 }
 
-/** One ordered Way node reference. */
-struct StoreWayNodeView
-{
-    OsmId id;
-    bool hasLocation;
-    LocationView location;
-}
-
 /** Borrowed ordered Way-node range. Invalidated by structural mutation. */
-struct StoreWayNodeRange
+struct StoreNodeRefRange
 {
 private:
     OsmStore _store;
@@ -394,10 +372,9 @@ public:
         return _position >= _refLength;
     }
 
-    @property StoreWayNodeView front() @safe nothrow @nogc
+    @property NodeRefView front() @safe nothrow @nogc
     {
-        StoreWayNodeView result;
-        result.id = _store._wayRefIds[_refOffset + _position];
+        const id = _store._wayRefIds[_refOffset + _position];
 
         while (_locationPosition < _locationLength)
         {
@@ -412,15 +389,16 @@ public:
 
             if (entry.relativeIndex == _position)
             {
-                result.hasLocation = true;
-                result.location = LocationView(
-                    entry.latitudeNanodegrees,
-                    entry.longitudeNanodegrees);
+                return NodeRefView(
+                    id,
+                    LocationView(
+                        entry.latitudeNanodegrees,
+                        entry.longitudeNanodegrees));
             }
             break;
         }
 
-        return result;
+        return NodeRefView(id);
     }
 
     void popFront() @safe nothrow @nogc
@@ -445,13 +423,8 @@ public:
     }
 }
 
-/** One borrowed ordered Relation member. */
-struct StoreRelationMemberView
-{
-    ElementType type;
-    OsmId id;
-    const(ubyte)[] role;
-}
+/// v0.1 compatibility alias. Prefer StoreNodeRefRange.
+alias StoreWayNodeRange = StoreNodeRefRange;
 
 /** Borrowed ordered Relation-member range. Invalidated by structural mutation. */
 struct StoreRelationMemberRange
@@ -468,14 +441,13 @@ public:
         return _position >= _length;
     }
 
-    @property StoreRelationMemberView front() @safe nothrow @nogc
+    @property RelationMemberView front() @safe nothrow @nogc
     {
         const i = _offset + _position;
-        StoreRelationMemberView result;
-        result.type = cast(ElementType)_store._relationMemberTypes[i];
-        result.id = _store._relationMemberIds[i];
-        result.role = _store._strings.get(_store._relationMemberRoles[i]);
-        return result;
+        return RelationMemberView(
+            cast(ElementType)_store._relationMemberTypes[i],
+            _store._relationMemberIds[i],
+            _store._strings.get(_store._relationMemberRoles[i]));
     }
 
     void popFront() @safe nothrow @nogc
@@ -496,7 +468,7 @@ struct StoreNodeView
     OsmHandle handle;
     OsmId id;
     LocationView location;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
     StoreElementState state;
 }
@@ -506,9 +478,9 @@ struct StoreWayView
 {
     OsmHandle handle;
     OsmId id;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
-    StoreWayNodeRange nodes;
+    StoreNodeRefRange nodes;
     StoreElementState state;
 }
 
@@ -517,7 +489,7 @@ struct StoreRelationView
 {
     OsmHandle handle;
     OsmId id;
-    StoreMetadataView metadata;
+    MetadataView metadata;
     StoreTagRange tags;
     StoreRelationMemberRange members;
     StoreElementState state;
@@ -1393,25 +1365,21 @@ private struct MetadataColumns
         visible[slot] = value.visible ? 1 : 0;
     }
 
-    StoreMetadataView view(uint slot, ref StringPool strings)
+    MetadataView view(uint slot, ref StringPool strings)
         @safe nothrow @nogc
     {
-        StoreMetadataView result;
         const bits = flags[slot];
-        result.hasVersion = (bits & (1 << 0)) != 0;
-        result.versionNumber = versions[slot];
-        result.hasTimestamp = (bits & (1 << 1)) != 0;
-        result.timestampMilliseconds = timestamps[slot];
-        result.hasChangeset = (bits & (1 << 2)) != 0;
-        result.changesetId = changesets[slot];
-        result.hasUserId = (bits & (1 << 3)) != 0;
-        result.userId = userIds[slot];
-        result.hasUsername = (bits & (1 << 4)) != 0;
-        if (result.hasUsername)
-            result.username = strings.get(usernames[slot]);
-        result.hasVisibility = (bits & (1 << 5)) != 0;
-        result.visible = visible[slot] != 0;
-        return result;
+        const hasUsername = (bits & (1 << 4)) != 0;
+        const(ubyte)[] username =
+            hasUsername ? strings.get(usernames[slot]) : null;
+
+        return MetadataView(
+            (bits & (1 << 0)) != 0, versions[slot],
+            (bits & (1 << 1)) != 0, timestamps[slot],
+            (bits & (1 << 2)) != 0, changesets[slot],
+            (bits & (1 << 3)) != 0, userIds[slot],
+            hasUsername, username,
+            (bits & (1 << 5)) != 0, visible[slot] != 0);
     }
 
     OwnedMetadata owned(uint slot, ref StringPool strings) @safe
@@ -2056,6 +2024,68 @@ public:
             return false;
         value = relationViewAt(handle._slot);
         return true;
+    }
+
+    /**
+     * Borrow a Node by OSM ID.
+     *
+     * This is the ordinary lookup path when stable local handle identity is not
+     * needed. The handle remains available as `value.handle`.
+     */
+    bool node(
+        OsmId id,
+        out StoreNodeView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.node, id, handle))
+        {
+            value = StoreNodeView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.node;
+            status.id = id;
+            return false;
+        }
+        return node(handle, value, status);
+    }
+
+    /** Borrow a Way directly by OSM ID. */
+    bool way(
+        OsmId id,
+        out StoreWayView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.way, id, handle))
+        {
+            value = StoreWayView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.way;
+            status.id = id;
+            return false;
+        }
+        return way(handle, value, status);
+    }
+
+    /** Borrow a Relation directly by OSM ID. */
+    bool relation(
+        OsmId id,
+        out StoreRelationView value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        OsmHandle handle;
+        if (!find(ElementType.relation, id, handle))
+        {
+            value = StoreRelationView.init;
+            status = StoreStatus.init;
+            status.error = StoreError.notFound;
+            status.type = ElementType.relation;
+            status.id = id;
+            return false;
+        }
+        return relation(handle, value, status);
     }
 
     /** Copy one Node into the ordinary owned semantic model. */
@@ -2741,7 +2771,7 @@ private:
     }
 
     bool preflightWayReferences(
-        scope const(OwnedWayNode)[] nodes,
+        scope const(OwnedNodeRef)[] nodes,
         ref StoreStatus status) @safe nothrow @nogc
     {
         foreach (ref const node; nodes)
@@ -3171,7 +3201,7 @@ private:
     }
 
     Span32 appendWayNodes(
-        scope const(OwnedWayNode)[] values,
+        scope const(OwnedNodeRef)[] values,
         uint parentSlot) @safe
     {
         assert(_wayRefIds.length <= uint.max);
@@ -3233,13 +3263,10 @@ private:
         return result;
     }
 
-    StoreTagView tagAt(uint index) @safe nothrow @nogc
+    TagView tagAt(uint index) @safe nothrow @nogc
     {
         const tag = _tags[index];
-        StoreTagView result;
-        result.key = _strings.get(tag.key);
-        result.value = _strings.get(tag.value);
-        return result;
+        return TagView(_strings.get(tag.key), _strings.get(tag.value));
     }
 
     StoreTagRange tagRange(Span32 span) @safe nothrow @nogc
@@ -3251,11 +3278,11 @@ private:
         return result;
     }
 
-    StoreWayNodeRange wayNodeRange(uint slot) @safe nothrow @nogc
+    StoreNodeRefRange nodeRefRange(uint slot) @safe nothrow @nogc
     {
         const refs = _wayRefs[slot];
         const locations = _wayLocationSpans[slot];
-        StoreWayNodeRange result;
+        StoreNodeRefRange result;
         result._store = this;
         result._refOffset = refs.offset;
         result._refLength = refs.length;
@@ -3297,7 +3324,7 @@ private:
         result.id = _ways.ids[slot];
         result.metadata = _ways.metadata.view(slot, _strings);
         result.tags = tagRange(_ways.tags[slot]);
-        result.nodes = wayNodeRange(slot);
+        result.nodes = nodeRefRange(slot);
         result.state = _ways.states[slot];
         return result;
     }
@@ -3346,7 +3373,7 @@ private:
         result.metadata = _ways.metadata.owned(slot, _strings);
         result.tags = copyTags(_ways.tags[slot]);
 
-        auto range = wayNodeRange(slot);
+        auto range = nodeRefRange(slot);
         result.nodes.length = range.length;
         size_t i;
         while (!range.empty)
@@ -3544,7 +3571,7 @@ private:
         @safe pure nothrow @nogc
     {
         size_t result = OwnedWay.sizeof + ownedMetadataBytes(value.metadata);
-        result += value.nodes.length * OwnedWayNode.sizeof;
+        result += value.nodes.length * OwnedNodeRef.sizeof;
         foreach (ref const tag; value.tags)
             result += ownedTagBytes(tag);
         return result;
@@ -3624,7 +3651,7 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    OwnedWayNode refValue;
+    OwnedNodeRef refValue;
     refValue.id = -1;
     way.nodes ~= refValue;
 
@@ -3751,9 +3778,9 @@ unittest
 
     OwnedWay way;
     way.id = 10;
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(2, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(2, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(1, false, LocationView.init);
 
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
@@ -3842,8 +3869,8 @@ unittest
 
     OwnedWay way;
     way.id = -2;
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
-    way.nodes ~= OwnedWayNode(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
+    way.nodes ~= OwnedNodeRef(-1, false, LocationView.init);
     OsmHandle wayHandle;
     assert(store.add(way, wayHandle, status));
 
