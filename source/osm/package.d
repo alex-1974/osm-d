@@ -62,7 +62,9 @@ public import osm.store :
     StoreParentRelationRange,
     StoreNodeRange,
     StoreWayRange,
-    StoreRelationRange;
+    StoreRelationRange,
+    PbfStoreReadStatus,
+    readPbfStore;
 public import osm.raw.pbf :
     PbfPreservationReason,
     PbfRawFile,
