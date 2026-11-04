@@ -176,3 +176,25 @@ jobs:
           name: release-io-monaco-${{ github.sha }}
           path: benchmark/release/io-monaco.txt
           if-no-files-found: error
+
+
+  release-metadata:
+    name: Release / metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify release intent and documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < RELEASE_VERSION)"
+          test -n "$version"
+          grep -Fq "## $version - " CHANGELOG.md
+          test -f "docs/releases/v$version.md"
+          grep -Fq 'toolchainRequirements dub=">=1.40.0" frontend=">=2.111"' dub.sdl
+          grep -Fq '**v0.1.x**' docs/API_STABILITY.md
+          echo "release_version=$version"

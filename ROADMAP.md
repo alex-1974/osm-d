@@ -107,7 +107,7 @@ consumer-relevant advantage.
 
 Tracked by M7: #47.
 
-- [ ] Public API and compatibility-policy audit. #65
-- [ ] Consumer documentation, examples and package smoke tests. #66
-- [ ] Compatibility and performance baseline published. #67
-- [ ] Release gate and first tagged release. #69
+- [x] Public API and compatibility-policy audit. #65
+- [x] Consumer documentation, examples and package smoke tests. #66
+- [x] Compatibility and performance baseline published. #67
+- [x] Release gate and first tagged release. #69

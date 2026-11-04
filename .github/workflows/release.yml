@@ -2,71 +2,156 @@ name: Publish release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   publish:
-    name: Verify and publish GitHub Release
+    name: Publish qualified release
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Check out tagged state
+      - name: Check out release state
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Verify release tag belongs to main
+      - name: Resolve deliberate release intent
+        id: intent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+          else
+            if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+              echo "Publishing is only permitted from main or an explicit v* tag." >&2
+              exit 1
+            fi
+            version="$(tr -d '[:space:]' < RELEASE_VERSION)"
+            tag="v$version"
+          fi
+
+          test -n "$version"
+          grep -Fq "## $version - " CHANGELOG.md
+          test -f "docs/releases/v$version.md"
+
+          git fetch origin main --tags
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            if [[ "$(git cat-file -t "$tag")" != "tag" ]]; then
+              echo "Release tag must be annotated: $tag" >&2
+              exit 1
+            fi
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+              echo "Release tag is not reachable from main: $tag" >&2
+              exit 1
+            fi
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release already published: $tag"
+              echo "publish=false" >>"$GITHUB_OUTPUT"
+            else
+              echo "Annotated tag exists without GitHub Release; publication will resume."
+              echo "publish=true" >>"$GITHUB_OUTPUT"
+            fi
+          else
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              echo "Tag event has no resolvable tag object: $tag" >&2
+              exit 1
+            fi
+
+            if [[ "$GITHUB_SHA" != "$(git rev-parse origin/main)" ]]; then
+              echo "Release workflow is not running at current main." >&2
+              exit 1
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" "$GITHUB_SHA" -m "osm-d $tag"
+            git push origin "$tag"
+            echo "publish=true" >>"$GITHUB_OUTPUT"
+          fi
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+      - name: Install release verification compiler
+        if: steps.intent.outputs.publish == 'true'
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Verify release archive from tag
+        if: steps.intent.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_SMOKE_COMPILERS="$DC" bash tests/run-package-smoke.sh
+
+      - name: Build release assets
+        if: steps.intent.outputs.publish == 'true'
+        id: assets
         shell: bash
         run: |
           set -euo pipefail
 
-          git fetch origin main --no-tags
-          tag_commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+          version="${{ steps.intent.outputs.version }}"
+          tag="${{ steps.intent.outputs.tag }}"
+          archive="osm-d-$version.tar.gz"
 
-          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
-            echo "Release tag is not reachable from main: $GITHUB_REF_NAME" >&2
-            exit 1
-          fi
+          git archive \
+            --format=tar.gz \
+            --prefix="osm-d-$version/" \
+            -o "$archive" \
+            "$tag"
+          sha256sum "$archive" >"$archive.sha256"
 
-      - name: Verify annotated release tag
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo "archive=$archive" >>"$GITHUB_OUTPUT"
 
-          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]]; then
-            echo "Release tag must be annotated: $GITHUB_REF_NAME" >&2
-            exit 1
-          fi
-
-      - name: Verify changelog entry
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="${GITHUB_REF_NAME#v}"
-
-          if ! grep -Fq "## $version" CHANGELOG.md; then
-            echo "CHANGELOG.md has no release entry for $version" >&2
-            exit 1
-          fi
-
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
+        if: steps.intent.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "GitHub Release already exists: $GITHUB_REF_NAME"
-            exit 0
+          tag="${{ steps.intent.outputs.tag }}"
+          version="${{ steps.intent.outputs.version }}"
+          archive="${{ steps.assets.outputs.archive }}"
+          notes="docs/releases/v$version.md"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$archive" "$archive.sha256" --clobber
+          else
+            gh release create "$tag" \
+              "$archive" "$archive.sha256" \
+              --verify-tag \
+              --title "osm-d $tag" \
+              --notes-file "$notes"
           fi
 
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --generate-notes \
-            --title "$GITHUB_REF_NAME"
+      - name: Verify published release
+        if: steps.intent.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.intent.outputs.tag }}"
+          test "$(git cat-file -t "$tag")" = "tag"
+          gh release view "$tag" --json tagName,name,isDraft,isPrerelease
