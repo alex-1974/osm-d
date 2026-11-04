@@ -2154,10 +2154,14 @@ public:
         const oldRefs = _wayRefs[handle._slot];
         const newTags = appendTags(value.tags);
         _ways.metadata.set(handle._slot, value.metadata, _strings);
+
+        // Disable the old current contributions before creating the new ones.
+        // Otherwise a shared old/new child ID would reactivate the existing
+        // parent edge and then be disabled again by the old-span cleanup.
+        deactivateWayParents(oldRefs, handle._slot);
         const newRefs = appendWayNodes(value.nodes, handle._slot);
         const newLocations = lastWayLocationSpan;
 
-        deactivateWayParents(oldRefs, handle._slot);
         _ways.tags[handle._slot] = newTags;
         _wayRefs[handle._slot] = newRefs;
         _wayLocationSpans[handle._slot] = newLocations;
@@ -2190,10 +2194,11 @@ public:
         const oldMembers = _relationMembers[handle._slot];
         const newTags = appendTags(value.tags);
         _relations.metadata.set(handle._slot, value.metadata, _strings);
+
+        deactivateRelationParents(oldMembers, handle._slot);
         const newMembers =
             appendRelationMembers(value.members, handle._slot);
 
-        deactivateRelationParents(oldMembers, handle._slot);
         _relations.tags[handle._slot] = newTags;
         _relationMembers[handle._slot] = newMembers;
         markModified(_relations, handle._slot);
