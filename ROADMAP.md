@@ -12,6 +12,7 @@ exit criteria.
 - **M6 — Compact editable OSM store:** #46
 - **M7 — First stable standalone release:** #47
 - **M8 — API ergonomics and workspace primitive reuse:** #94
+- **M9 — Editable store ↔ change/upload bridge:** #100
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -124,3 +125,17 @@ Tracked by M8: #94.
 - [x] Add one-shot PBF convenience and focused `osm.pbf` facade.
 - [x] Reconcile consumer docs, migration probes and package surface.
 - [x] Complete workspace primitive reuse audit and preserve only contract-matching dependencies.
+
+
+## Phase 9 — Editable store ↔ change/upload bridge
+
+Tracked by M9: #100.
+
+- [x] Define lifecycle-to-change extraction contract. #96
+- [x] Implement deterministic sparse edit materialization. #97
+- [x] Model and apply authoritative diff-upload results. #98
+- [x] Qualify store → osmChange/validation → result → store round trip. #99
+
+The bridge remains format-neutral. HTTP, OAuth, changeset creation/closing,
+retry policy, editor undo/history and application worksets remain outside
+osm-d.
