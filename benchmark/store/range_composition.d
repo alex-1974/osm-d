@@ -17,7 +17,7 @@ import osm :
     hasTag,
     readPbfStore;
 
-import std.algorithm.iteration : filter;
+import std.algorithm.iteration : cache, filter;
 import std.algorithm.sorting : sort;
 import std.datetime.stopwatch : AutoStart, StopWatch;
 import std.file : read;
@@ -41,10 +41,11 @@ private struct Timing
     TraversalResult result;
 }
 
-private struct PairTiming
+private struct CompositionTiming
 {
     Timing direct;
-    Timing composed;
+    Timing plain;
+    Timing cached;
 }
 
 private void mix(ref ulong hash, long id) @safe pure nothrow @nogc
@@ -205,6 +206,83 @@ private TraversalResult composedChained(OsmStore store)
     return result;
 }
 
+private TraversalResult cachedState(OsmStore store)
+    @safe nothrow @nogc
+{
+    TraversalResult result;
+    result.checksum = 0x243f6a8885a308d3UL;
+
+    auto ways = store.ways
+        .cache
+        .filter!(way => way.state == StoreElementState.clean);
+    while (!ways.empty)
+    {
+        const way = ways.front;
+        ++result.matches;
+        mix(result.checksum, way.id);
+        ways.popFront();
+    }
+    return result;
+}
+
+private TraversalResult cachedId(OsmStore store)
+    @safe nothrow @nogc
+{
+    TraversalResult result;
+    result.checksum = 0x243f6a8885a308d3UL;
+
+    auto ways = store.ways
+        .cache
+        .filter!(way => (way.id & 1) == 0);
+    while (!ways.empty)
+    {
+        const way = ways.front;
+        ++result.matches;
+        mix(result.checksum, way.id);
+        ways.popFront();
+    }
+    return result;
+}
+
+private TraversalResult cachedTag(OsmStore store)
+    @safe nothrow @nogc
+{
+    TraversalResult result;
+    result.checksum = 0x243f6a8885a308d3UL;
+
+    auto ways = store.ways
+        .cache
+        .filter!(way => way.tags.hasTag("highway"));
+    while (!ways.empty)
+    {
+        const way = ways.front;
+        ++result.matches;
+        mix(result.checksum, way.id);
+        ways.popFront();
+    }
+    return result;
+}
+
+private TraversalResult cachedChained(OsmStore store)
+    @safe nothrow @nogc
+{
+    TraversalResult result;
+    result.checksum = 0x243f6a8885a308d3UL;
+
+    auto ways = store.ways
+        .cache
+        .filter!(way => (way.id & 1) == 0)
+        .filter!(way => way.tags.hasTag("highway"));
+    while (!ways.empty)
+    {
+        const way = ways.front;
+        ++result.matches;
+        mix(result.checksum, way.id);
+        ways.popFront();
+    }
+    return result;
+}
+
 private long elapsedNs(alias traversal)(
     OsmStore store,
     out TraversalResult result)
@@ -245,114 +323,167 @@ private Timing summarize(
     return timing;
 }
 
-private PairTiming measurePair(alias directTraversal, alias composedTraversal)(
+private Timing allocationTiming(alias traversal)(OsmStore store)
+    @safe
+{
+    GC.collect();
+    const allocatedBefore = allocatedInCurrentThread();
+    const profileBefore = GC.profileStats();
+    const result = traversal(store);
+    const profileAfter = GC.profileStats();
+    const allocatedAfter = allocatedInCurrentThread();
+
+    Timing timing;
+    timing.gcAllocatedBytes = allocatedAfter - allocatedBefore;
+    timing.gcCollections =
+        profileAfter.numCollections - profileBefore.numCollections;
+    timing.result = result;
+    return timing;
+}
+
+private CompositionTiming measureComposition(
+    alias directTraversal,
+    alias plainTraversal,
+    alias cachedTraversal)(
     OsmStore store)
     @safe
 {
     foreach (_; 0 .. 3)
     {
         const direct = directTraversal(store);
-        const composed = composedTraversal(store);
-        assert(direct == composed);
+        const plain = plainTraversal(store);
+        const cached = cachedTraversal(store);
+        assert(direct == plain);
+        assert(direct == cached);
     }
 
-    GC.collect();
-
-    const directAllocatedBefore = allocatedInCurrentThread();
-    const directProfileBefore = GC.profileStats();
-    const directAllocationResult = directTraversal(store);
-    const directProfileAfter = GC.profileStats();
-    const directAllocatedAfter = allocatedInCurrentThread();
-
-    const composedAllocatedBefore = allocatedInCurrentThread();
-    const composedProfileBefore = GC.profileStats();
-    const composedAllocationResult = composedTraversal(store);
-    const composedProfileAfter = GC.profileStats();
-    const composedAllocatedAfter = allocatedInCurrentThread();
-
-    assert(directAllocationResult == composedAllocationResult);
+    Timing directAllocation = allocationTiming!directTraversal(store);
+    Timing plainAllocation = allocationTiming!plainTraversal(store);
+    Timing cachedAllocation = allocationTiming!cachedTraversal(store);
+    assert(directAllocation.result == plainAllocation.result);
+    assert(directAllocation.result == cachedAllocation.result);
 
     long[sampleCount] directSamples;
-    long[sampleCount] composedSamples;
+    long[sampleCount] plainSamples;
+    long[sampleCount] cachedSamples;
     TraversalResult expected;
 
     foreach (sample; 0 .. sampleCount)
     {
         TraversalResult directResult;
-        TraversalResult composedResult;
+        TraversalResult plainResult;
+        TraversalResult cachedResult;
 
-        if ((sample & 1) == 0)
+        final switch (sample % 3)
         {
+        case 0:
             directSamples[sample] =
                 elapsedNs!directTraversal(store, directResult);
-
-            composedSamples[sample] =
-                elapsedNs!composedTraversal(store, composedResult);
-        }
-        else
-        {
-            composedSamples[sample] =
-                elapsedNs!composedTraversal(store, composedResult);
-
+            plainSamples[sample] =
+                elapsedNs!plainTraversal(store, plainResult);
+            cachedSamples[sample] =
+                elapsedNs!cachedTraversal(store, cachedResult);
+            break;
+        case 1:
+            plainSamples[sample] =
+                elapsedNs!plainTraversal(store, plainResult);
+            cachedSamples[sample] =
+                elapsedNs!cachedTraversal(store, cachedResult);
             directSamples[sample] =
                 elapsedNs!directTraversal(store, directResult);
+            break;
+        case 2:
+            cachedSamples[sample] =
+                elapsedNs!cachedTraversal(store, cachedResult);
+            directSamples[sample] =
+                elapsedNs!directTraversal(store, directResult);
+            plainSamples[sample] =
+                elapsedNs!plainTraversal(store, plainResult);
+            break;
         }
 
-        assert(directResult == composedResult);
+        assert(directResult == plainResult);
+        assert(directResult == cachedResult);
         if (sample == 0)
             expected = directResult;
         else
             assert(directResult == expected);
     }
 
-    PairTiming result;
+    CompositionTiming result;
     result.direct = summarize(
         directSamples,
         expected,
-        directAllocatedAfter - directAllocatedBefore,
-        directProfileAfter.numCollections - directProfileBefore.numCollections);
-    result.composed = summarize(
-        composedSamples,
+        directAllocation.gcAllocatedBytes,
+        directAllocation.gcCollections);
+    result.plain = summarize(
+        plainSamples,
         expected,
-        composedAllocatedAfter - composedAllocatedBefore,
-        composedProfileAfter.numCollections -
-            composedProfileBefore.numCollections);
+        plainAllocation.gcAllocatedBytes,
+        plainAllocation.gcCollections);
+    result.cached = summarize(
+        cachedSamples,
+        expected,
+        cachedAllocation.gcAllocatedBytes,
+        cachedAllocation.gcCollections);
     return result;
 }
 
-private void printPair(string name, PairTiming timing)
+private void printComposition(string name, CompositionTiming timing)
 {
     writefln("%s_matches=%s", name, timing.direct.result.matches);
     writefln("%s_checksum=%s", name, timing.direct.result.checksum);
+
     writefln("%s_direct_p10_ns=%s", name, timing.direct.p10);
     writefln("%s_direct_p50_ns=%s", name, timing.direct.p50);
     writefln("%s_direct_p90_ns=%s", name, timing.direct.p90);
-    writefln("%s_composed_p10_ns=%s", name, timing.composed.p10);
-    writefln("%s_composed_p50_ns=%s", name, timing.composed.p50);
-    writefln("%s_composed_p90_ns=%s", name, timing.composed.p90);
+
+    writefln("%s_plain_p10_ns=%s", name, timing.plain.p10);
+    writefln("%s_plain_p50_ns=%s", name, timing.plain.p50);
+    writefln("%s_plain_p90_ns=%s", name, timing.plain.p90);
     writefln(
-        "%s_composed_over_direct=%.6f",
+        "%s_plain_over_direct=%.6f",
         name,
         timing.direct.p50 == 0
             ? 0.0
-            : cast(double)timing.composed.p50 /
+            : cast(double)timing.plain.p50 /
                 cast(double)timing.direct.p50);
+
+    writefln("%s_cached_p10_ns=%s", name, timing.cached.p10);
+    writefln("%s_cached_p50_ns=%s", name, timing.cached.p50);
+    writefln("%s_cached_p90_ns=%s", name, timing.cached.p90);
+    writefln(
+        "%s_cached_over_direct=%.6f",
+        name,
+        timing.direct.p50 == 0
+            ? 0.0
+            : cast(double)timing.cached.p50 /
+                cast(double)timing.direct.p50);
+
     writefln(
         "%s_direct_gc_allocated_bytes=%s",
         name,
         timing.direct.gcAllocatedBytes);
     writefln(
-        "%s_composed_gc_allocated_bytes=%s",
+        "%s_plain_gc_allocated_bytes=%s",
         name,
-        timing.composed.gcAllocatedBytes);
+        timing.plain.gcAllocatedBytes);
+    writefln(
+        "%s_cached_gc_allocated_bytes=%s",
+        name,
+        timing.cached.gcAllocatedBytes);
     writefln(
         "%s_direct_gc_collections=%s",
         name,
         timing.direct.gcCollections);
     writefln(
-        "%s_composed_gc_collections=%s",
+        "%s_plain_gc_collections=%s",
         name,
-        timing.composed.gcCollections);
+        timing.plain.gcCollections);
+    writefln(
+        "%s_cached_gc_collections=%s",
+        name,
+        timing.cached.gcCollections);
 }
 
 int main(string[] args)
@@ -384,12 +515,21 @@ int main(string[] args)
     writefln("relations=%s", summary.relations);
     writefln("samples=%s", sampleCount);
 
-    printPair("state", measurePair!(directState, composedState)(store));
-    printPair("id", measurePair!(directId, composedId)(store));
-    printPair("tag", measurePair!(directTag, composedTag)(store));
-    printPair(
+    printComposition(
+        "state",
+        measureComposition!(directState, composedState, cachedState)(store));
+    printComposition(
+        "id",
+        measureComposition!(directId, composedId, cachedId)(store));
+    printComposition(
+        "tag",
+        measureComposition!(directTag, composedTag, cachedTag)(store));
+    printComposition(
         "chained",
-        measurePair!(directChained, composedChained)(store));
+        measureComposition!(
+            directChained,
+            composedChained,
+            cachedChained)(store));
 
     return 0;
 }
