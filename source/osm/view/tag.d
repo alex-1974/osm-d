@@ -38,6 +38,19 @@ struct TagView
     const(ubyte)[] value;
 }
 
+/**
+ * Result of an exact tag-key lookup.
+ *
+ * `found == false` means that no matching key exists and `tag` is
+ * `TagView.init`. When `found` is true, `tag` borrows the same backing
+ * storage as the queried tag cursor.
+ */
+struct TagLookupResult
+{
+    bool found;
+    TagView tag;
+}
+
 private enum bool isTagCodeUnit(T) =
     is(Unqual!T == ubyte) || is(Unqual!T == char);
 
@@ -58,61 +71,63 @@ private enum bool isSemanticTagRange(R) =
  * compared as its existing UTF-8 code units; no decoding, normalization,
  * transcoding, case folding, or allocation occurs.
  *
- * Duplicate keys are preserved by the underlying range. This function returns
- * the first matching occurrence in range order.
+ * Duplicate keys are preserved by the underlying cursor. This function returns
+ * the first matching occurrence in cursor order.
  *
  * Params:
  *   tags = Borrowed semantic tag range/cursor exposing `empty`, `front`
- *     and `popFront`. The range is consumed by value; the caller's cursor is
+ *     and `popFront`. The cursor is consumed by value; the caller's cursor is
  *     not advanced.
  *   key = Exact key bytes/code units to match.
- *   tag = Receives the borrowed first matching tag, or `TagView.init` when no
- *     match exists.
  *
  * Returns:
- *   `true` when a matching key exists; otherwise `false`.
+ *   A `TagLookupResult`. Its tag borrows the same backing storage as
+ *   `tags` when `found` is true.
  *
  * Safety:
- *   The returned tag borrows the same backing storage as the supplied range.
- *   No allocation or normalization is performed.
+ *   No allocation or normalization is performed. The `return scope`
+ *   parameter ties a successful borrowed result to the supplied cursor's
+ *   lifetime under DIP1000.
  */
-bool findTag(R, Q)(
-    R tags,
-    scope Q[] key,
-    out TagView tag)
+TagLookupResult findTag(R, Q)(
+    return scope R tags,
+    scope Q[] key)
     @safe nothrow @nogc
 if (isSemanticTagRange!R && isTagCodeUnit!Q)
 {
-    tag = TagView.init;
-
     while (!tags.empty)
     {
-        const current = tags.front;
-        if (sameBytes(current.key, key))
+        if (sameBytes(tags.front.key, key))
         {
-            tag = TagView(current.key, current.value);
-            return true;
+            return TagLookupResult(
+                true,
+                TagView(tags.front.key, tags.front.value));
         }
         tags.popFront();
     }
 
-    return false;
+    return TagLookupResult.init;
 }
 
 /**
  * Return whether any tag has exactly matching key bytes.
  *
- * This is the predicate form of `findTag`. It is linear in the number of tags
- * visited, allocates nothing, and does not advance the caller's range cursor.
+ * This is linear in the number of tags visited, allocates nothing, and does not
+ * advance the caller's cursor.
  */
 bool hasTag(R, Q)(
-    R tags,
+    scope R tags,
     scope Q[] key)
     @safe nothrow @nogc
 if (isSemanticTagRange!R && isTagCodeUnit!Q)
 {
-    TagView ignored;
-    return findTag(tags, key, ignored);
+    while (!tags.empty)
+    {
+        if (sameBytes(tags.front.key, key))
+            return true;
+        tags.popFront();
+    }
+    return false;
 }
 
 /**
@@ -125,7 +140,7 @@ if (isSemanticTagRange!R && isTagCodeUnit!Q)
  * normalization, transcoding, case folding, or allocation occurs.
  */
 bool tagEquals(R, K, V)(
-    R tags,
+    scope R tags,
     scope K[] key,
     scope V[] value)
     @safe nothrow @nogc
@@ -135,9 +150,8 @@ if (isSemanticTagRange!R &&
 {
     while (!tags.empty)
     {
-        const current = tags.front;
-        if (sameBytes(current.key, key) &&
-            sameBytes(current.value, value))
+        if (sameBytes(tags.front.key, key) &&
+            sameBytes(tags.front.value, value))
             return true;
 
         tags.popFront();
@@ -218,18 +232,18 @@ unittest
     assert(tags.hasTag(cast(const(ubyte)[])"highway"));
     assert(!tags.hasTag("building"));
 
-    TagView found;
-    assert(tags.findTag("name", found));
-    assert(found.value == cast(const(ubyte)[])"Wien");
+    auto found = tags.findTag("name");
+    assert(found.found);
+    assert(found.tag.value == cast(const(ubyte)[])"Wien");
 
     assert(tags.tagEquals("name", "Wien"));
     assert(tags.tagEquals("name", "Vienna"));
     assert(!tags.tagEquals("name", "Graz"));
 
-    found = values[0];
-    assert(!tags.findTag("missing", found));
-    assert(found.key is null);
-    assert(found.value is null);
+    found = tags.findTag("missing");
+    assert(!found.found);
+    assert(found.tag.key is null);
+    assert(found.tag.value is null);
 
     // Querying a copied cursor must not advance the caller's cursor.
     assert(tags.hasTag("highway"));
