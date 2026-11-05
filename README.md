@@ -191,6 +191,49 @@ store-specific. Stable `OsmHandle` lookup remains available for generic/editor
 workflows, but a simple typed read no longer needs the two-step
 `find(type,id) -> handle -> node/way/relation` sequence.
 
+Tag ranges support exact, allocation-free lookup through UFCS-friendly helpers:
+
+```d
+if (node.tags.hasTag("name"))
+{
+    TagView name;
+    if (node.tags.findTag("name", name))
+    {
+        // name.value borrows the same backing storage as the tag range.
+    }
+}
+
+if (node.tags.tagEquals("place", "city"))
+{
+}
+```
+
+String arguments are compared as their existing UTF-8 code units. No
+normalization, case folding or transcoding occurs. `findTag` returns the first
+matching duplicate key; `tagEquals` succeeds when any duplicate occurrence
+matches both key and value.
+
+The store's element, child and parent traversal values are ordinary lazy D
+InputRanges. They can therefore compose with Phobos without materializing an
+intermediate result:
+
+```d
+import std.algorithm : filter;
+
+auto namedWays =
+    store.ways
+         .filter!(way => way.tags.hasTag("name"));
+
+foreach (way; namedWays)
+{
+    // StoreWayView still borrows the store.
+}
+```
+
+Copying one of these ranges copies only its cursor state. Every copy still
+borrows the same store, and structural store mutation invalidates outstanding
+ranges and views.
+
 The PBF input needs to remain alive only for `readPbfStore`; the resulting
 store owns its durable semantics and indexes.
 
