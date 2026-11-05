@@ -4,6 +4,7 @@ import osm;
 import std.algorithm.iteration : filter, map;
 import std.range : take;
 import std.range.primitives : isInputRange;
+import transport : ByteSource, MemorySource;
 
 static assert(isInputRange!StoreTagRange);
 static assert(isInputRange!StoreNodeRefRange);
@@ -175,6 +176,17 @@ void compileStoreSurface()
     assert(!directOk);
     assert(directStore is null);
     assert(!directStatus.pbf.ok);
+
+    ByteSource pbfSource = new MemorySource(pbfBytes);
+    PbfSourceStoreReadStatus sourceStoreStatus;
+    bool sourceStoreOk = readPbfStore(
+        pbfSource,
+        directStore,
+        directSummary,
+        sourceStoreStatus);
+    assert(!sourceStoreOk);
+    assert(directStore is null);
+    assert(!sourceStoreStatus.source.pbf.ok);
 }
 
 void main()
