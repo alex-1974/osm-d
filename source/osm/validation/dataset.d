@@ -15,11 +15,14 @@ module osm.validation.dataset;
 
 import osm.model.owned :
     OwnedDataset,
+    OwnedNode,
     OwnedNodeRef,
-    OwnedRelationMember;
+    OwnedRelationMember,
+    OwnedWay;
 import osm.store.compact.store :
     OsmHandle,
-    OsmStore;
+    OsmStore,
+    StoreStatus;
 import osm.view.element :
     ElementType,
     OsmId;
@@ -46,6 +49,7 @@ enum DatasetReferenceError : ubyte
 {
     none,
     invalidMode,
+    invalidDataset,
     invalidElementId,
     duplicateElementId,
     invalidReferenceType,
@@ -245,7 +249,7 @@ bool validateDatasetReferences(
 
     if (store is null)
     {
-        issue.error = DatasetReferenceError.invalidElementId;
+        issue.error = DatasetReferenceError.invalidDataset;
         return false;
     }
 
