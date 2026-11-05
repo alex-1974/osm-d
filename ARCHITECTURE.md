@@ -163,6 +163,18 @@ A dataset can therefore be decodable without being valid OSM, valid OSM
 without being referentially complete, or editable without being uploadable.
 These states must never be conflated.
 
+The public dataset/reference stage makes completeness explicit:
+
+- `complete`: every typed reference resolves to a local live identity;
+- `partial`: missing positive/server targets are permitted, while unresolved
+  negative/local references remain invalid.
+
+A retained store tombstone is known local deletion state rather than an
+external omission and therefore never satisfies a live reference. Relation
+cycles are reference-valid when every typed target exists; recursive traversal
+must handle cycles separately.
+
+
 ## Store architecture
 
 The parser remains streaming. The future editor store solves a separate random

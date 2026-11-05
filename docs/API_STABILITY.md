@@ -52,7 +52,7 @@ The supported high-level facades are:
 - `import osm.compare;` — serialization-independent OSM/change comparison;
 - `import osm.xml;` — ordinary OSM XML;
 - `import osm.osmchange;` — osmChange 0.6;
-- `import osm.validate;` — upload-readiness validation;
+- `import osm.validate;` — dataset/reference and upload-readiness validation;
 - `import osm.upload;` — bounded OSM API diffResult response parsing;
 - `import osm.capabilities;` — Editing API capability discovery projected
   into upload-validation policy.
@@ -92,12 +92,6 @@ The ordinary PBF reader and direct store builder also accept
 PBF framing/interpretation while transport-d owns filesystem, memory and HTTP
 access. Loss-aware `PbfDocument` reading remains whole-buffer because its raw
 preservation contract intentionally retains original encoded bytes.
-
-The element-specific `pbfNodes`/`pbfWays`/`pbfRelations` helpers remain
-resident-slice opApply adapters. ByteSource traversal uses
-`PbfReader.read(source, workspace, handler, ...)`, keeping reusable scratch
-and source/PBF diagnostics explicit. A source-backed foreach helper remains
-possible additive work if a concrete consumer needs a stateful iteration API.
 
 The v0.3 Editing API codecs deliberately remain focused imports:
 `osm.upload` parses successful diff-upload responses and `osm.capabilities`
@@ -247,6 +241,24 @@ XML, osmChange, diffResult and capability readers/writers use transport-d
 `ByteSource`/`ByteSink` contracts where applicable. osm-d does not create a
 competing filesystem/network abstraction.
 
+## Dataset/reference validation contract
+
+The focused `osm.validate` facade exposes
+`DatasetValidationMode.complete|partial`, `DatasetValidationIssue` and
+`validateDataset` for both `OwnedDataset` and `OsmStore`.
+
+Complete mode requires every typed Way/Relation reference to resolve locally.
+Partial mode admits only unresolved positive/server references; unresolved
+negative/local references and zero references remain invalid. Relation cycles
+are representable and are not rejected at this layer.
+
+Store tombstones are known local state: a live reference to a tombstoned target
+fails as `deletedReference` even in partial mode.
+
+This contract is deliberately weaker than `validateUploadChanges`. It does
+not infer changeset/version policy, target-server limits, upload coordinate
+precision or geometry validity.
+
 ## Failure and `.init` contract
 
 Fallible public operations use explicit success/status channels rather than
@@ -254,8 +266,8 @@ silently repairing input.
 
 Important meanings include:
 
-- read/write/store status structs and `UploadValidationIssue.init`: success /
-  no error;
+- read/write/store status structs, `DatasetValidationIssue.init` and
+  `UploadValidationIssue.init`: success / no error;
 - `PbfReaderWorkspace.init`: valid empty reusable workspace;
 - writer/reader option structs: documented usable defaults;
 - `LocationView.init`: exact coordinate origin;

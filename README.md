@@ -189,9 +189,8 @@ if (!reader.read(source, workspace, handler, summary, status))
 This source overload retains only the current PBF header/blob and reusable
 decode scratch. Clean EOF inside an incomplete frame is reported as malformed
 PBF; a real ByteSource failure remains a transport error. The existing
-whole-buffer overload remains the lowest-abstraction path when bytes are already
-resident; M14 city/country qualification measured the ByteSource decoder at
-performance parity while FileSource avoided retaining the complete encoded PBF.
+whole-buffer overload remains the fastest path when the bytes are already
+resident.
 
 A Way exposes ordered references through `way.nodes`; each value is a
 `NodeRefView` with an OSM ID and an optional `LocationView` when
@@ -408,13 +407,6 @@ advanced entry points. Natural completion validates the complete file; an
 early foreach exit, including from a filtered traversal, is explicitly a
 partial traversal.
 
-The element-specific `pbfNodes/pbfWays/pbfRelations` helpers intentionally
-remain resident-slice adapters. For a `ByteSource`, use
-`PbfReader.read(source, workspace, handler, ...)`: this keeps reusable scratch,
-source ownership and transport/PBF diagnostics explicit instead of hiding a
-fresh workspace inside each opApply traversal. A source-backed foreach family
-can be added later if a concrete consumer justifies a stateful ownership model.
-
 Loss-aware PBF documents, raw preservation, writing and PBF-specific semantic
 comparison are grouped under `import osm.pbf;` rather than expanding the
 ordinary package root.
@@ -512,6 +504,41 @@ Metadata is preserved when present. In particular, the reader/writer does not
 invent a missing version or changeset on deletes. Whether an otherwise
 representable change is valid for an OSM API upload is a stronger validation
 contract handled separately by the modification-validation layer.
+
+## Dataset/reference validation
+
+Dataset integrity is weaker than uploadability and stronger than merely parsing
+individual elements. Use `osm.validate` to state whether the loaded data is
+expected to be complete or intentionally partial:
+
+```d
+import osm.validate;
+
+DatasetValidationIssue issue;
+
+if (!validateDataset(
+        dataset,
+        DatasetValidationMode.complete,
+        issue))
+{
+    // issue identifies the first invalid identity/reference.
+}
+```
+
+`DatasetValidationMode.complete` requires every Way node reference and
+Relation member to resolve to a correctly typed local object.
+`DatasetValidationMode.partial` permits unresolved **positive** IDs from an
+extract/API subset, but still rejects unresolved negative/local IDs and zero
+references.
+
+Relation cycles are not rejected merely for being cycles; recursive topology
+traversal is a separate concern. For `OsmStore`, a reference to a target known
+to be tombstoned locally is an explicit `deletedReference`, not an allowed
+partial-extract omission.
+
+The same API accepts `OwnedDataset` and `OsmStore`. It does not apply
+changeset/version metadata, server capability limits, tag upload rules,
+canonical upload coordinate precision, geometry validity or editor policy.
 
 ## Upload validation
 
