@@ -588,6 +588,115 @@ private PbfSourceFrameResult readSourceFileBlock(
     return PbfSourceFrameResult.block;
 }
 
+private bool processReaderFileBlock(Sink)(
+    FileBlockView fileBlock,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    ref bool sawHeader,
+    ref bool sawData,
+    ref PbfReadSummary summary,
+    out PbfReadStatus status)
+    @safe
+{
+    status = PbfReadStatus.init;
+    PbfStatus pbfStatus;
+
+    BlobView blob;
+    if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+    {
+        status = fromPbfFailure(
+            fileBlock.sequence,
+            fileBlock.offset,
+            pbfStatus);
+        return false;
+    }
+
+    BlobPayloadView payload;
+    if (!decodeReaderBlobPayload(
+            blob,
+            workspace,
+            payload,
+            pbfStatus))
+    {
+        status = fromPbfFailure(
+            fileBlock.sequence,
+            fileBlock.offset,
+            pbfStatus);
+        return false;
+    }
+
+    final switch (fileBlock.header.kind)
+    {
+        case BlobKind.osmHeader:
+            if (sawHeader || sawData)
+            {
+                status = readerFailure(
+                    PbfReadError.duplicateHeader,
+                    fileBlock.sequence,
+                    fileBlock.offset);
+                return false;
+            }
+
+            HeaderBlockView header;
+            if (!decodeHeaderBlock(
+                    payload.bytes,
+                    header,
+                    pbfStatus))
+            {
+                status = fromPbfFailure(
+                    fileBlock.sequence,
+                    fileBlock.offset,
+                    pbfStatus);
+                return false;
+            }
+
+            HeaderFeatureAssessment assessment;
+            if (!validateRequiredFeatures(
+                    header,
+                    HeaderFeatureSupport.allKnown(),
+                    assessment,
+                    pbfStatus))
+            {
+                status = fromPbfFailure(
+                    fileBlock.sequence,
+                    fileBlock.offset,
+                    pbfStatus);
+                return false;
+            }
+
+            sawHeader = true;
+            ++summary.headerBlocks;
+            return true;
+
+        case BlobKind.osmData:
+            if (!sawHeader)
+            {
+                status = readerFailure(
+                    PbfReadError.dataBeforeHeader,
+                    fileBlock.sequence,
+                    fileBlock.offset);
+                return false;
+            }
+
+            sawData = true;
+            return decodeDataBlock(
+                payload.bytes,
+                workspace,
+                sink,
+                summary,
+                fileBlock.sequence,
+                fileBlock.offset,
+                status);
+
+        case BlobKind.unknown:
+            status = readerFailure(
+                PbfReadError.unsupportedBlockType,
+                fileBlock.sequence,
+                fileBlock.offset);
+            return false;
+    }
+}
+
 /**
  * Materialize one validated Blob payload using reusable reader scratch.
  *
@@ -1212,6 +1321,111 @@ struct PbfReader
         }
 
         return true;
+    }
+
+    /**
+     * Decode one complete PBF from a bounded ByteSource.
+     *
+     * The reader keeps only a reusable read-ahead/frame buffer plus the normal
+     * decompression/StringTable/Way scratch in `workspace`. The complete
+     * encoded source is never required in memory.
+     *
+     * Params:
+     *   source = Byte resource supplying PBF bytes through `readSome`.
+     *   workspace = Caller-owned reusable PBF/source scratch.
+     *   handler = Consumer receiving borrowed semantic callbacks synchronously.
+     *   summary = Receives complete counts only after success.
+     *   status = Distinguishes transport, resource-limit and PBF failures.
+     *   options = Read-ahead and whole-resource byte-limit controls.
+     *
+     * Returns:
+     *   true only after clean EOF following a valid complete PBF; false on the
+     *   first transport, resource or PBF failure.
+     */
+    bool read(Handler)(
+        ByteSource source,
+        ref PbfReaderWorkspace workspace,
+        ref Handler handler,
+        out PbfReadSummary summary,
+        out PbfSourceReadStatus status,
+        PbfSourceReadOptions options = PbfSourceReadOptions.init)
+        @safe
+    {
+        summary = PbfReadSummary.init;
+        status = PbfSourceReadStatus.init;
+
+        if (source is null)
+        {
+            status = sourceTransportFailure(ReadError.sourceFailure, 0);
+            return false;
+        }
+
+        SemanticSink!Handler sink = SemanticSink!Handler(handler);
+        PbfSourceCursor cursor;
+        bool sawHeader;
+        bool sawData;
+        ulong sequence;
+        const preferredBufferSize = pbfSourceBufferSize(options);
+        const maximumBytes = pbfSourceMaximumBytes(options);
+
+        while (true)
+        {
+            FileBlockView fileBlock;
+            PbfSourceReadStatus frameStatus;
+            const frame = readSourceFileBlock(
+                source,
+                cursor,
+                workspace.sourceBuffer,
+                preferredBufferSize,
+                maximumBytes,
+                sequence,
+                fileBlock,
+                frameStatus);
+
+            final switch (frame)
+            {
+                case PbfSourceFrameResult.endOfInput:
+                    if (!sawHeader)
+                    {
+                        auto pbf = readerFailure(
+                            PbfReadError.missingHeader,
+                            sequence,
+                            cast(size_t)(
+                                cursor.baseOffset + cursor.begin));
+                        status = sourcePbfFailure(
+                            pbf,
+                            cursor.baseOffset + cursor.begin);
+                        return false;
+                    }
+
+                    status = PbfSourceReadStatus.init;
+                    return true;
+
+                case PbfSourceFrameResult.error:
+                    status = frameStatus;
+                    return false;
+
+                case PbfSourceFrameResult.block:
+                    PbfReadStatus pbfStatus;
+                    if (!processReaderFileBlock(
+                            fileBlock,
+                            workspace,
+                            sink,
+                            sawHeader,
+                            sawData,
+                            summary,
+                            pbfStatus))
+                    {
+                        status = sourcePbfFailure(
+                            pbfStatus,
+                            fileBlock.offset);
+                        return false;
+                    }
+
+                    ++sequence;
+                    continue;
+            }
+        }
     }
 }
 
