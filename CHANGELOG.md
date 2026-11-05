@@ -7,6 +7,16 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+### Added
+
+- Add exact, allocation-free `findTag`, `hasTag` and `tagEquals` helpers
+  for borrowed OSM tag ranges. The free functions are UFCS-friendly, preserve
+  duplicate ordering, compare D strings as their existing UTF-8 code units and
+  perform no normalization or transcoding.
+- Qualify compact-store element, child and parent traversal values as lazy D
+  InputRanges and document cursor-copy and structural-mutation invalidation
+  semantics for Phobos composition.
+
 ## 0.3.0 - 2026-11-04
 
 ### Added
