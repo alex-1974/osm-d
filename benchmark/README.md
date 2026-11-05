@@ -139,17 +139,25 @@ requested dataset IDs are rejected before any dataset is processed.
 the compact store's existing InputRanges with Phobos `filter`. PBF loading and
 store construction happen before the timed region.
 
-The benchmark compares a direct hand-written traversal with the equivalent
-lazy composed traversal for four Way predicates:
+The benchmark compares three equivalent forms: a direct hand-written
+traversal, plain Phobos `filter`, and the Phobos-recommended
+`cache.filter` composition for an underlying range whose `front` is
+non-trivial. It covers four Way predicates:
 
 - lifecycle state;
 - a trivial ID predicate;
 - exact tag-key lookup through `hasTag`;
 - two chained `filter` adapters (ID + tag).
 
-Every pair must produce the same match count and checksum. Samples alternate
-direct/composed order. The benchmark also records GC allocation and collection
-deltas after warm-up; lazy composition is expected to allocate no GC memory.
+All three forms must produce the same match count and checksum. Sample order
+rotates across direct/plain/cached positions. The benchmark also records GC
+allocation and collection deltas after warm-up; both lazy compositions are
+expected to allocate no GC memory.
+
+Plain `filter` intentionally remains in the measurement: Phobos may evaluate
+an accepted source `front` once for the predicate and again for delivery.
+`cache` stores that front value once per source element and is the candidate
+idiom when repeated `front` evaluation is material.
 
 Build and run with the controlled LDC baseline:
 
