@@ -230,6 +230,13 @@ foreach (way; namedWays)
 }
 ```
 
+Phobos composition is lazy and allocation-free, but it is a convenience
+surface rather than the maximum-throughput traversal. On the pinned Bremen
+qualification, plain `filter` added about 7% for a realistic tag-presence
+predicate and substantially more for very cheap predicates. Use a direct
+range/`foreach` loop with an inline `if` when traversal is a measured hot
+path; see `docs/BENCHMARKS.md` for the evidence.
+
 Copying one of these ranges copies only its cursor state. Every copy still
 borrows the same store, and structural store mutation invalidates outstanding
 ranges and views.
