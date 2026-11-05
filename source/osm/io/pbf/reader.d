@@ -448,9 +448,10 @@ private PbfSourceFrameResult readSourceFileBlock(
     }
 
     uint headerLength;
-    if (!readBigEndianU32(storage[sourceCursor.begin .. sourceCursor.end],
-                          sourceCursor.begin == 0 ? 0 : sourceCursor.begin,
-                          headerLength))
+    if (!readBigEndianU32(
+            storage[sourceCursor.begin .. sourceCursor.end],
+            0,
+            headerLength))
     {
         status = sourcePbfFailure(
             sequence,
