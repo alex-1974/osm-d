@@ -147,6 +147,55 @@ benchmark/bin/osm-d-bench-push-filter \
 The targeted GitHub workflow retains hosted-runner evidence. A public
 `where!`-style API is added only after the benchmark decision.
 
+## PBF ByteSource qualification
+
+`parser/source_compare.d` qualifies the bounded M14 ByteSource path against
+the resident whole-buffer reader and direct store builder. It runs one mode per
+process so `/usr/bin/time -v` can report a useful peak RSS.
+
+Supported modes are:
+
+- `file-range-read` — one complete FileSource range read, used only as a
+  transport/file baseline;
+- `slice-decode` — resident `ubyte[]` -> `PbfReader`;
+- `memory-source-decode` — resident bytes behind `MemorySource` ->
+  `PbfReader`;
+- `file-source-decode` — bounded `FileSource` -> `PbfReader`;
+- `slice-store`, `memory-source-store`, `file-source-store` — the
+  equivalent direct editable-store builds.
+
+The benchmark-only `TrackingSource` records `readSome` calls and the largest
+BlobHeader/Blob reads. This exposes the encoded current-block scratch retained
+by the source path without adding benchmark diagnostics to the public
+`PbfReaderWorkspace` API.
+
+Build and run one mode:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=parser-source-compare \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-source-compare \
+  file-source-decode 5 \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The `PBF ByteSource Qualification` workflow runs Monaco and Bremen decode/store
+parity plus Austria country-scale decode parity. On the accepted M14
+qualification the Bremen and Austria source decoders were at whole-buffer
+performance parity after I/O isolation, steady-state decode allocated zero
+D-GC bytes, and Austria FileSource peak RSS was about 18 MiB instead of about
+788 MiB for the resident 808.8 MB input. Exact hosted-runner evidence and the
+architectural decision are recorded in `docs/BENCHMARKS.md`.
+
+This harness deliberately does not benchmark loss-aware `PbfDocument`:
+raw-source preservation is a separate whole-buffer ownership contract.
+
 ## Pinned real-data baseline
 
 The initial real-data baseline uses immutable Geofabrik snapshots dated
