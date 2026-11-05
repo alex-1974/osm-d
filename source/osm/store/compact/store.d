@@ -74,7 +74,7 @@ public:
         _capacity = 0;
     }
 
-    @property size_t length() const scope @safe pure nothrow @nogc
+    @property size_t length() const @safe pure nothrow @nogc
     {
         return _length;
     }
