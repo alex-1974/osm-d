@@ -28,7 +28,7 @@ run_negative()
     if "$compiler" \
         -preview=dip1000 \
         -c \
-        -I"$ROOT/source" \
+        "${IMPORT_FLAGS[@]}" \
         "$source" \
         -of="$object" \
         >"$log" 2>&1
@@ -58,6 +58,12 @@ for compiler in "${compilers[@]}"; do
         echo "required compiler not found: $compiler" >&2
         exit 2
     }
+
+    read -r -a IMPORT_FLAGS <<< "$(dub describe \
+        --root="$ROOT" \
+        --compiler="$compiler" \
+        --data=import-paths \
+        --vquiet)"
 
     run_negative \
         "$compiler" \
