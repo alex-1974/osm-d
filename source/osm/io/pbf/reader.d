@@ -2118,6 +2118,33 @@ version(unittest)
     }
 }
 
+version(unittest)
+{
+    private bool testEvenNode(scope ref NodeView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenWay(scope ref WayView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenRelation(scope ref RelationView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testNoWay(scope ref WayView)
+        @safe pure nothrow @nogc
+    {
+        return false;
+    }
+}
+
 unittest
 {
     ubyte[] node;
@@ -2501,4 +2528,101 @@ unittest
     assert(count == 1);
     assert(prefix.status.ok);
     assert(!prefix.completed);
+}
+
+
+// Push filtering preserves borrowed traversal, validation and early-stop status.
+unittest
+{
+    ubyte[] node1;
+    appendVarintField(node1, 1, 2); // sint64 id = 1
+    appendVarintField(node1, 8, 0);
+    appendVarintField(node1, 9, 0);
+
+    ubyte[] node2;
+    appendVarintField(node2, 1, 4); // sint64 id = 2
+    appendVarintField(node2, 8, 0);
+    appendVarintField(node2, 9, 0);
+
+    ubyte[] way7;
+    appendVarintField(way7, 1, 7);
+    ubyte[] way8;
+    appendVarintField(way8, 1, 8);
+
+    ubyte[] relation9;
+    appendVarintField(relation9, 1, 9);
+    ubyte[] relation10;
+    appendVarintField(relation10, 1, 10);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 1, node1);
+    appendLengthDelimited(group, 1, node2);
+    appendLengthDelimited(group, 3, way7);
+    appendLengthDelimited(group, 3, way8);
+    appendLengthDelimited(group, 4, relation9);
+    appendLengthDelimited(group, 4, relation10);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    auto nodes = pbfNodes(input).where!testEvenNode;
+    size_t nodeCount;
+    foreach (scope ref NodeView value; nodes)
+    {
+        ++nodeCount;
+        assert(value.id == 2);
+    }
+    assert(nodeCount == 1);
+    assert(nodes.status.ok);
+    assert(nodes.completed);
+
+    auto ways = pbfWays(input).where!testEvenWay;
+    size_t wayCount;
+    foreach (scope ref WayView value; ways)
+    {
+        ++wayCount;
+        assert(value.id == 8);
+    }
+    assert(wayCount == 1);
+    assert(ways.status.ok);
+    assert(ways.completed);
+
+    auto relations = pbfRelations(input).where!testEvenRelation;
+    size_t relationCount;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++relationCount;
+        assert(value.id == 10);
+    }
+    assert(relationCount == 1);
+    assert(relations.status.ok);
+    assert(relations.completed);
+
+    auto prefix = pbfWays(input).where!testEvenWay;
+    foreach (scope ref WayView value; prefix)
+    {
+        assert(value.id == 8);
+        break;
+    }
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+
+    // Filtering every valid Way out does not suppress validation of the
+    // unvisited file suffix.
+    ubyte[] malformed;
+    appendFileBlock(malformed, "OSMHeader", null);
+    appendFileBlock(malformed, "OSMData", data);
+    const(ubyte)[] badPrimitiveBlock = [0x80];
+    appendFileBlock(malformed, "OSMData", badPrimitiveBlock);
+
+    auto none = pbfWays(malformed).where!testNoWay;
+    wayCount = 0;
+    foreach (scope ref WayView value; none)
+        ++wayCount;
+
+    assert(wayCount == 0);
+    assert(!none.completed);
+    assert(none.status.error == PbfReadError.malformedInput);
 }
