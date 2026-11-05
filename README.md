@@ -196,10 +196,10 @@ Tag ranges support exact, allocation-free lookup through UFCS-friendly helpers:
 ```d
 if (node.tags.hasTag("name"))
 {
-    TagView name;
-    if (node.tags.findTag("name", name))
+    auto name = node.tags.findTag("name");
+    if (name.found)
     {
-        // name.value borrows the same backing storage as the tag range.
+        // name.tag.value borrows the same backing storage as the tag range.
     }
 }
 
