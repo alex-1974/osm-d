@@ -100,6 +100,53 @@ OSM parsing.
 `benchmark/data/`, `benchmark/results/` and `benchmark/bin/` are intentionally
 ignored. Large extracts do not belong in Git.
 
+## PBF push-filter prototype qualification
+
+`parser/push_filter.d` evaluates M14 #128 without admitting a public API
+first. The benchmark-local candidate wraps the existing
+`PbfWayIterable.opApply` push traversal and applies a compile-time predicate
+before forwarding a matching borrowed `WayView` to the final foreach body.
+
+It compares three semantically equivalent forms:
+
+1. maximum-throughput `PbfReader.read(handler)` with a statically dispatched
+   handler predicate;
+2. current public `foreach (way; pbfWays(input))` plus an inline `if`;
+3. the benchmark-local composable push-filter candidate.
+
+The candidate is **not** a Phobos InputRange, performs no element
+materialization and preserves the source iterable's completion/status
+semantics.
+
+Pinned Bremen workloads cover:
+
+- a cheap high-selectivity ID predicate;
+- a cheap low-selectivity ID predicate;
+- exact `highway` tag presence.
+
+Every form must produce identical selected counts and checksums. The benchmark
+records p10/p50/p90 and the push/inline ratio. The M14 admission target is no
+material overhead over `foreach + if`; approximately 1–2% is an investigation
+threshold rather than a release promise.
+
+Build and run:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=parser-push-filter \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-push-filter \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The targeted GitHub workflow retains hosted-runner evidence. A public
+`where!`-style API is added only after the benchmark decision.
+
 ## Pinned real-data baseline
 
 The initial real-data baseline uses immutable Geofabrik snapshots dated

@@ -325,6 +325,58 @@ These hosted-runner numbers are decision evidence, not a controlled-workstation
 marketing baseline. The committed benchmark and workflow retain the comparison
 for future regressions.
 
+## M14 PBF push-filter prototype qualification — 2026-11-05
+
+Question: can the existing push-based `pbfWays` foreach surface support a
+composable compile-time predicate without adding material overhead over an
+ordinary `foreach + if`?
+
+The benchmark-local prototype deliberately did **not** modify the public API.
+It wrapped `PbfWayIterable.opApply`, applied a template predicate before
+forwarding matching borrowed `WayView` values, and preserved the underlying
+completion/status contract.
+
+The qualification used:
+
+- candidate PR #156;
+- pinned `bremen-260901` dataset;
+- LDC 1.41.0 / DMD frontend 2.111.0 / LLVM 20.1.5;
+- release/all-at-once build;
+- 21 samples with rotating direct/inline/push order;
+- full PBF validation on every timed traversal;
+- exact selected-count/checksum parity between all three forms.
+
+Results:
+
+| Predicate | Direct static sink p50 | `foreach + if` p50 | Inline/direct | Push candidate p50 | Push/inline |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| high-selectivity ID | 704.864 ms | 744.771 ms | 1.0566x | 745.469 ms | **1.0009x** |
+| low-selectivity ID | 703.240 ms | 744.666 ms | 1.0589x | 744.354 ms | **0.9996x** |
+| `highway` tag present | 724.984 ms | 764.948 ms | 1.0551x | 765.475 ms | **1.0007x** |
+
+The three forms also reported identical first-use workspace allocation for each
+workload: 4,694,192 D-GC bytes and zero collections. The push wrapper therefore
+introduced no additional measured allocation.
+
+The result accepts the push-filter concept. Its incremental cost over the
+already accepted foreach convenience surface is within measurement noise
+(about -0.04% to +0.09% in this run). It does **not** erase the existing roughly
+5-6% Way-foreach cost versus the maximum-throughput statically dispatched
+`PbfReader.read(handler)` path.
+
+Architectural decision:
+
+- retain `PbfReader.read(handler)` as the maximum-throughput API;
+- retain `pbfNodes/pbfWays/pbfRelations` as push/foreach adapters rather than
+  Phobos InputRanges;
+- admit an optional `where!`-style compile-time push predicate if the
+  production implementation preserves this status/control/lifetime behavior;
+- do not claim protobuf predicate pushdown: framing, decompression and semantic
+  validation still occur as required to produce each valid borrowed element.
+
+The hosted-runner numbers are decision evidence rather than a
+controlled-workstation marketing baseline.
+
 ## First executable microbenchmark: varint
 
 `benchmark/micro/varint.d` establishes the first hot-path baseline. After the
