@@ -392,12 +392,12 @@ private:
     uint _locationPosition;
 
 public:
-    @property bool empty() const scope @safe pure nothrow @nogc
+    @property bool empty() const @safe pure nothrow @nogc
     {
         return _position >= _refLength;
     }
 
-    @property NodeRefView front() return scope @safe nothrow @nogc
+    @property NodeRefView front() @safe nothrow @nogc
     {
         const id = _store._wayRefIds[_refOffset + _position];
 
@@ -426,7 +426,7 @@ public:
         return NodeRefView(id);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         if (_position >= _refLength)
             return;
@@ -442,7 +442,7 @@ public:
         ++_position;
     }
 
-    @property size_t length() const scope @safe pure nothrow @nogc
+    @property size_t length() const @safe pure nothrow @nogc
     {
         return cast(size_t)(_refLength - _position);
     }
@@ -466,12 +466,12 @@ private:
     uint _position;
 
 public:
-    @property bool empty() const scope @safe pure nothrow @nogc
+    @property bool empty() const @safe pure nothrow @nogc
     {
         return _position >= _length;
     }
 
-    @property RelationMemberView front() return scope @safe nothrow @nogc
+    @property RelationMemberView front() @safe nothrow @nogc
     {
         const i = _offset + _position;
         return RelationMemberView(
@@ -480,13 +480,13 @@ public:
             _store._strings.get(_store._relationMemberRoles[i]));
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         if (_position < _length)
             ++_position;
     }
 
-    @property size_t length() const scope @safe pure nothrow @nogc
+    @property size_t length() const @safe pure nothrow @nogc
     {
         return cast(size_t)(_length - _position);
     }
@@ -538,7 +538,7 @@ private:
     OsmStore _store;
     uint _edge;
 
-    void skipUnavailable() scope @safe nothrow @nogc
+    void skipUnavailable() @safe nothrow @nogc
     {
         while (_edge != 0)
         {
@@ -553,13 +553,13 @@ private:
     }
 
 public:
-    @property bool empty() scope @safe nothrow @nogc
+    @property bool empty() @safe nothrow @nogc
     {
         skipUnavailable();
         return _edge == 0;
     }
 
-    @property StoreWayView front() return scope @safe nothrow @nogc
+    @property StoreWayView front() @safe nothrow @nogc
     {
         skipUnavailable();
         assert(_edge != 0);
@@ -567,7 +567,7 @@ public:
         return _store.wayViewAt(edge.parentSlot);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         skipUnavailable();
         if (_edge == 0)
@@ -592,7 +592,7 @@ private:
     ElementType _childType;
     uint _edge;
 
-    void skipUnavailable() scope @safe nothrow @nogc
+    void skipUnavailable() @safe nothrow @nogc
     {
         while (_edge != 0)
         {
@@ -607,13 +607,13 @@ private:
     }
 
 public:
-    @property bool empty() scope @safe nothrow @nogc
+    @property bool empty() @safe nothrow @nogc
     {
         skipUnavailable();
         return _edge == 0;
     }
 
-    @property StoreRelationView front() return scope @safe nothrow @nogc
+    @property StoreRelationView front() @safe nothrow @nogc
     {
         skipUnavailable();
         assert(_edge != 0);
@@ -621,7 +621,7 @@ public:
         return _store.relationViewAt(edge.parentSlot);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         skipUnavailable();
         if (_edge == 0)
@@ -644,7 +644,7 @@ private:
     OsmStore _store;
     uint _slot;
 
-    void skipDeleted() scope @safe nothrow @nogc
+    void skipDeleted() @safe nothrow @nogc
     {
         while (_slot < _store._nodes.ids.length &&
                _store._nodes.states[_slot] == StoreElementState.deleted)
@@ -652,19 +652,19 @@ private:
     }
 
 public:
-    @property bool empty() scope @safe nothrow @nogc
+    @property bool empty() @safe nothrow @nogc
     {
         skipDeleted();
         return _slot >= _store._nodes.ids.length;
     }
 
-    @property StoreNodeView front() return scope @safe nothrow @nogc
+    @property StoreNodeView front() @safe nothrow @nogc
     {
         skipDeleted();
         return _store.nodeViewAt(_slot);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         if (_slot < _store._nodes.ids.length)
             ++_slot;
@@ -684,7 +684,7 @@ private:
     OsmStore _store;
     uint _slot;
 
-    void skipDeleted() scope @safe nothrow @nogc
+    void skipDeleted() @safe nothrow @nogc
     {
         while (_slot < _store._ways.ids.length &&
                _store._ways.states[_slot] == StoreElementState.deleted)
@@ -692,19 +692,19 @@ private:
     }
 
 public:
-    @property bool empty() scope @safe nothrow @nogc
+    @property bool empty() @safe nothrow @nogc
     {
         skipDeleted();
         return _slot >= _store._ways.ids.length;
     }
 
-    @property StoreWayView front() return scope @safe nothrow @nogc
+    @property StoreWayView front() @safe nothrow @nogc
     {
         skipDeleted();
         return _store.wayViewAt(_slot);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         if (_slot < _store._ways.ids.length)
             ++_slot;
@@ -724,7 +724,7 @@ private:
     OsmStore _store;
     uint _slot;
 
-    void skipDeleted() scope @safe nothrow @nogc
+    void skipDeleted() @safe nothrow @nogc
     {
         while (_slot < _store._relations.ids.length &&
                _store._relations.states[_slot] == StoreElementState.deleted)
@@ -732,19 +732,19 @@ private:
     }
 
 public:
-    @property bool empty() scope @safe nothrow @nogc
+    @property bool empty() @safe nothrow @nogc
     {
         skipDeleted();
         return _slot >= _store._relations.ids.length;
     }
 
-    @property StoreRelationView front() return scope @safe nothrow @nogc
+    @property StoreRelationView front() @safe nothrow @nogc
     {
         skipDeleted();
         return _store.relationViewAt(_slot);
     }
 
-    void popFront() scope @safe nothrow @nogc
+    void popFront() @safe nothrow @nogc
     {
         if (_slot < _store._relations.ids.length)
             ++_slot;
