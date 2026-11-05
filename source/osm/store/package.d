@@ -52,4 +52,5 @@ public import osm.store.compact.store :
 
 public import osm.store.pbf :
     PbfStoreReadStatus,
+    PbfSourceStoreReadStatus,
     readPbfStore;

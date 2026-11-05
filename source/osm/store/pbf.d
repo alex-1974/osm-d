@@ -14,12 +14,14 @@ module osm.store.pbf;
 
 import osm.io.pbf.reader :
     PbfReadStatus,
+    PbfSourceReadStatus,
     PbfReadSummary,
     PbfReader,
     PbfReaderWorkspace;
 import osm.store.compact.store :
     OsmStore,
     StoreStatus;
+import transport.source : ByteSource;
 
 /**
  * Combined diagnostic for one direct PBF-to-store read.
@@ -38,6 +40,27 @@ struct PbfStoreReadStatus
     @property bool ok() const @safe pure nothrow @nogc
     {
         return pbf.ok && store.ok;
+    }
+}
+
+/**
+ * Combined diagnostic for one ByteSource-backed direct PBF-to-store read.
+ *
+ * `source` distinguishes generic transport failures from PBF framing and
+ * semantic failures. `store` reports editable-store semantic rejection.
+ * `.init` is the successful status.
+ */
+struct PbfSourceStoreReadStatus
+{
+    /// Byte-source and PBF decoder status.
+    PbfSourceReadStatus source;
+    /// Editable-store semantic status.
+    StoreStatus store;
+
+    /** Return true only when source/PBF and store processing all succeeded. */
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return source.ok && store.ok;
     }
 }
 
@@ -129,6 +152,63 @@ bool readPbfStore(
     return true;
 }
 
+
+/**
+ * Read one complete bounded ByteSource directly into an editable OSM store.
+ *
+ * PBF framing is consumed incrementally through transport-d. The parser keeps
+ * only current-block/reusable decode scratch; it does not materialize the
+ * complete encoded source. Accepted semantic values are copied immediately
+ * into the candidate store.
+ *
+ * Construction is transactional at the public boundary. On transport, PBF or
+ * store-semantic failure, `store` remains null and `summary` remains reset.
+ * `status` preserves the applicable source/PBF and store diagnostics.
+ *
+ * Params:
+ *   inputSource = Generic transport-d byte source. The source itself must
+ *     remain valid only for this synchronous call.
+ *   store = Receives the fully built store on success, otherwise null.
+ *   summary = Receives complete decoded counts on success.
+ *   status = Receives combined source/PBF/store diagnostics.
+ *
+ * Returns:
+ *   true only after the complete source was validated and committed to the
+ *   returned store.
+ */
+bool readPbfStore(
+    scope ByteSource inputSource,
+    out OsmStore store,
+    out PbfReadSummary summary,
+    out PbfSourceStoreReadStatus status) @safe
+{
+    store = null;
+    summary = PbfReadSummary.init;
+    status = PbfSourceStoreReadStatus.init;
+
+    auto builtStore = new OsmStore();
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    StoreSink sink;
+    sink.target = builtStore;
+
+    PbfReadSummary readSummary;
+    PbfSourceReadStatus readStatus;
+    const ok = reader.read(
+        inputSource, workspace, sink, readSummary, readStatus);
+
+    status.source = readStatus;
+    if (sink.failed)
+        status.store = sink.status;
+
+    if (!ok || sink.failed)
+        return false;
+
+    store = builtStore;
+    summary = readSummary;
+    return true;
+}
+
 unittest
 {
     // Empty input is not a valid PBF and never exposes a partial store.
@@ -192,6 +272,20 @@ unittest
     assert(summary.nodes == 1);
     assert(summary.ways == 1);
     assert(summary.relations == 1);
+
+    import transport.source : MemorySource;
+
+    OsmStore streamedStore;
+    PbfReadSummary streamedSummary;
+    PbfSourceStoreReadStatus streamedStatus;
+    assert(readPbfStore(
+        new MemorySource(bytes),
+        streamedStore,
+        streamedSummary,
+        streamedStatus));
+    assert(streamedStatus.ok);
+    assert(streamedSummary == summary);
+    assert(streamedStore.counts == store.counts);
 
     auto parents = store.parentWays(1);
     assert(!parents.empty);

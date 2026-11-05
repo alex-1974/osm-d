@@ -37,29 +37,31 @@ nothing about PBF. PBF DenseNode decoding knows nothing about the editor.
 ## PBF hot path
 
 ```text
-file / stream
+encoded PBF bytes
+    |
+    +-- whole-buffer slice
+    |      -> framing borrows immutable Blob slices
+    |
+    `-- transport-d ByteSource
+           -> bounded prefix/Header/Blob reads
+           -> reusable current-block buffers
     |
     v
-framing reader
-    | whole-buffer API: borrowed immutable Blob slice
-    | future streaming API: owned/pool-backed bytes when required
-    v
-bounded work queue
-    |
-    +---------------- worker N ----------------+
-    | decompress into reusable worker buffer   |
-    | scan protobuf -> block layout             |
-    | index StringTable in worker workspace     |
-    | decode PrimitiveGroups                    |
-    | decode varints / zigzag / deltas          |
-    | structural validation                     |
-    | decode into worker-local sink/summary    |
-    +-------------------------------------------+
+Blob decode / bounded decompression
     |
     v
-owned reduction / future direct store construction
+PrimitiveBlock + StringTable + PrimitiveGroup decode
+    |
+    v
+push-decoded borrowed Node/Way/Relation views
+    |
+    +-- statically dispatched consumer sink
+    +-- opApply foreach / where! convenience
+    `-- direct compact OsmStore build
 
-Ordered borrowed semantic traversal remains on the serial reader path.
+The serial reader owns ordered consumer-visible borrowing. The separate
+parallel-summary reader may borrow immutable whole-buffer Blob slices because
+it publishes summaries rather than worker-borrowed semantic views.
 ```
 
 ### Inner boundary
@@ -99,9 +101,11 @@ the codec retains its own cursor and backing-state representation.
 ## Borrowed and owned data
 
 A borrowed view may reference the current decompressed block, StringTable or
-reader workspace. It must not outlive that block. Whole-buffer parallel jobs
-may borrow immutable Blob slices directly from the caller's complete input
-because every worker is joined before the read returns. Worker decompression
+reader workspace. It must not outlive that block. For ByteSource reads, the
+serialized current-block buffers are likewise reusable scratch and are replaced
+only after all synchronous callbacks for that block return. Whole-buffer
+parallel jobs may borrow immutable Blob slices directly from the caller's
+complete input because every worker is joined before the read returns. Worker decompression
 and decode scratch remains worker-owned and reusable.
 
 The parallel summary reader intentionally exports no worker-borrowed semantic

@@ -14,19 +14,28 @@ for compiler in "${compilers[@]}"; do
         exit 2
     }
 
+    # Root imports may legitimately expose package dependencies. Ask DUB for
+    # the actual compiler import flags instead of pretending the public root is
+    # dependency-free while still keeping this as a compile-only DIP1000 probe.
+    read -r -a import_flags <<< "$(dub describe \
+        --root="$ROOT" \
+        --compiler="$compiler" \
+        --data=import-paths \
+        --vquiet)"
+
     object="$TMPDIR/consumer-$(basename "$compiler").o"
     echo "=== CONSUMER COMPILE: $compiler ==="
     "$compiler" \
         -preview=dip1000 \
         -c \
-        -I"$ROOT/source" \
+        "${import_flags[@]}" \
         "$SOURCE" \
         -of="$object"
     echo "PASS: $compiler external consumer compile"
 
     store_object="$TMPDIR/store-consumer-$(basename "$compiler").o"
     echo "=== STORE CONSUMER COMPILE: $compiler ==="
-    "$compiler" -preview=dip1000 -c -I"$ROOT/source" \
+    "$compiler" -preview=dip1000 -c "${import_flags[@]}" \
         "$ROOT/tests/compatibility/store_consumer.d" -of="$store_object"
     echo "PASS: $compiler store consumer compile"
 

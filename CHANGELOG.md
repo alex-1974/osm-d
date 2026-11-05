@@ -20,6 +20,11 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
   `pbfRelations`. The compile-time predicate filters callback-scoped borrowed
   elements without materialization while preserving foreach early-exit,
   completion and validation semantics.
+- Add bounded `transport-d.ByteSource` overloads for `PbfReader.read`,
+  `readPbf` and direct `readPbfStore`. Incremental PBF framing retains only
+  the current BlobHeader/Blob plus reusable decoder scratch, keeps whole-buffer
+  overloads intact, and reports transport failures separately from
+  malformed/truncated PBF.
 
 ## 0.3.0 - 2026-11-04
 

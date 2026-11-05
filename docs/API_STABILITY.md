@@ -76,14 +76,22 @@ compatibility surface.
   `UploadResultEntry`, `UploadResult`;
 - editable store: `OsmStore`, `OsmHandle`, store views/ranges/status and
   counts/memory values, primary lookup, parent navigation, edit lifecycle,
-  `collectChanges`, `applyUploadResult`, and `readPbfStore`;
+  `collectChanges`, `applyUploadResult`, `PbfStoreReadStatus`,
+  `PbfSourceStoreReadStatus` and `readPbfStore`;
 - ordinary borrowed PBF reading: `PbfReader`, `PbfReaderWorkspace`,
   element-specific iterables, `PbfReadSummary`, `PbfReadStatus`,
-  `PbfReadError`, `PbfReadResult`, `readPbf`,
-  `pbfNodes`/`pbfWays`/`pbfRelations`.
+  `PbfSourceReadStatus`, `PbfReadError`, `PbfReadResult`,
+  `PbfSourceReadResult`, `readPbf`,
+  `pbfNodes`/`pbfWays`/`pbfRelations`, and `where!`.
 
 Loss-aware PBF documents/writing and parallel-summary facilities deliberately
 live in `osm.pbf` rather than the root.
+
+The ordinary PBF reader and direct store builder also accept
+`transport-d.ByteSource`. This is a byte-resource boundary only: osm-d owns
+PBF framing/interpretation while transport-d owns filesystem, memory and HTTP
+access. Loss-aware `PbfDocument` reading remains whole-buffer because its raw
+preservation contract intentionally retains original encoded bytes.
 
 The v0.3 Editing API codecs deliberately remain focused imports:
 `osm.upload` parses successful diff-upload responses and `osm.capabilities`

@@ -76,6 +76,7 @@ public import osm.store :
     StoreWayRange,
     StoreRelationRange,
     PbfStoreReadStatus,
+    PbfSourceStoreReadStatus,
     readPbfStore;
 
 public import osm.io.pbf.node_view : NodeView;
@@ -88,8 +89,10 @@ public import osm.io.pbf.reader :
     PbfRelationIterable,
     PbfReadError,
     PbfReadStatus,
+    PbfSourceReadStatus,
     PbfReadSummary,
     PbfReadResult,
+    PbfSourceReadResult,
     PbfReaderWorkspace,
     PbfReader,
     readPbf,
