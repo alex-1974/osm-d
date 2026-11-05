@@ -229,16 +229,29 @@ admitted after this feature freeze.
 
 Tracked by M14: #129.
 
-- [ ] Add exact zero-allocation tag lookup helpers over semantic tag ranges. #126
-- [ ] Qualify compact-store traversal ranges for idiomatic Phobos composition. #127
-- [ ] Evaluate composable push filtering for PBF foreach traversal without
+- [x] Add exact zero-allocation tag lookup helpers over semantic tag ranges. #126
+- [x] Qualify compact-store traversal ranges for idiomatic Phobos composition. #127
+- [x] Evaluate composable push filtering for PBF foreach traversal without
   converting the push decoder into a Phobos InputRange. #128
-- [ ] Add bounded PBF reading from `transport-d.ByteSource` while preserving
+- [x] Add bounded PBF reading from `transport-d.ByteSource` while preserving
   whole-buffer loss-aware semantics where required. #125
 
 The direct statically dispatched `PbfReader.read(handler)` path remains the
 maximum-throughput reference. Convenience composition is admitted only when its
 lifetime and performance costs are explicit and measured.
+
+M14 closes with three deliberately different consumer surfaces:
+
+- resident PBF bytes use the push/foreach adapters and optional `where!`;
+- bounded resources use `PbfReader.read(ByteSource, workspace, handler, ...)`
+  so source ownership, reusable scratch and diagnostics remain explicit;
+- owned store data uses ordinary D InputRanges, with direct traversal retained
+  for measured hot loops.
+
+No source-backed `pbfNodes/pbfWays/pbfRelations` opApply family was added:
+it would hide per-traversal workspace ownership or require a new stateful
+borrowing API merely for syntax. Loss-aware `PbfDocument` intentionally
+remains whole-buffer.
 
 
 ## Phase 15 — Dataset integrity and OSM topology resolution

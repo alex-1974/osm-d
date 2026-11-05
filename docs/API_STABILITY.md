@@ -93,6 +93,12 @@ PBF framing/interpretation while transport-d owns filesystem, memory and HTTP
 access. Loss-aware `PbfDocument` reading remains whole-buffer because its raw
 preservation contract intentionally retains original encoded bytes.
 
+The element-specific `pbfNodes`/`pbfWays`/`pbfRelations` helpers remain
+resident-slice opApply adapters. ByteSource traversal uses
+`PbfReader.read(source, workspace, handler, ...)`, keeping reusable scratch
+and source/PBF diagnostics explicit. A source-backed foreach helper remains
+possible additive work if a concrete consumer needs a stateful iteration API.
+
 The v0.3 Editing API codecs deliberately remain focused imports:
 `osm.upload` parses successful diff-upload responses and `osm.capabilities`
 projects current server validation policy. Neither is re-exported from

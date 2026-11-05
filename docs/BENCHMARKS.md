@@ -74,15 +74,17 @@ Measure both throughput and semantic equality.
 
 ## PBF memory and thread-scaling baselines
 
-The production reader now has two durable whole-buffer measurement tools.
+The production reader retains two durable whole-buffer measurement tools.
+M14 adds a separate ByteSource qualification harness described below; the
+whole-buffer tools remain useful for the resident-input and parallel baselines.
 
 `benchmark/parser/memory_baseline.d` reuses one `PbfReaderWorkspace` across
 complete validated serial reads and reports per-pass D-GC allocation deltas and
 collection-count deltas. `benchmark/run-memory-baseline.sh` wraps the process
 with `/usr/bin/time -v` to capture peak RSS; its default pinned datasets are
-Bremen (city) and Austria (country). File loading remains part of process RSS
-because the public API is currently whole-buffer, but it is outside the
-per-decode GC-allocation deltas.
+Bremen (city) and Austria (country). That harness intentionally measures the
+resident whole-buffer path, so file loading remains part of process RSS; the
+bounded ByteSource harness measures the non-resident alternative separately.
 
 `benchmark/parser/parallel_summary.d` compares the ordered serial summary
 path with `PbfParallelReader.readSummary`. The corresponding
@@ -376,6 +378,88 @@ Architectural decision:
 
 The hosted-runner numbers are decision evidence rather than a
 controlled-workstation marketing baseline.
+
+## M14 bounded ByteSource PBF qualification — 2026-11-05
+
+Question: can ordinary PBF decoding consume `transport-d.ByteSource` without
+materializing the complete encoded resource, while preserving semantic parity,
+steady-state allocation discipline and the existing whole-buffer performance
+baseline?
+
+The production source path was introduced by PR #158 and merged as
+`1a4ca2c7f011e85bf26bf4658317ef8bb9906c7b`. Qualification PR #159
+used LDC 1.41.0 release/allAtOnce builds and the pinned Monaco, Bremen and
+Austria snapshots. The benchmark runs each mode in its own process so peak RSS
+is attributable to that mode.
+
+The decode comparison separates three questions:
+
+1. resident slice -> `PbfReader`: existing reference path;
+2. resident `MemorySource` -> `PbfReader`: source/framing-copy overhead with
+   I/O removed;
+3. `FileSource` -> `PbfReader`: bounded local-resource path including the
+   current transport-d file backend.
+
+All three paths produced identical summaries and semantic checksums on every
+dataset. Median hosted-runner results were:
+
+| Dataset | Input class | Slice p50 / RSS | MemorySource p50 / RSS | FileSource p50 / RSS | Memory/slice | File/slice | Max retained encoded source bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | small | 18.197 ms / 5,964 KiB | 18.842 ms / 6,232 KiB | 18.527 ms / 5,384 KiB | 1.035x | 1.018x | 226,076 |
+| Bremen | city | 616.502 ms / 28,988 KiB | 613.418 ms / 30,768 KiB | 622.978 ms / 10,236 KiB | 0.995x | 1.011x | 1,083,202 |
+| Austria | country | 31.021 s / 807,064 KiB | 30.698 s / 812,308 KiB | 31.011 s / **17,616 KiB** | 0.990x | **1.000x** | 2,122,182 |
+
+After workspace warm-up, all measured decode modes reported **0 D-GC allocated
+bytes** and **0 collections**. The Austria result is the decisive scaling
+evidence: the 808,820,532-byte input decoded at performance parity while the
+FileSource process retained only current-block encoded scratch and had roughly
+18 MiB peak RSS instead of roughly 788 MiB.
+
+Austria semantic parity covered 87,627,541 Nodes, 9,359,891 Ways, 180,296
+Relations, 43,979,849 tags and 12,147 data blocks. The source wrapper observed
+a largest 14-byte BlobHeader and 2,122,168-byte serialized Blob, for 2,122,182
+bytes of retained encoded source scratch. Across three complete source passes
+it read exactly 2,426,461,596 encoded bytes, three times the pinned input size.
+
+The city-scale direct-store comparison also passed semantic/store-count parity:
+
+| Dataset | Slice store p50 / RSS | MemorySource store p50 / RSS | FileSource store p50 / RSS |
+| --- | ---: | ---: | ---: |
+| Monaco | 43.413 ms / 15,852 KiB | 44.674 ms / 16,252 KiB | 43.510 ms / 15,052 KiB |
+| Bremen | 1.712 s / 400,808 KiB | 1.832 s / 401,672 KiB | 1.742 s / 387,012 KiB |
+
+The one-shot direct-store source path creates its decode workspace inside the
+call, so source-buffer growth appears in each build's D-GC allocation rather
+than being amortized across calls. Bremen measured 4,696,240 D-GC bytes for the
+slice build and 6,633,920 bytes for both source builds. This is accepted for the
+one-shot convenience API; repeated pure decoding retains caller-owned
+`PbfReaderWorkspace` and reaches the zero-allocation steady state above.
+
+Architectural decision:
+
+- accept `ByteSource` as the bounded ordinary PBF input boundary;
+- keep the resident slice overload because it is already optimal when bytes are
+  owned by the caller;
+- keep `PbfDocument` whole-buffer because loss-aware raw preservation
+  intentionally owns the original encoded bytes;
+- keep filesystem/HTTP behavior in transport-d; the current FileSource backend
+  already meets osm-d's measured city/country performance need, while
+  transport-d #5 may still improve generic sequential-file efficiency;
+- **do not add `pbfNodes(ByteSource)`, `pbfWays(ByteSource)` or
+  `pbfRelations(ByteSource)` in M14**.
+
+The last decision is an ownership/lifetime choice rather than a missing parser
+capability. `PbfReader.read(ByteSource, workspace, handler, ...)` makes the
+bounded source, reusable scratch and source/PBF diagnostics explicit.
+A source-backed opApply helper would either hide a fresh workspace inside each
+traversal or require a new stateful borrowing API merely for syntax. The
+existing slice-backed foreach/`where!` helpers remain appropriate when encoded
+bytes are already resident. A future real consumer may justify a distinct
+stateful source-iteration abstraction, but M14 does not invent one without that
+need.
+
+These hosted-runner measurements are architecture evidence, not portable
+hardware throughput claims.
 
 ## First executable microbenchmark: varint
 

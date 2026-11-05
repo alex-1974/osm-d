@@ -189,8 +189,9 @@ if (!reader.read(source, workspace, handler, summary, status))
 This source overload retains only the current PBF header/blob and reusable
 decode scratch. Clean EOF inside an incomplete frame is reported as malformed
 PBF; a real ByteSource failure remains a transport error. The existing
-whole-buffer overload remains the fastest path when the bytes are already
-resident.
+whole-buffer overload remains the lowest-abstraction path when bytes are already
+resident; M14 city/country qualification measured the ByteSource decoder at
+performance parity while FileSource avoided retaining the complete encoded PBF.
 
 A Way exposes ordered references through `way.nodes`; each value is a
 `NodeRefView` with an OSM ID and an optional `LocationView` when
@@ -406,6 +407,13 @@ The existing `PbfReader.nodes/ways/relations` methods remain equivalent
 advanced entry points. Natural completion validates the complete file; an
 early foreach exit, including from a filtered traversal, is explicitly a
 partial traversal.
+
+The element-specific `pbfNodes/pbfWays/pbfRelations` helpers intentionally
+remain resident-slice adapters. For a `ByteSource`, use
+`PbfReader.read(source, workspace, handler, ...)`: this keeps reusable scratch,
+source ownership and transport/PBF diagnostics explicit instead of hiding a
+fresh workspace inside each opApply traversal. A source-backed foreach family
+can be added later if a concrete consumer justifies a stateful ownership model.
 
 Loss-aware PBF documents, raw preservation, writing and PBF-specific semantic
 comparison are grouped under `import osm.pbf;` rather than expanding the
