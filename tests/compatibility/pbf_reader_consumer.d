@@ -263,6 +263,27 @@ void compileConsumer()
         assert(node.id > 0);
     }
     assert(filteredNodes.status.ok || !filteredNodes.completed);
+
+
+    ByteSource nodeSource = new MemorySource(input);
+    auto sourceNodes = pbfNodes(nodeSource);
+    foreach (scope ref NodeView node; sourceNodes)
+    {
+        OsmId id = node.id;
+        assert(id == node.id);
+        break;
+    }
+    PbfSourceReadStatus sourceNodeStatus = sourceNodes.status;
+    assert(sourceNodeStatus.ok || !sourceNodes.completed);
+
+    ByteSource filteredNodeSource = new MemorySource(input);
+    auto filteredSourceNodes =
+        pbfNodes(filteredNodeSource).where!positiveNodeId;
+    foreach (scope ref NodeView node; filteredSourceNodes)
+    {
+        assert(node.id > 0);
+    }
+    assert(filteredSourceNodes.status.ok || !filteredSourceNodes.completed);
 }
 
 
@@ -322,6 +343,59 @@ void compileConsumer()
         break;
     }
     assert(filteredRelations.status.ok || !filteredRelations.completed);
+}
+
+
+
+@safe void compileSafeSourceWayRelationForeach(const(ubyte)[] input)
+{
+    PbfReader reader;
+
+    ByteSource waySource = new MemorySource(input);
+    auto ways = reader.ways(waySource);
+    foreach (scope ref WayView way; ways)
+    {
+        OsmId id = way.id;
+        assert(id == way.id);
+        break;
+    }
+    assert(ways.status.ok || !ways.completed);
+
+    ByteSource filteredWaySource = new MemorySource(input);
+    auto filteredWays = reader.ways(filteredWaySource).where!highwayWay;
+    foreach (scope ref WayView way; filteredWays)
+    {
+        assert(way.tags.hasTag("highway"));
+        break;
+    }
+    assert(filteredWays.status.ok || !filteredWays.completed);
+
+    ByteSource relationSource = new MemorySource(input);
+    auto relations = reader.relations(relationSource);
+    foreach (scope ref RelationView relation; relations)
+    {
+        OsmId id = relation.id;
+        assert(id == relation.id);
+        break;
+    }
+    assert(relations.status.ok || !relations.completed);
+
+    ByteSource filteredRelationSource = new MemorySource(input);
+    auto filteredRelations =
+        reader.relations(filteredRelationSource).where!positiveRelationId;
+    foreach (scope ref RelationView relation; filteredRelations)
+    {
+        assert(relation.id > 0);
+        break;
+    }
+    assert(filteredRelations.status.ok || !filteredRelations.completed);
+
+    // The null literal remains source-compatible with the original slice
+    // overload; ByteSource overloads are constrained templates.
+    auto emptySliceNodes = pbfNodes(null);
+    foreach (scope ref NodeView node; emptySliceNodes)
+        assert(0);
+    assert(emptySliceNodes.status.error == PbfReadError.missingHeader);
 }
 
 
