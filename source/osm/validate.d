@@ -19,3 +19,10 @@ public import osm.validation.change :
     UploadValidationError,
     UploadValidationIssue,
     validateUploadChanges;
+
+public import osm.validation.dataset :
+    DatasetReferenceMode,
+    DatasetReferenceError,
+    DatasetReferenceIssue,
+    DatasetReferenceSummary,
+    validateDatasetReferences;
