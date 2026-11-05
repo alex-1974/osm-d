@@ -2534,6 +2534,8 @@ unittest
 // Push filtering preserves borrowed traversal, validation and early-stop status.
 unittest
 {
+    // Nodes: use the same minimal regular-Node shape as the established
+    // PbfNodeIterable tests.
     ubyte[] node1;
     appendVarintField(node1, 1, 2); // sint64 id = 1
     appendVarintField(node1, 8, 0);
@@ -2544,30 +2546,16 @@ unittest
     appendVarintField(node2, 8, 0);
     appendVarintField(node2, 9, 0);
 
-    ubyte[] way7;
-    appendVarintField(way7, 1, 7);
-    ubyte[] way8;
-    appendVarintField(way8, 1, 8);
+    ubyte[] nodeGroup;
+    appendLengthDelimited(nodeGroup, 1, node1);
+    appendLengthDelimited(nodeGroup, 1, node2);
 
-    ubyte[] relation9;
-    appendVarintField(relation9, 1, 9);
-    ubyte[] relation10;
-    appendVarintField(relation10, 1, 10);
+    ubyte[] nodeInput;
+    appendFileBlock(nodeInput, "OSMHeader", null);
+    const nodeData = makePrimitiveBlock(nodeGroup);
+    appendFileBlock(nodeInput, "OSMData", nodeData);
 
-    ubyte[] group;
-    appendLengthDelimited(group, 1, node1);
-    appendLengthDelimited(group, 1, node2);
-    appendLengthDelimited(group, 3, way7);
-    appendLengthDelimited(group, 3, way8);
-    appendLengthDelimited(group, 4, relation9);
-    appendLengthDelimited(group, 4, relation10);
-
-    ubyte[] input;
-    appendFileBlock(input, "OSMHeader", null);
-    const data = makePrimitiveBlock(group);
-    appendFileBlock(input, "OSMData", data);
-
-    auto nodes = pbfNodes(input).where!testEvenNode;
+    auto nodes = pbfNodes(nodeInput).where!testEvenNode;
     size_t nodeCount;
     foreach (scope ref NodeView value; nodes)
     {
@@ -2578,7 +2566,22 @@ unittest
     assert(nodes.status.ok);
     assert(nodes.completed);
 
-    auto ways = pbfWays(input).where!testEvenWay;
+    // Ways.
+    ubyte[] way7;
+    appendVarintField(way7, 1, 7);
+    ubyte[] way8;
+    appendVarintField(way8, 1, 8);
+
+    ubyte[] wayGroup;
+    appendLengthDelimited(wayGroup, 3, way7);
+    appendLengthDelimited(wayGroup, 3, way8);
+
+    ubyte[] wayInput;
+    appendFileBlock(wayInput, "OSMHeader", null);
+    const wayData = makePrimitiveBlock(wayGroup);
+    appendFileBlock(wayInput, "OSMData", wayData);
+
+    auto ways = pbfWays(wayInput).where!testEvenWay;
     size_t wayCount;
     foreach (scope ref WayView value; ways)
     {
@@ -2589,7 +2592,22 @@ unittest
     assert(ways.status.ok);
     assert(ways.completed);
 
-    auto relations = pbfRelations(input).where!testEvenRelation;
+    // Relations.
+    ubyte[] relation9;
+    appendVarintField(relation9, 1, 9);
+    ubyte[] relation10;
+    appendVarintField(relation10, 1, 10);
+
+    ubyte[] relationGroup;
+    appendLengthDelimited(relationGroup, 4, relation9);
+    appendLengthDelimited(relationGroup, 4, relation10);
+
+    ubyte[] relationInput;
+    appendFileBlock(relationInput, "OSMHeader", null);
+    const relationData = makePrimitiveBlock(relationGroup);
+    appendFileBlock(relationInput, "OSMData", relationData);
+
+    auto relations = pbfRelations(relationInput).where!testEvenRelation;
     size_t relationCount;
     foreach (scope ref RelationView value; relations)
     {
@@ -2600,7 +2618,8 @@ unittest
     assert(relations.status.ok);
     assert(relations.completed);
 
-    auto prefix = pbfWays(input).where!testEvenWay;
+    // The final foreach control value still stops the source traversal.
+    auto prefix = pbfWays(wayInput).where!testEvenWay;
     foreach (scope ref WayView value; prefix)
     {
         assert(value.id == 8);
@@ -2610,10 +2629,10 @@ unittest
     assert(!prefix.completed);
 
     // Filtering every valid Way out does not suppress validation of the
-    // unvisited file suffix.
+    // following malformed PBF block.
     ubyte[] malformed;
     appendFileBlock(malformed, "OSMHeader", null);
-    appendFileBlock(malformed, "OSMData", data);
+    appendFileBlock(malformed, "OSMData", wayData);
     const(ubyte)[] badPrimitiveBlock = [0x80];
     appendFileBlock(malformed, "OSMData", badPrimitiveBlock);
 
@@ -2626,3 +2645,4 @@ unittest
     assert(!none.completed);
     assert(none.status.error == PbfReadError.malformedInput);
 }
+
