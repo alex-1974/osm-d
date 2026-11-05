@@ -25,7 +25,8 @@ public import osm.io.pbf.reader :
     readPbf,
     pbfNodes,
     pbfWays,
-    pbfRelations;
+    pbfRelations,
+    where;
 
 public import osm.io.pbf.parallel_reader :
     PbfParallelReadOptions,
