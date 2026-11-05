@@ -659,6 +659,196 @@ private:
 }
 
 /**
+ * Foreach adapter over semantic Nodes from a bounded PBF ByteSource.
+ *
+ * The source is read from absolute offset zero for every opApply invocation.
+ * Natural traversal validates the complete source. A foreach break stops after
+ * the current decoded block element and leaves the unread suffix deliberately
+ * unvalidated. Borrowed NodeView values remain callback-scoped.
+ */
+struct PbfSourceNodeIterable
+{
+private:
+    ByteSource source;
+    PbfSourceReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(ByteSource value) @safe nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    @property PbfSourceReadStatus status() const @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    @property bool completed() const @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    int opApply(scope int delegate(scope ref NodeView) @safe dg) @safe
+    {
+        SafeNodeForeachSink sink = SafeNodeForeachSink(dg);
+        return apply(sink);
+    }
+
+    int opApply(scope int delegate(scope ref NodeView) @system dg) @system
+    {
+        SystemNodeForeachSink sink = SystemNodeForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfSourceReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+        if (!iterateSourceSelected!decodeNodeDataBlock(
+                source,
+                workspace,
+                sink,
+                control,
+                _status))
+            return 0;
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/** Foreach adapter over semantic Ways from a bounded PBF ByteSource. */
+struct PbfSourceWayIterable
+{
+private:
+    ByteSource source;
+    PbfSourceReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(ByteSource value) @safe nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    @property PbfSourceReadStatus status() const @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    @property bool completed() const @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    int opApply(scope int delegate(scope ref WayView) @safe dg) @safe
+    {
+        SafeWayForeachSink sink = SafeWayForeachSink(dg);
+        return apply(sink);
+    }
+
+    int opApply(scope int delegate(scope ref WayView) @system dg) @system
+    {
+        SystemWayForeachSink sink = SystemWayForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfSourceReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+        if (!iterateSourceSelected!decodeWayDataBlock(
+                source,
+                workspace,
+                sink,
+                control,
+                _status))
+            return 0;
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/** Foreach adapter over semantic Relations from a bounded PBF ByteSource. */
+struct PbfSourceRelationIterable
+{
+private:
+    ByteSource source;
+    PbfSourceReadStatus _status;
+    bool _completed;
+
+package(osm):
+    this(ByteSource value) @safe nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    @property PbfSourceReadStatus status() const @safe pure nothrow @nogc
+    {
+        return _status;
+    }
+
+    @property bool completed() const @safe pure nothrow @nogc
+    {
+        return _completed;
+    }
+
+    int opApply(scope int delegate(scope ref RelationView) @safe dg) @safe
+    {
+        SafeRelationForeachSink sink = SafeRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+    int opApply(scope int delegate(scope ref RelationView) @system dg) @system
+    {
+        SystemRelationForeachSink sink = SystemRelationForeachSink(dg);
+        return apply(sink);
+    }
+
+private:
+    int apply(Sink)(ref Sink sink)
+    {
+        _status = PbfSourceReadStatus.init;
+        _completed = false;
+
+        PbfReaderWorkspace workspace;
+        int control;
+        if (!iterateSourceSelected!decodeRelationDataBlock(
+                source,
+                workspace,
+                sink,
+                control,
+                _status))
+            return 0;
+
+        if (control != 0)
+            return control;
+
+        _completed = true;
+        return 0;
+    }
+}
+
+/**
  * Push-filter adapter over one element-specific PBF foreach traversal.
  *
  * This is deliberately not a Phobos InputRange. It retains the synchronous
@@ -697,7 +887,7 @@ private:
 
 public:
     /** Status from the most recent traversal. */
-    @property PbfReadStatus status() const
+    @property auto status() const
         @safe pure nothrow @nogc
     {
         return source.status;
@@ -765,6 +955,30 @@ where(alias predicate)(return scope PbfRelationIterable source)
     return typeof(return)(source);
 }
 
+/** Filter one ByteSource-backed PBF Node foreach traversal. */
+PbfWhereIterable!(PbfSourceNodeIterable, NodeView, predicate)
+where(alias predicate)(return scope PbfSourceNodeIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one ByteSource-backed PBF Way foreach traversal. */
+PbfWhereIterable!(PbfSourceWayIterable, WayView, predicate)
+where(alias predicate)(return scope PbfSourceWayIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one ByteSource-backed PBF Relation foreach traversal. */
+PbfWhereIterable!(PbfSourceRelationIterable, RelationView, predicate)
+where(alias predicate)(return scope PbfSourceRelationIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
 /**
  * Whole-buffer OSMPBF reader.
  *
@@ -804,6 +1018,30 @@ struct PbfReader
         @safe pure nothrow @nogc
     {
         return PbfRelationIterable(input);
+    }
+
+    /** Return a foreach adapter over semantic Nodes from a ByteSource. */
+    PbfSourceNodeIterable nodes(Source)(Source source)
+        @safe nothrow @nogc
+    if (is(Source : ByteSource))
+    {
+        return PbfSourceNodeIterable(source);
+    }
+
+    /** Return a foreach adapter over semantic Ways from a ByteSource. */
+    PbfSourceWayIterable ways(Source)(Source source)
+        @safe nothrow @nogc
+    if (is(Source : ByteSource))
+    {
+        return PbfSourceWayIterable(source);
+    }
+
+    /** Return a foreach adapter over semantic Relations from a ByteSource. */
+    PbfSourceRelationIterable relations(Source)(Source source)
+        @safe nothrow @nogc
+    if (is(Source : ByteSource))
+    {
+        return PbfSourceRelationIterable(source);
     }
 
     /**
@@ -1278,6 +1516,30 @@ PbfRelationIterable pbfRelations(return scope const(ubyte)[] input)
     @safe pure nothrow @nogc
 {
     return PbfRelationIterable(input);
+}
+
+/** Return a foreach adapter over semantic Nodes from a ByteSource. */
+PbfSourceNodeIterable pbfNodes(Source)(Source source)
+    @safe nothrow @nogc
+if (is(Source : ByteSource))
+{
+    return PbfSourceNodeIterable(source);
+}
+
+/** Return a foreach adapter over semantic Ways from a ByteSource. */
+PbfSourceWayIterable pbfWays(Source)(Source source)
+    @safe nothrow @nogc
+if (is(Source : ByteSource))
+{
+    return PbfSourceWayIterable(source);
+}
+
+/** Return a foreach adapter over semantic Relations from a ByteSource. */
+PbfSourceRelationIterable pbfRelations(Source)(Source source)
+    @safe nothrow @nogc
+if (is(Source : ByteSource))
+{
+    return PbfSourceRelationIterable(source);
 }
 
 private bool iterateNodes(Sink)(
@@ -1826,6 +2088,189 @@ private bool iterateSelected(alias decodeSelectedDataBlock, Sink)(
     status = PbfReadStatus.init;
     return true;
 }
+
+private bool iterateSourceSelected(alias decodeSelectedDataBlock, Sink)(
+    ByteSource source,
+    ref PbfReaderWorkspace workspace,
+    ref Sink sink,
+    out int control,
+    out PbfSourceReadStatus sourceStatus)
+{
+    control = 0;
+    sourceStatus = PbfSourceReadStatus.init;
+
+    if (source is null)
+    {
+        sourceStatus.transportError = ReadError.sourceFailure;
+        return false;
+    }
+
+    bool sawHeader;
+    bool sawData;
+    ulong sequence;
+    ulong sourceOffset;
+
+    while (true)
+    {
+        const size_t blockOffset = cast(size_t)sourceOffset;
+        FileBlockView fileBlock;
+        PbfStatus pbfStatus;
+        ReadError transportError;
+        ulong transportOffset;
+        size_t transportBytesRead;
+
+        const frameResult = readSourceFileBlock(
+            source,
+            sourceOffset,
+            sequence,
+            workspace,
+            fileBlock,
+            pbfStatus,
+            transportError,
+            transportOffset,
+            transportBytesRead);
+
+        final switch (frameResult)
+        {
+            case SourceFrameReadResult.endOfInput:
+                break;
+
+            case SourceFrameReadResult.transportError:
+                sourceStatus.transportError = transportError;
+                sourceStatus.transportOffset = transportOffset;
+                sourceStatus.transportBytesRead = transportBytesRead;
+                return false;
+
+            case SourceFrameReadResult.pbfError:
+                sourceStatus.pbf = fromPbfFailure(
+                    sequence,
+                    blockOffset,
+                    pbfStatus);
+                return false;
+
+            case SourceFrameReadResult.block:
+                BlobView blob;
+                if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                {
+                    sourceStatus.pbf = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                BlobPayloadView payload;
+                if (!decodeReaderBlobPayload(
+                        blob,
+                        workspace,
+                        payload,
+                        pbfStatus))
+                {
+                    sourceStatus.pbf = fromPbfFailure(
+                        sequence,
+                        fileBlock.offset,
+                        pbfStatus);
+                    return false;
+                }
+
+                final switch (fileBlock.header.kind)
+                {
+                    case BlobKind.osmHeader:
+                        if (sawHeader || sawData)
+                        {
+                            sourceStatus.pbf = readerFailure(
+                                PbfReadError.duplicateHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        HeaderBlockView header;
+                        if (!decodeHeaderBlock(
+                                payload.bytes,
+                                header,
+                                pbfStatus))
+                        {
+                            sourceStatus.pbf = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        HeaderFeatureAssessment assessment;
+                        if (!validateRequiredFeatures(
+                                header,
+                                HeaderFeatureSupport.allKnown(),
+                                assessment,
+                                pbfStatus))
+                        {
+                            sourceStatus.pbf = fromPbfFailure(
+                                sequence,
+                                fileBlock.offset,
+                                pbfStatus);
+                            return false;
+                        }
+
+                        sawHeader = true;
+                        break;
+
+                    case BlobKind.osmData:
+                        if (!sawHeader)
+                        {
+                            sourceStatus.pbf = readerFailure(
+                                PbfReadError.dataBeforeHeader,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                        }
+
+                        sawData = true;
+                        PbfReadStatus selectedStatus;
+                        if (!decodeSelectedDataBlock(
+                                payload.bytes,
+                                workspace,
+                                sink,
+                                control,
+                                sequence,
+                                fileBlock.offset,
+                                selectedStatus))
+                        {
+                            sourceStatus.pbf = selectedStatus;
+                            return false;
+                        }
+
+                        if (control != 0)
+                            return true;
+                        break;
+
+                    case BlobKind.unknown:
+                        sourceStatus.pbf = readerFailure(
+                            PbfReadError.unsupportedBlockType,
+                            sequence,
+                            fileBlock.offset);
+                        return false;
+                }
+
+                ++sequence;
+                continue;
+        }
+
+        break;
+    }
+
+    if (!sawHeader)
+    {
+        sourceStatus.pbf = readerFailure(
+            PbfReadError.missingHeader,
+            sequence,
+            cast(size_t)sourceOffset);
+        return false;
+    }
+
+    return true;
+}
+
 
 private bool decodeWayDataBlock(Sink)(
     const(ubyte)[] payloadBytes,
@@ -2752,6 +3197,121 @@ unittest
     assert(sourceStatus.transportError == ReadError.sourceFailure);
     assert(sourceStatus.transportOffset == 0);
     assert(sourceStatus.pbf.ok);
+}
+
+// ByteSource foreach adapters preserve natural completion, filtering,
+// early-stop validation scope and transport diagnostics.
+unittest
+{
+    // Nodes.
+    ubyte[] node1;
+    appendVarintField(node1, 1, 2); // sint64 id = 1
+    appendVarintField(node1, 8, 0);
+    appendVarintField(node1, 9, 0);
+
+    ubyte[] node2;
+    appendVarintField(node2, 1, 4); // sint64 id = 2
+    appendVarintField(node2, 8, 0);
+    appendVarintField(node2, 9, 0);
+
+    ubyte[] nodeGroup;
+    appendLengthDelimited(nodeGroup, 1, node1);
+    appendLengthDelimited(nodeGroup, 1, node2);
+
+    ubyte[] nodeInput;
+    appendFileBlock(nodeInput, "OSMHeader", null);
+    const nodeData = makePrimitiveBlock(nodeGroup);
+    appendFileBlock(nodeInput, "OSMData", nodeData);
+
+    auto nodes = pbfNodes(new MemorySource(nodeInput));
+    size_t nodeCount;
+    long nodeIdSum;
+    foreach (scope ref NodeView value; nodes)
+    {
+        ++nodeCount;
+        nodeIdSum += value.id;
+    }
+    assert(nodeCount == 2);
+    assert(nodeIdSum == 3);
+    assert(nodes.status.ok);
+    assert(nodes.completed);
+
+    auto filteredNodes =
+        pbfNodes(new MemorySource(nodeInput)).where!testEvenNode;
+    nodeCount = 0;
+    foreach (scope ref NodeView value; filteredNodes)
+    {
+        ++nodeCount;
+        assert(value.id == 2);
+    }
+    assert(nodeCount == 1);
+    assert(filteredNodes.status.ok);
+    assert(filteredNodes.completed);
+
+    // Ways plus malformed suffix: natural traversal validates the suffix, but
+    // a user break stops before it.
+    ubyte[] way;
+    appendVarintField(way, 1, 8);
+    ubyte[] wayGroup;
+    appendLengthDelimited(wayGroup, 3, way);
+    const wayData = makePrimitiveBlock(wayGroup);
+
+    ubyte[] suffixInput;
+    appendFileBlock(suffixInput, "OSMHeader", null);
+    appendFileBlock(suffixInput, "OSMData", wayData);
+    const(ubyte)[] malformedData = [0x80];
+    appendFileBlock(suffixInput, "OSMData", malformedData);
+
+    auto completeWays = pbfWays(new MemorySource(suffixInput));
+    size_t wayCount;
+    foreach (scope ref WayView value; completeWays)
+    {
+        ++wayCount;
+        assert(value.id == 8);
+    }
+    assert(wayCount == 1);
+    assert(!completeWays.completed);
+    assert(completeWays.status.transportError == ReadError.none);
+    assert(completeWays.status.pbf.error == PbfReadError.malformedInput);
+
+    auto prefixWays = pbfWays(new MemorySource(suffixInput));
+    foreach (scope ref WayView value; prefixWays)
+    {
+        assert(value.id == 8);
+        break;
+    }
+    assert(prefixWays.status.ok);
+    assert(!prefixWays.completed);
+
+    // Relations.
+    ubyte[] relation;
+    appendVarintField(relation, 1, 10);
+    ubyte[] relationGroup;
+    appendLengthDelimited(relationGroup, 4, relation);
+
+    ubyte[] relationInput;
+    appendFileBlock(relationInput, "OSMHeader", null);
+    const relationData = makePrimitiveBlock(relationGroup);
+    appendFileBlock(relationInput, "OSMData", relationData);
+
+    auto relations = pbfRelations(new MemorySource(relationInput));
+    size_t relationCount;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++relationCount;
+        assert(value.id == 10);
+    }
+    assert(relationCount == 1);
+    assert(relations.status.ok);
+    assert(relations.completed);
+
+    // Generic source failure remains transport-level.
+    auto failedNodes = pbfNodes(new FailingByteSource());
+    foreach (scope ref NodeView value; failedNodes)
+        assert(0);
+    assert(!failedNodes.completed);
+    assert(failedNodes.status.transportError == ReadError.sourceFailure);
+    assert(failedNodes.status.pbf.ok);
 }
 
 unittest
