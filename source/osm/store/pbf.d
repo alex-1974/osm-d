@@ -43,11 +43,21 @@ struct PbfStoreReadStatus
     }
 }
 
+/**
+ * Combined diagnostic for one ByteSource-backed direct PBF-to-store read.
+ *
+ * `source` distinguishes generic transport failures from PBF framing and
+ * semantic failures. `store` reports editable-store semantic rejection.
+ * `.init` is the successful status.
+ */
 struct PbfSourceStoreReadStatus
 {
+    /// Byte-source and PBF decoder status.
     PbfSourceReadStatus source;
+    /// Editable-store semantic status.
     StoreStatus store;
 
+    /** Return true only when source/PBF and store processing all succeeded. */
     @property bool ok() const @safe pure nothrow @nogc
     {
         return source.ok && store.ok;
@@ -143,6 +153,29 @@ bool readPbfStore(
 }
 
 
+/**
+ * Read one complete bounded ByteSource directly into an editable OSM store.
+ *
+ * PBF framing is consumed incrementally through transport-d. The parser keeps
+ * only current-block/reusable decode scratch; it does not materialize the
+ * complete encoded source. Accepted semantic values are copied immediately
+ * into the candidate store.
+ *
+ * Construction is transactional at the public boundary. On transport, PBF or
+ * store-semantic failure, `store` remains null and `summary` remains reset.
+ * `status` preserves the applicable source/PBF and store diagnostics.
+ *
+ * Params:
+ *   inputSource = Generic transport-d byte source. The source itself must
+ *     remain valid only for this synchronous call.
+ *   store = Receives the fully built store on success, otherwise null.
+ *   summary = Receives complete decoded counts on success.
+ *   status = Receives combined source/PBF/store diagnostics.
+ *
+ * Returns:
+ *   true only after the complete source was validated and committed to the
+ *   returned store.
+ */
 bool readPbfStore(
     scope ByteSource inputSource,
     out OsmStore store,
