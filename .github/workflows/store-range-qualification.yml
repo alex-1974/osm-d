@@ -1,0 +1,94 @@
+name: Store Range Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "source/osm/view/tag.d"
+      - "source/osm/store/**"
+      - "benchmark/store/range_composition.d"
+      - "benchmark/dub.sdl"
+      - ".github/workflows/store-range-qualification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bremen-range-composition:
+    name: Bremen direct vs Phobos range composition
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned Bremen workload
+        shell: bash
+        run: |
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch bremen-260901; then
+              ok=1
+              break
+            fi
+            sleep $((attempt * 5))
+          done
+          test "$ok" = 1
+
+      - name: Build range-composition benchmark
+        shell: bash
+        run: |
+          dub build             --root=benchmark             --config=store-range-composition             --compiler="$DC"             --build=release             --build-mode=allAtOnce             --force
+
+      - name: Run direct vs Phobos composition
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-store-range-composition             benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf             | tee benchmark/store/range-composition-bremen.txt
+
+      - name: Verify allocation-free composed traversal
+        shell: bash
+        run: |
+          awk -F= '
+            /_composed_gc_allocated_bytes=/ {
+              seen += 1
+              if ($2 != 0) {
+                print "unexpected composed GC allocation: " $0 > "/dev/stderr"
+                failed = 1
+              }
+            }
+            /_composed_gc_collections=/ {
+              collections += 1
+              if ($2 != 0) {
+                print "unexpected composed GC collection: " $0 > "/dev/stderr"
+                failed = 1
+              }
+            }
+            END {
+              if (seen != 4 || collections != 4) {
+                print "missing GC evidence" > "/dev/stderr"
+                exit 1
+              }
+              if (failed) exit 1
+            }
+          ' benchmark/store/range-composition-bremen.txt
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: store-range-composition-bremen-${{ github.sha }}
+          path: benchmark/store/range-composition-bremen.txt
+          if-no-files-found: error
