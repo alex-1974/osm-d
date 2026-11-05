@@ -95,4 +95,5 @@ public import osm.io.pbf.reader :
     readPbf,
     pbfNodes,
     pbfWays,
-    pbfRelations;
+    pbfRelations,
+    where;

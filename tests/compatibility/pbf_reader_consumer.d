@@ -9,6 +9,24 @@ import osm.view.way_node : WayNodeView;
 static assert(is(WayNodeView == NodeRefView));
 static assert(is(OwnedWayNode == OwnedNodeRef));
 
+private bool positiveNodeId(scope ref NodeView value)
+    @safe pure nothrow @nogc
+{
+    return value.id > 0;
+}
+
+private bool highwayWay(scope ref WayView value)
+    @safe nothrow @nogc
+{
+    return value.tags.hasTag("highway");
+}
+
+private bool positiveRelationId(scope ref RelationView value)
+    @safe pure nothrow @nogc
+{
+    return value.id > 0;
+}
+
 private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
 {
     MetadataView metadata = value.metadata;
@@ -220,6 +238,13 @@ void compileConsumer()
     const nodeCompleted = nodes.completed;
     assert(!nodeStatus.ok);
     assert(!nodeCompleted);
+
+    auto filteredNodes = pbfNodes(input).where!positiveNodeId;
+    foreach (scope ref NodeView node; filteredNodes)
+    {
+        assert(node.id > 0);
+    }
+    assert(filteredNodes.status.ok || !filteredNodes.completed);
 }
 
 
@@ -254,6 +279,14 @@ void compileConsumer()
     }
     assert(ways.status.ok || !ways.completed);
 
+    auto filteredWays = reader.ways(input).where!highwayWay;
+    foreach (scope ref WayView way; filteredWays)
+    {
+        assert(way.tags.hasTag("highway"));
+        break;
+    }
+    assert(filteredWays.status.ok || !filteredWays.completed);
+
     auto relations = reader.relations(input);
     foreach (scope ref RelationView relation; relations)
     {
@@ -262,6 +295,15 @@ void compileConsumer()
         break;
     }
     assert(relations.status.ok || !relations.completed);
+
+    auto filteredRelations =
+        reader.relations(input).where!positiveRelationId;
+    foreach (scope ref RelationView relation; filteredRelations)
+    {
+        assert(relation.id > 0);
+        break;
+    }
+    assert(filteredRelations.status.ok || !filteredRelations.completed);
 }
 
 

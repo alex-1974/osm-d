@@ -450,6 +450,113 @@ private:
 }
 
 /**
+ * Push-filter adapter over one element-specific PBF foreach traversal.
+ *
+ * This is deliberately not a Phobos InputRange. It retains the synchronous
+ * opApply execution model of pbfNodes/pbfWays/pbfRelations, applies a
+ * compile-time predicate to each valid borrowed element, and forwards only
+ * matching elements to the final foreach body.
+ *
+ * The adapter owns only a copy of the source traversal value. It does not
+ * materialize OSM elements, widen borrowed lifetimes, or skip the parsing and
+ * validation work required to produce a valid element view.
+ *
+ * Consumers normally obtain this type through UFCS:
+ *
+ * ---
+ * auto highways = pbfWays(input).where!hasHighway;
+ * foreach (scope ref WayView way; highways)
+ * {
+ *     // matching borrowed Way only
+ * }
+ * ---
+ *
+ * A natural traversal preserves the source whole-file validation scope.
+ * Breaking from the final foreach body stops parsing immediately and leaves
+ * completed false, exactly like the unfiltered source traversal.
+ */
+struct PbfWhereIterable(Source, View, alias predicate)
+{
+private:
+    Source source;
+
+    this(return scope Source value)
+        @safe pure nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    /** Status from the most recent traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return source.status;
+    }
+
+    /** True only when the most recent traversal reached end-of-file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return source.completed;
+    }
+
+    /** Iterate matching elements from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @safe dg)
+        @safe
+    {
+        return source.opApply((scope ref View value) @safe {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+
+    /** Iterate matching elements from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @system dg)
+        @system
+    {
+        return source.opApply((scope ref View value) @system {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+}
+
+/**
+ * Filter one PBF Node foreach traversal with a compile-time predicate.
+ *
+ * The predicate receives the same callback-scoped NodeView as ordinary
+ * pbfNodes traversal. For non-copyable NodeView predicates, accept the value by
+ * scope ref.
+ */
+PbfWhereIterable!(PbfNodeIterable, NodeView, predicate)
+where(alias predicate)(return scope PbfNodeIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Way foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfWayIterable, WayView, predicate)
+where(alias predicate)(return scope PbfWayIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Relation foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfRelationIterable, RelationView, predicate)
+where(alias predicate)(return scope PbfRelationIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
@@ -2011,6 +2118,33 @@ version(unittest)
     }
 }
 
+version(unittest)
+{
+    private bool testEvenNode(scope ref NodeView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenWay(scope ref WayView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenRelation(scope ref RelationView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testNoWay(scope ref WayView)
+        @safe pure nothrow @nogc
+    {
+        return false;
+    }
+}
+
 unittest
 {
     ubyte[] node;
@@ -2395,3 +2529,120 @@ unittest
     assert(prefix.status.ok);
     assert(!prefix.completed);
 }
+
+
+// Push filtering preserves borrowed traversal, validation and early-stop status.
+unittest
+{
+    // Nodes: use the same minimal regular-Node shape as the established
+    // PbfNodeIterable tests.
+    ubyte[] node1;
+    appendVarintField(node1, 1, 2); // sint64 id = 1
+    appendVarintField(node1, 8, 0);
+    appendVarintField(node1, 9, 0);
+
+    ubyte[] node2;
+    appendVarintField(node2, 1, 4); // sint64 id = 2
+    appendVarintField(node2, 8, 0);
+    appendVarintField(node2, 9, 0);
+
+    ubyte[] nodeGroup;
+    appendLengthDelimited(nodeGroup, 1, node1);
+    appendLengthDelimited(nodeGroup, 1, node2);
+
+    ubyte[] nodeInput;
+    appendFileBlock(nodeInput, "OSMHeader", null);
+    const nodeData = makePrimitiveBlock(nodeGroup);
+    appendFileBlock(nodeInput, "OSMData", nodeData);
+
+    auto nodes = pbfNodes(nodeInput).where!testEvenNode;
+    size_t nodeCount;
+    foreach (scope ref NodeView value; nodes)
+    {
+        ++nodeCount;
+        assert(value.id == 2);
+    }
+    assert(nodeCount == 1);
+    assert(nodes.status.ok);
+    assert(nodes.completed);
+
+    // Ways.
+    ubyte[] way7;
+    appendVarintField(way7, 1, 7);
+    ubyte[] way8;
+    appendVarintField(way8, 1, 8);
+
+    ubyte[] wayGroup;
+    appendLengthDelimited(wayGroup, 3, way7);
+    appendLengthDelimited(wayGroup, 3, way8);
+
+    ubyte[] wayInput;
+    appendFileBlock(wayInput, "OSMHeader", null);
+    const wayData = makePrimitiveBlock(wayGroup);
+    appendFileBlock(wayInput, "OSMData", wayData);
+
+    auto ways = pbfWays(wayInput).where!testEvenWay;
+    size_t wayCount;
+    foreach (scope ref WayView value; ways)
+    {
+        ++wayCount;
+        assert(value.id == 8);
+    }
+    assert(wayCount == 1);
+    assert(ways.status.ok);
+    assert(ways.completed);
+
+    // Relations.
+    ubyte[] relation9;
+    appendVarintField(relation9, 1, 9);
+    ubyte[] relation10;
+    appendVarintField(relation10, 1, 10);
+
+    ubyte[] relationGroup;
+    appendLengthDelimited(relationGroup, 4, relation9);
+    appendLengthDelimited(relationGroup, 4, relation10);
+
+    ubyte[] relationInput;
+    appendFileBlock(relationInput, "OSMHeader", null);
+    const relationData = makePrimitiveBlock(relationGroup);
+    appendFileBlock(relationInput, "OSMData", relationData);
+
+    auto relations = pbfRelations(relationInput).where!testEvenRelation;
+    size_t relationCount;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++relationCount;
+        assert(value.id == 10);
+    }
+    assert(relationCount == 1);
+    assert(relations.status.ok);
+    assert(relations.completed);
+
+    // The final foreach control value still stops the source traversal.
+    auto prefix = pbfWays(wayInput).where!testEvenWay;
+    foreach (scope ref WayView value; prefix)
+    {
+        assert(value.id == 8);
+        break;
+    }
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+
+    // Filtering every valid Way out does not suppress validation of the
+    // following malformed PBF block.
+    ubyte[] malformed;
+    appendFileBlock(malformed, "OSMHeader", null);
+    appendFileBlock(malformed, "OSMData", wayData);
+    const(ubyte)[] badPrimitiveBlock = [0x80];
+    appendFileBlock(malformed, "OSMData", badPrimitiveBlock);
+
+    auto none = pbfWays(malformed).where!testNoWay;
+    wayCount = 0;
+    foreach (scope ref WayView value; none)
+        ++wayCount;
+
+    assert(wayCount == 0);
+    assert(!none.completed);
+    assert(none.status.error == PbfReadError.malformedInput);
+}
+
