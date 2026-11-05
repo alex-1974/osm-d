@@ -52,9 +52,9 @@ void compileStoreSurface()
     assert(view.tags.tagEquals("place", "city"));
     assert(!view.tags.hasTag("highway"));
 
-    TagView nameTag;
-    assert(view.tags.findTag("name", nameTag));
-    assert(nameTag.value == cast(const(ubyte)[])"Wien");
+    TagLookupResult nameTag = view.tags.findTag("name");
+    assert(nameTag.found);
+    assert(nameTag.tag.value == cast(const(ubyte)[])"Wien");
 
     OsmHandle found;
     assert(store.find(ElementType.node, 1, found));
