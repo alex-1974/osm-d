@@ -20,7 +20,10 @@
 module osm.io.pbf.reader;
 
 import osm.io.pbf.blob : BlobView, decodeBlob;
-import osm.io.pbf.blob_header : BlobKind;
+import osm.io.pbf.blob_header :
+    BlobHeaderView,
+    BlobKind,
+    decodeBlobHeader;
 import osm.io.pbf.decompress :
     BlobPayloadView,
     decodeBlobPayloadInto,
@@ -40,6 +43,7 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
+import osm.io.pbf.limits : maxBlobHeaderSize;
 import pbfNode = osm.io.pbf.node;
 import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
@@ -63,7 +67,12 @@ import osm.io.pbf.way :
     WayView,
     decodeWaysWithWorkspace,
     decodeWaysWithWorkspaceUntilStop;
+import osm.util.endian : readBigEndianU32;
 import osm.wire.cursor : WireCursor;
+import transport.source :
+    ByteSource,
+    ReadError,
+    ReadLimits;
 
 /** High-level category of a complete-file PBF read failure. */
 enum PbfReadError : ubyte
@@ -115,6 +124,52 @@ struct PbfReadStatus
     }
 }
 
+
+/** High-level category of a ByteSource-backed PBF read failure. */
+enum PbfSourceReadError : ubyte
+{
+    none,
+    transportFailure,
+    resourceLimit,
+    pbfFailure,
+}
+
+/**
+ * Diagnostic for one ByteSource-backed PBF read.
+ *
+ * Transport failures remain distinct from PBF/OSM validation failures.
+ * `byteOffset` is the absolute source offset at which the failure was
+ * detected or the enclosing PBF block began.
+ */
+struct PbfSourceReadStatus
+{
+    PbfSourceReadError error = PbfSourceReadError.none;
+    ReadError transportError = ReadError.none;
+    PbfReadStatus pbf;
+    ulong byteOffset;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return error == PbfSourceReadError.none;
+    }
+}
+
+/**
+ * Controls bounded PBF reading from a ByteSource.
+ *
+ * A zero `bufferSize` selects a 4 MiB sequential read-ahead target. The
+ * reusable buffer grows only when one legal encoded PBF block is larger than
+ * that target and is retained in `PbfReaderWorkspace` for later reads.
+ *
+ * A zero `maximumBytes` means no caller-imposed whole-resource byte limit.
+ * PBF's own BlobHeader/Blob limits remain enforced independently.
+ */
+struct PbfSourceReadOptions
+{
+    size_t bufferSize;
+    ulong maximumBytes;
+}
+
 /**
  * Counts from one successfully completed PbfReader.read operation.
  *
@@ -149,8 +204,387 @@ struct PbfReaderWorkspace
 {
 private:
     ubyte[] decompressionBuffer;
+    ubyte[] sourceBuffer;
     StringRef[] stringRefs;
     WayDecodePlan[] wayPlans;
+}
+
+
+private enum PbfSourceFrameResult : ubyte
+{
+    block,
+    endOfInput,
+    error,
+}
+
+private enum PbfSourceFillResult : ubyte
+{
+    enough,
+    endOfSource,
+    transportFailure,
+    resourceLimit,
+}
+
+private struct PbfSourceCursor
+{
+    /// Absolute source offset corresponding to sourceBuffer[0].
+    ulong baseOffset;
+    size_t begin;
+    size_t end;
+
+    @property size_t available() const @safe pure nothrow @nogc
+    {
+        return end - begin;
+    }
+
+    @property ulong nextReadOffset() const @safe pure nothrow @nogc
+    {
+        return baseOffset + end;
+    }
+}
+
+private size_t pbfSourceBufferSize(PbfSourceReadOptions options)
+    @safe pure nothrow @nogc
+{
+    enum size_t defaultBufferSize = 4 * 1024 * 1024;
+    if (options.bufferSize == 0)
+        return defaultBufferSize;
+    return options.bufferSize < 4 ? 4 : options.bufferSize;
+}
+
+private ulong pbfSourceMaximumBytes(PbfSourceReadOptions options)
+    @safe pure nothrow @nogc
+{
+    return options.maximumBytes == 0 ? ulong.max : options.maximumBytes;
+}
+
+private PbfSourceReadStatus sourceTransportFailure(
+    ReadError error,
+    ulong offset)
+    @safe pure nothrow @nogc
+{
+    PbfSourceReadStatus result;
+    result.error = PbfSourceReadError.transportFailure;
+    result.transportError = error;
+    result.byteOffset = offset;
+    return result;
+}
+
+private PbfSourceReadStatus sourceResourceLimit(ulong offset)
+    @safe pure nothrow @nogc
+{
+    PbfSourceReadStatus result;
+    result.error = PbfSourceReadError.resourceLimit;
+    result.byteOffset = offset;
+    return result;
+}
+
+private PbfSourceReadStatus sourcePbfFailure(
+    ulong sequence,
+    ulong blockOffset,
+    PbfStatus detail)
+    @safe pure nothrow @nogc
+{
+    PbfSourceReadStatus result;
+    result.error = PbfSourceReadError.pbfFailure;
+    result.byteOffset = blockOffset + detail.offset;
+
+    if (blockOffset <= cast(ulong)size_t.max)
+        result.pbf = fromPbfFailure(
+            sequence,
+            cast(size_t)blockOffset,
+            detail);
+    else
+        result.pbf.error = PbfReadError.malformedInput;
+
+    return result;
+}
+
+private PbfSourceReadStatus sourcePbfFailure(
+    PbfReadStatus pbf,
+    ulong blockOffset)
+    @safe pure nothrow @nogc
+{
+    PbfSourceReadStatus result;
+    result.error = PbfSourceReadError.pbfFailure;
+    result.pbf = pbf;
+    result.byteOffset = blockOffset;
+    return result;
+}
+
+private PbfSourceFillResult ensureSourceBytes(
+    ByteSource source,
+    ref PbfSourceCursor cursor,
+    ref ubyte[] storage,
+    size_t needed,
+    size_t preferred,
+    ulong maximumBytes,
+    out ReadError transportError)
+    @safe
+{
+    transportError = ReadError.none;
+
+    while (cursor.available < needed)
+    {
+        const available = cursor.available;
+
+        if (cursor.begin != 0)
+        {
+            // Destination begins before source, so a forward element copy is
+            // overlap-safe and keeps this boundary @safe without a raw memmove.
+            foreach (i; 0 .. available)
+                storage[i] = storage[cursor.begin + i];
+
+            cursor.baseOffset += cursor.begin;
+            cursor.begin = 0;
+            cursor.end = available;
+        }
+
+        size_t target = preferred;
+        if (target < needed)
+            target = needed;
+        if (target < cursor.end)
+            target = cursor.end;
+
+        if (storage.length < target)
+            storage.length = target;
+
+        const nextOffset = cursor.nextReadOffset;
+        if (nextOffset >= maximumBytes)
+            return PbfSourceFillResult.resourceLimit;
+
+        size_t request = target - cursor.end;
+        const remainingBudget = maximumBytes - nextOffset;
+        if (cast(ulong)request > remainingBudget)
+            request = cast(size_t)remainingBudget;
+
+        if (request == 0)
+            return PbfSourceFillResult.resourceLimit;
+
+        ReadLimits limits;
+        limits.maximumBytes = request;
+        auto read = source.readSome(
+            nextOffset,
+            storage[cursor.end .. cursor.end + request],
+            limits);
+
+        final switch (read.error)
+        {
+            case ReadError.none:
+                if (read.bytesRead == 0)
+                    return PbfSourceFillResult.endOfSource;
+                if (read.bytesRead > request)
+                {
+                    transportError = ReadError.sourceFailure;
+                    return PbfSourceFillResult.transportFailure;
+                }
+                cursor.end += read.bytesRead;
+                continue;
+
+            case ReadError.endOfSource:
+                return PbfSourceFillResult.endOfSource;
+
+            default:
+                transportError = read.error;
+                return PbfSourceFillResult.transportFailure;
+        }
+    }
+
+    return PbfSourceFillResult.enough;
+}
+
+private PbfSourceFrameResult readSourceFileBlock(
+    ByteSource source,
+    ref PbfSourceCursor sourceCursor,
+    ref ubyte[] storage,
+    size_t preferredBufferSize,
+    ulong maximumBytes,
+    ulong sequence,
+    out FileBlockView block,
+    out PbfSourceReadStatus status)
+    @safe
+{
+    block = FileBlockView.init;
+    status = PbfSourceReadStatus.init;
+
+    const blockOffset = sourceCursor.baseOffset + sourceCursor.begin;
+    ReadError transportError;
+
+    auto fill = ensureSourceBytes(
+        source,
+        sourceCursor,
+        storage,
+        4,
+        preferredBufferSize,
+        maximumBytes,
+        transportError);
+
+    final switch (fill)
+    {
+        case PbfSourceFillResult.enough:
+            break;
+
+        case PbfSourceFillResult.endOfSource:
+            if (sourceCursor.available == 0)
+                return PbfSourceFrameResult.endOfInput;
+
+            status = sourcePbfFailure(
+                sequence,
+                blockOffset,
+                PbfStatus.failure(
+                    PbfError.truncatedHeaderLength,
+                    sourceCursor.available));
+            return PbfSourceFrameResult.error;
+
+        case PbfSourceFillResult.transportFailure:
+            status = sourceTransportFailure(
+                transportError,
+                sourceCursor.nextReadOffset);
+            return PbfSourceFrameResult.error;
+
+        case PbfSourceFillResult.resourceLimit:
+            status = sourceResourceLimit(sourceCursor.nextReadOffset);
+            return PbfSourceFrameResult.error;
+    }
+
+    uint headerLength;
+    if (!readBigEndianU32(storage[sourceCursor.begin .. sourceCursor.end],
+                          sourceCursor.begin == 0 ? 0 : sourceCursor.begin,
+                          headerLength))
+    {
+        status = sourcePbfFailure(
+            sequence,
+            blockOffset,
+            PbfStatus.failure(PbfError.truncatedHeaderLength, 0));
+        return PbfSourceFrameResult.error;
+    }
+
+    if (headerLength >= maxBlobHeaderSize)
+    {
+        status = sourcePbfFailure(
+            sequence,
+            blockOffset,
+            PbfStatus.failure(PbfError.blobHeaderTooLarge, 0));
+        return PbfSourceFrameResult.error;
+    }
+
+    const headerBytesNeeded = 4 + cast(size_t)headerLength;
+    fill = ensureSourceBytes(
+        source,
+        sourceCursor,
+        storage,
+        headerBytesNeeded,
+        preferredBufferSize,
+        maximumBytes,
+        transportError);
+
+    if (fill != PbfSourceFillResult.enough)
+    {
+        final switch (fill)
+        {
+            case PbfSourceFillResult.endOfSource:
+                status = sourcePbfFailure(
+                    sequence,
+                    blockOffset,
+                    PbfStatus.failure(PbfError.truncatedBlobHeader, 4));
+                break;
+            case PbfSourceFillResult.transportFailure:
+                status = sourceTransportFailure(
+                    transportError,
+                    sourceCursor.nextReadOffset);
+                break;
+            case PbfSourceFillResult.resourceLimit:
+                status = sourceResourceLimit(sourceCursor.nextReadOffset);
+                break;
+            case PbfSourceFillResult.enough:
+                assert(0);
+        }
+        return PbfSourceFrameResult.error;
+    }
+
+    const headerStart = sourceCursor.begin + 4;
+    BlobHeaderView header;
+    PbfStatus headerStatus;
+    if (!decodeBlobHeader(
+            storage[headerStart .. headerStart + headerLength],
+            header,
+            headerStatus))
+    {
+        headerStatus.offset += 4;
+        status = sourcePbfFailure(sequence, blockOffset, headerStatus);
+        return PbfSourceFrameResult.error;
+    }
+
+    const fullFrameSize =
+        headerBytesNeeded + cast(size_t)header.dataSize;
+
+    fill = ensureSourceBytes(
+        source,
+        sourceCursor,
+        storage,
+        fullFrameSize,
+        preferredBufferSize,
+        maximumBytes,
+        transportError);
+
+    if (fill != PbfSourceFillResult.enough)
+    {
+        final switch (fill)
+        {
+            case PbfSourceFillResult.endOfSource:
+                status = sourcePbfFailure(
+                    sequence,
+                    blockOffset,
+                    PbfStatus.failure(
+                        PbfError.truncatedBlobData,
+                        headerBytesNeeded));
+                break;
+            case PbfSourceFillResult.transportFailure:
+                status = sourceTransportFailure(
+                    transportError,
+                    sourceCursor.nextReadOffset);
+                break;
+            case PbfSourceFillResult.resourceLimit:
+                status = sourceResourceLimit(sourceCursor.nextReadOffset);
+                break;
+            case PbfSourceFillResult.enough:
+                assert(0);
+        }
+        return PbfSourceFrameResult.error;
+    }
+
+    auto frameCursor = WireCursor(
+        storage[sourceCursor.begin ..
+            sourceCursor.begin + fullFrameSize]);
+    PbfStatus pbfStatus;
+    const frame = readFileBlock(
+        frameCursor,
+        sequence,
+        block,
+        pbfStatus);
+
+    if (frame != FrameReadResult.block || !frameCursor.empty)
+    {
+        status = sourcePbfFailure(sequence, blockOffset, pbfStatus);
+        return PbfSourceFrameResult.error;
+    }
+
+    if (blockOffset > cast(ulong)size_t.max)
+    {
+        status = sourceResourceLimit(blockOffset);
+        return PbfSourceFrameResult.error;
+    }
+    block.offset = cast(size_t)blockOffset;
+
+    sourceCursor.begin += fullFrameSize;
+    if (sourceCursor.begin == sourceCursor.end)
+    {
+        sourceCursor.baseOffset += sourceCursor.end;
+        sourceCursor.begin = 0;
+        sourceCursor.end = 0;
+    }
+
+    return PbfSourceFrameResult.block;
 }
 
 /**
