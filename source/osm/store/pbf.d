@@ -142,6 +142,40 @@ bool readPbfStore(
     return true;
 }
 
+
+bool readPbfStore(
+    scope ByteSource inputSource,
+    out OsmStore store,
+    out PbfReadSummary summary,
+    out PbfSourceStoreReadStatus status) @safe
+{
+    store = null;
+    summary = PbfReadSummary.init;
+    status = PbfSourceStoreReadStatus.init;
+
+    auto builtStore = new OsmStore();
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    StoreSink sink;
+    sink.target = builtStore;
+
+    PbfReadSummary readSummary;
+    PbfSourceReadStatus readStatus;
+    const ok = reader.read(
+        inputSource, workspace, sink, readSummary, readStatus);
+
+    status.source = readStatus;
+    if (sink.failed)
+        status.store = sink.status;
+
+    if (!ok || sink.failed)
+        return false;
+
+    store = builtStore;
+    summary = readSummary;
+    return true;
+}
+
 unittest
 {
     // Empty input is not a valid PBF and never exposes a partial store.
