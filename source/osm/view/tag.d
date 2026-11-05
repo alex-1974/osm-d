@@ -85,7 +85,7 @@ if (isSemanticTagRange!R && isTagCodeUnit!Q)
 {
     tag = TagView.init;
 
-    while (!tags.empty
+    while (!tags.empty)
     {
         const current = tags.front;
         if (sameBytes(current.key, key))
@@ -133,7 +133,7 @@ if (isSemanticTagRange!R &&
     isTagCodeUnit!K &&
     isTagCodeUnit!V)
 {
-    while (!tags.empty
+    while (!tags.empty)
     {
         const current = tags.front;
         if (sameBytes(current.key, key) &&
