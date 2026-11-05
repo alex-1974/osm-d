@@ -260,6 +260,71 @@ the measured question. No speculative tuning from those experiments was
 retained in production code.
 
 
+## M14 Store range-composition qualification — 2026-11-05
+
+Question: can the compact store's public InputRanges be composed with ordinary
+Phobos `filter` without hidden allocation, and what whole-traversal cost does
+that convenience layer add?
+
+The qualification used:
+
+- candidate PR #155;
+- pinned `bremen-260901` dataset;
+- LDC 1.41.0 / DMD frontend 2.111.0 / LLVM 20.1.5;
+- release/all-at-once build;
+- one already-built `OsmStore`; PBF I/O, decode and store construction were
+  outside the timed region;
+- 21 samples with rotating direct/plain/cached order;
+- exact match-count/checksum parity for every form;
+- GC allocation/collection probes after warm-up.
+
+Three forms were compared:
+
+1. direct `StoreWayRange` traversal with an inline `if`;
+2. ordinary lazy Phobos `filter`;
+3. `cache.filter`, testing Phobos' explicit front-value caching adapter.
+
+The hosted runner reported:
+
+| Predicate | Direct p50 | Plain `filter` p50 | Plain/direct | `cache.filter` p50 | Cached/direct |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| all-clean lifecycle state | 4.340 ms | 10.830 ms | 2.496x | 9.295 ms | 2.142x |
+| even Way ID | 4.759 ms | 8.474 ms | 1.781x | 9.296 ms | 1.953x |
+| `highway` tag present | 13.681 ms | 14.671 ms | 1.072x | 14.909 ms | 1.090x |
+| even ID then `highway` | 9.828 ms | 12.408 ms | 1.263x | 14.569 ms | 1.482x |
+
+All direct, plain-filter and cached-filter probes measured **0 D-GC allocated
+bytes** and **0 collections**. Semantic results matched exactly.
+
+The result rejects the assumption that generic Phobos composition compiles to
+performance parity for this store representation. `StoreWayRange.front`
+constructs a semantic view from compact columns; Phobos filtering adds
+observable traversal/front machinery, especially when the predicate itself is
+cheap. Explicit `cache` does not remove enough overhead here and is therefore
+not recommended as a blanket osm-d idiom.
+
+The architectural decision is:
+
+- keep the store traversal types as ordinary D InputRanges because they are
+  correct, lazy, composable and allocation-free;
+- document Phobos composition as a convenience surface, **not** the
+  maximum-throughput store traversal;
+- use direct range/`foreach` traversal with an inline predicate in measured
+  hot loops;
+- do not add an osm-d query DSL or custom filter framework merely to eliminate
+  this convenience-layer delta;
+- reconsider specialized indexing only when a real repeated query workload
+  justifies it independently.
+
+The tag-predicate case is the representative reminder that absolute predicate
+cost matters: when exact tag scanning dominates, the measured extra cost of
+plain `filter` was about 7%. The trivial-predicate ratios look much larger
+because the direct compact traversal itself is only a few milliseconds.
+
+These hosted-runner numbers are decision evidence, not a controlled-workstation
+marketing baseline. The committed benchmark and workflow retain the comparison
+for future regressions.
+
 ## First executable microbenchmark: varint
 
 `benchmark/micro/varint.d` establishes the first hot-path baseline. After the
