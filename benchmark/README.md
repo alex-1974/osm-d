@@ -132,6 +132,55 @@ By default the files live under
 `OSM_D_BENCH_DATA` to use another local storage location. Unknown explicitly
 requested dataset IDs are rejected before any dataset is processed.
 
+
+## Store range-composition qualification
+
+`store/range_composition.d` isolates the consumer-visible cost of composing
+the compact store's existing InputRanges with Phobos `filter`. PBF loading and
+store construction happen before the timed region.
+
+The benchmark compares three equivalent forms: a direct hand-written
+traversal, plain Phobos `filter`, and the Phobos-recommended
+`cache.filter` composition for an underlying range whose `front` is
+non-trivial. It covers four Way predicates:
+
+- lifecycle state;
+- a trivial ID predicate;
+- exact tag-key lookup through `hasTag`;
+- two chained `filter` adapters (ID + tag).
+
+All three forms must produce the same match count and checksum. Sample order
+rotates across direct/plain/cached positions. The benchmark also records GC
+allocation and collection deltas after warm-up; both lazy compositions are
+expected to allocate no GC memory.
+
+Plain `filter` intentionally remains in the measurement because it is the
+natural consumer form. `cache.filter` is retained as a diagnostic comparison
+for repeated `front` evaluation; the M14 Bremen qualification showed that it
+does not recover direct-loop parity for this store and is not a blanket
+recommended idiom. See `docs/BENCHMARKS.md` for the measured decision.
+
+Build and run with the controlled LDC baseline:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=store-range-composition \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-store-range-composition \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The GitHub `Store Range Qualification` workflow runs the same workload on the
+pinned Bremen snapshot. Hosted-runner timings are qualification evidence, not a
+controlled-workstation marketing baseline. A ratio materially above parity is
+an investigation trigger; no custom query engine is justified merely to reduce
+a small convenience-layer delta.
+
 ## DenseNodes microbenchmark
 
 `micro/dense_nodes.d` measures the production `decodeDenseNodes` path after
