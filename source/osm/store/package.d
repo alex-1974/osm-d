@@ -16,6 +16,7 @@ public import osm.view.node_ref : NodeRefView;
 public import osm.view.relation_member : RelationMemberView;
 public import osm.view.tag :
     TagView,
+    TagLookupResult,
     findTag,
     hasTag,
     tagEquals;
