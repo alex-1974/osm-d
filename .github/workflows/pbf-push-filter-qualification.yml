@@ -1,0 +1,74 @@
+name: PBF Push Filter Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "benchmark/parser/push_filter.d"
+      - "benchmark/dub.sdl"
+      - "benchmark/README.md"
+      - ".github/workflows/pbf-push-filter-qualification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bremen-push-filter:
+    name: Bremen direct vs foreach vs push filter
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned Bremen workload
+        shell: bash
+        run: |
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch bremen-260901; then
+              ok=1
+              break
+            fi
+            sleep $((attempt * 5))
+          done
+          test "$ok" = 1
+
+      - name: Build push-filter prototype benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=parser-push-filter \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run direct vs foreach vs push-filter comparison
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-push-filter \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            | tee benchmark/parser/push-filter-bremen.txt
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: pbf-push-filter-bremen-${{ github.sha }}
+          path: benchmark/parser/push-filter-bremen.txt
+          if-no-files-found: error
