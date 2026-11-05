@@ -68,6 +68,15 @@ import osm.util.endian : readBigEndianU32;
 import osm.wire.cursor : WireCursor;
 import transport.source : ByteSource, ReadError, ReadLimits;
 
+version(unittest)
+{
+    import transport.source :
+        ByteRange,
+        MemorySource,
+        ReadResult,
+        SourceInfo;
+}
+
 /** High-level category of a complete-file PBF read failure. */
 enum PbfReadError : ubyte
 {
@@ -2574,6 +2583,40 @@ version(unittest)
     }
 }
 
+version(unittest)
+{
+    private final class FailingByteSource : ByteSource
+    {
+        @property SourceInfo sourceInfo() const @safe
+        {
+            return SourceInfo(
+                "failing-test-source",
+                "test",
+                false,
+                0,
+                true);
+        }
+
+        ReadResult read(
+            ByteRange,
+            scope ubyte[],
+            ReadLimits = ReadLimits.init)
+            @safe
+        {
+            return ReadResult(ReadError.sourceFailure, 0);
+        }
+
+        ReadResult readSome(
+            ulong,
+            scope ubyte[],
+            ReadLimits = ReadLimits.init)
+            @safe
+        {
+            return ReadResult(ReadError.sourceFailure, 0);
+        }
+    }
+}
+
 unittest
 {
     ubyte[] node;
@@ -2618,6 +2661,97 @@ unittest
     assert(summary.tags == 0);
     assert(handler.nodes == 1);
     assert(handler.lastId == 1);
+}
+
+// ByteSource-backed reads preserve whole-buffer semantics without materializing
+// the complete source inside the reader.
+unittest
+{
+    ubyte[] node;
+    appendVarintField(node, 1, 2); // sint64 id = 1
+    appendVarintField(node, 8, 0);
+    appendVarintField(node, 9, 0);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 1, node);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    struct Handler
+    {
+        size_t nodes;
+        long idSum;
+
+        void node(scope ref NodeView value) @safe nothrow @nogc
+        {
+            ++nodes;
+            idSum += value.id;
+        }
+    }
+
+    PbfReader reader;
+
+    PbfReaderWorkspace sliceWorkspace;
+    Handler sliceHandler;
+    PbfReadSummary sliceSummary;
+    PbfReadStatus sliceStatus;
+    assert(reader.read(
+        input,
+        sliceWorkspace,
+        sliceHandler,
+        sliceSummary,
+        sliceStatus));
+    assert(sliceStatus.ok);
+
+    PbfReaderWorkspace sourceWorkspace;
+    Handler sourceHandler;
+    PbfReadSummary sourceSummary;
+    PbfSourceReadStatus sourceStatus;
+    auto source = new MemorySource(input);
+    assert(reader.read(
+        source,
+        sourceWorkspace,
+        sourceHandler,
+        sourceSummary,
+        sourceStatus));
+
+    assert(sourceStatus.ok);
+    assert(sourceSummary == sliceSummary);
+    assert(sourceHandler.nodes == sliceHandler.nodes);
+    assert(sourceHandler.idSum == sliceHandler.idSum);
+
+    // A clean source EOF inside the encoded Blob is PBF truncation, not a
+    // generic transport failure.
+    auto truncated = new MemorySource(input[0 .. $ - 1]);
+    sourceSummary = PbfReadSummary.init;
+    sourceStatus = PbfSourceReadStatus.init;
+    Handler truncatedHandler;
+    assert(!reader.read(
+        truncated,
+        sourceWorkspace,
+        truncatedHandler,
+        sourceSummary,
+        sourceStatus));
+    assert(sourceStatus.transportError == ReadError.none);
+    assert(sourceStatus.pbf.error == PbfReadError.malformedInput);
+
+    // A real ByteSource failure remains distinct from malformed input.
+    auto failing = new FailingByteSource();
+    sourceSummary = PbfReadSummary.init;
+    sourceStatus = PbfSourceReadStatus.init;
+    Handler failingHandler;
+    assert(!reader.read(
+        failing,
+        sourceWorkspace,
+        failingHandler,
+        sourceSummary,
+        sourceStatus));
+    assert(sourceStatus.transportError == ReadError.sourceFailure);
+    assert(sourceStatus.transportOffset == 0);
+    assert(sourceStatus.pbf.ok);
 }
 
 unittest
