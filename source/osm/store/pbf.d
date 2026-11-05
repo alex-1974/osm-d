@@ -240,6 +240,20 @@ unittest
     assert(summary.ways == 1);
     assert(summary.relations == 1);
 
+    import transport.source : MemorySource;
+
+    OsmStore streamedStore;
+    PbfReadSummary streamedSummary;
+    PbfSourceStoreReadStatus streamedStatus;
+    assert(readPbfStore(
+        new MemorySource(bytes),
+        streamedStore,
+        streamedSummary,
+        streamedStatus));
+    assert(streamedStatus.ok);
+    assert(streamedSummary == summary);
+    assert(streamedStore.counts == store.counts);
+
     auto parents = store.parentWays(1);
     assert(!parents.empty);
     assert(parents.front.id == 2);
