@@ -450,6 +450,113 @@ private:
 }
 
 /**
+ * Push-filter adapter over one element-specific PBF foreach traversal.
+ *
+ * This is deliberately not a Phobos InputRange. It retains the synchronous
+ * opApply execution model of pbfNodes/pbfWays/pbfRelations, applies a
+ * compile-time predicate to each valid borrowed element, and forwards only
+ * matching elements to the final foreach body.
+ *
+ * The adapter owns only a copy of the source traversal value. It does not
+ * materialize OSM elements, widen borrowed lifetimes, or skip the parsing and
+ * validation work required to produce a valid element view.
+ *
+ * Consumers normally obtain this type through UFCS:
+ *
+ * ---
+ * auto highways = pbfWays(input).where!hasHighway;
+ * foreach (scope ref WayView way; highways)
+ * {
+ *     // matching borrowed Way only
+ * }
+ * ---
+ *
+ * A natural traversal preserves the source whole-file validation scope.
+ * Breaking from the final foreach body stops parsing immediately and leaves
+ * completed false, exactly like the unfiltered source traversal.
+ */
+struct PbfWhereIterable(Source, View, alias predicate)
+{
+private:
+    Source source;
+
+    this(return scope Source value)
+        @safe pure nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    /** Status from the most recent traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return source.status;
+    }
+
+    /** True only when the most recent traversal reached end-of-file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return source.completed;
+    }
+
+    /** Iterate matching elements from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @safe dg)
+        @safe
+    {
+        return source.opApply((scope ref View value) @safe {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+
+    /** Iterate matching elements from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @system dg)
+        @system
+    {
+        return source.opApply((scope ref View value) @system {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+}
+
+/**
+ * Filter one PBF Node foreach traversal with a compile-time predicate.
+ *
+ * The predicate receives the same callback-scoped NodeView as ordinary
+ * pbfNodes traversal. For non-copyable NodeView predicates, accept the value by
+ * scope ref.
+ */
+PbfWhereIterable!(PbfNodeIterable, NodeView, predicate)
+where(alias predicate)(return scope PbfNodeIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Way foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfWayIterable, WayView, predicate)
+where(alias predicate)(return scope PbfWayIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Relation foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfRelationIterable, RelationView, predicate)
+where(alias predicate)(return scope PbfRelationIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
