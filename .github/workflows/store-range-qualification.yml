@@ -63,22 +63,22 @@ jobs:
         shell: bash
         run: |
           awk -F= '
-            /_composed_gc_allocated_bytes=/ {
+            /_(plain|cached)_gc_allocated_bytes=/ {
               seen += 1
               if ($2 != 0) {
-                print "unexpected composed GC allocation: " $0 > "/dev/stderr"
+                print "unexpected range GC allocation: " $0 > "/dev/stderr"
                 failed = 1
               }
             }
-            /_composed_gc_collections=/ {
+            /_(plain|cached)_gc_collections=/ {
               collections += 1
               if ($2 != 0) {
-                print "unexpected composed GC collection: " $0 > "/dev/stderr"
+                print "unexpected range GC collection: " $0 > "/dev/stderr"
                 failed = 1
               }
             }
             END {
-              if (seen != 4 || collections != 4) {
+              if (seen != 8 || collections != 8) {
                 print "missing GC evidence" > "/dev/stderr"
                 exit 1
               }
