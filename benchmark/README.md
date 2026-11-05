@@ -154,10 +154,11 @@ rotates across direct/plain/cached positions. The benchmark also records GC
 allocation and collection deltas after warm-up; both lazy compositions are
 expected to allocate no GC memory.
 
-Plain `filter` intentionally remains in the measurement: Phobos may evaluate
-an accepted source `front` once for the predicate and again for delivery.
-`cache` stores that front value once per source element and is the candidate
-idiom when repeated `front` evaluation is material.
+Plain `filter` intentionally remains in the measurement because it is the
+natural consumer form. `cache.filter` is retained as a diagnostic comparison
+for repeated `front` evaluation; the M14 Bremen qualification showed that it
+does not recover direct-loop parity for this store and is not a blanket
+recommended idiom. See `docs/BENCHMARKS.md` for the measured decision.
 
 Build and run with the controlled LDC baseline:
 
