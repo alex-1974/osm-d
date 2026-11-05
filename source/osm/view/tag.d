@@ -8,10 +8,11 @@
  * Both byte slices are borrowed and must not outlive the backing storage owned
  * by the reader or representation that produced the view.
  *
- * The lookup helpers in this module accept ordinary D input ranges whose front
- * value exposes exact byte `key` and `value` slices. They consume only a copy
- * of the supplied range cursor, so querying a borrowed tag range does not
- * advance the caller's cursor.
+ * The lookup helpers in this module accept osm-d semantic tag cursors whose
+ * front value exposes exact byte `key` and `value` slices. This deliberately
+ * includes both Phobos-compatible store InputRanges and the tighter
+ * callback-scoped PBF cursors. Helpers consume only a copy of the supplied
+ * cursor, so querying a borrowed tag range does not advance the caller.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-11-01
@@ -20,7 +21,6 @@
  */
 module osm.view.tag;
 
-import std.range.primitives : empty, front, isInputRange, popFront;
 import std.traits : Unqual;
 
 /**
@@ -42,12 +42,13 @@ private enum bool isTagCodeUnit(T) =
     is(Unqual!T == ubyte) || is(Unqual!T == char);
 
 private enum bool isSemanticTagRange(R) =
-    isInputRange!R &&
     __traits(compiles, (R range)
     {
-        auto tag = front(range);
+        bool done = range.empty;
+        auto tag = range.front;
         const(ubyte)[] key = tag.key;
         const(ubyte)[] value = tag.value;
+        range.popFront();
     });
 
 /**
@@ -61,8 +62,8 @@ private enum bool isSemanticTagRange(R) =
  * the first matching occurrence in range order.
  *
  * Params:
- *   tags = Input range whose front value exposes exact byte `key` and
- *     `value` slices. The range is consumed by value; the caller's cursor is
+ *   tags = Borrowed semantic tag range/cursor exposing `empty`, `front`
+ *     and `popFront`. The range is consumed by value; the caller's cursor is
  *     not advanced.
  *   key = Exact key bytes/code units to match.
  *   tag = Receives the borrowed first matching tag, or `TagView.init` when no
@@ -84,15 +85,15 @@ if (isSemanticTagRange!R && isTagCodeUnit!Q)
 {
     tag = TagView.init;
 
-    while (!empty(tags))
+    while (!tags.empty
     {
-        const current = front(tags);
+        const current = tags.front;
         if (sameBytes(current.key, key))
         {
             tag = TagView(current.key, current.value);
             return true;
         }
-        popFront(tags);
+        tags.popFront();
     }
 
     return false;
@@ -132,14 +133,14 @@ if (isSemanticTagRange!R &&
     isTagCodeUnit!K &&
     isTagCodeUnit!V)
 {
-    while (!empty(tags))
+    while (!tags.empty
     {
-        const current = front(tags);
+        const current = tags.front;
         if (sameBytes(current.key, key) &&
             sameBytes(current.value, value))
             return true;
 
-        popFront(tags);
+        tags.popFront();
     }
 
     return false;
@@ -177,7 +178,30 @@ unittest
 
 unittest
 {
-    TagView[] tags = [
+    struct TestTagCursor
+    {
+        TagView[] values;
+        size_t position;
+
+        @property bool empty() const @safe pure nothrow @nogc
+        {
+            return position >= values.length;
+        }
+
+        @property TagView front() const @safe pure nothrow @nogc
+        in (!empty)
+        {
+            return values[position];
+        }
+
+        void popFront() @safe pure nothrow @nogc
+        in (!empty)
+        {
+            ++position;
+        }
+    }
+
+    TagView[] values = [
         TagView(
             cast(const(ubyte)[])"name",
             cast(const(ubyte)[])"Wien"),
@@ -188,6 +212,7 @@ unittest
             cast(const(ubyte)[])"name",
             cast(const(ubyte)[])"Vienna"),
     ];
+    auto tags = TestTagCursor(values);
 
     assert(tags.hasTag("name"));
     assert(tags.hasTag(cast(const(ubyte)[])"highway"));
@@ -201,13 +226,12 @@ unittest
     assert(tags.tagEquals("name", "Vienna"));
     assert(!tags.tagEquals("name", "Graz"));
 
-    found = tags[0];
+    found = values[0];
     assert(!tags.findTag("missing", found));
     assert(found.key is null);
     assert(found.value is null);
 
-    // Querying a copied range must not advance the caller's cursor.
-    auto cursor = tags;
-    assert(cursor.hasTag("highway"));
-    assert(cursor.front.key == cast(const(ubyte)[])"name");
+    // Querying a copied cursor must not advance the caller's cursor.
+    assert(tags.hasTag("highway"));
+    assert(tags.front.key == cast(const(ubyte)[])"name");
 }
