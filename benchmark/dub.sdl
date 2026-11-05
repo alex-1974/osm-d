@@ -120,6 +120,16 @@ configuration "store-layout" {
 }
 
 
+configuration "store-range-composition" {
+    targetType "executable"
+    targetName "osm-d-bench-store-range-composition"
+    targetPath "bin"
+    sourcePaths "store"
+    importPaths "store"
+    mainSourceFile "store/range_composition.d"
+}
+
+
 configuration "release-io" {
     targetType "executable"
     targetName "osm-d-bench-release-io"
