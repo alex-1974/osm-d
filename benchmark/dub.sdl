@@ -100,6 +100,16 @@ configuration "parser-push-filter" {
 }
 
 
+configuration "parser-source-compare" {
+    targetType "executable"
+    targetName "osm-d-bench-source-compare"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/source_compare.d"
+}
+
+
 configuration "parser-memory-baseline" {
     targetType "executable"
     targetName "osm-d-bench-memory-baseline"
