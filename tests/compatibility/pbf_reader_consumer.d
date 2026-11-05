@@ -4,6 +4,7 @@ import osm;
 import osm.pbf;
 import osm.model.owned : OwnedWayNode;
 import osm.view.way_node : WayNodeView;
+import transport : ByteSource, MemorySource, ReadError;
 
 // v0.1 compatibility aliases remain available from their old direct modules.
 static assert(is(WayNodeView == NodeRefView));
@@ -225,6 +226,23 @@ void compileConsumer()
     PbfReadStatus status;
     const ok = reader.read(input, workspace, consumer, summary, status);
     assert(!ok);
+
+    ByteSource source = new MemorySource(input);
+    PbfSourceReadStatus sourceStatus;
+    const sourceOk = reader.read(
+        source,
+        workspace,
+        consumer,
+        summary,
+        sourceStatus);
+    assert(!sourceOk);
+    assert(sourceStatus.transportError == ReadError.none);
+    assert(sourceStatus.pbf.error == PbfReadError.missingHeader);
+
+    const sourceResult = readPbf(source, consumer);
+    assert(!sourceResult.ok);
+    assert(sourceResult.status.transportError == ReadError.none);
+    assert(sourceResult.status.pbf.error == PbfReadError.missingHeader);
 
     auto nodes = pbfNodes(input);
     foreach (scope ref NodeView node; nodes)
