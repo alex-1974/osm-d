@@ -1,0 +1,175 @@
+name: PBF ByteSource Qualification
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "benchmark/parser/source_compare.d"
+      - "benchmark/dub.sdl"
+      - ".github/workflows/pbf-source-qualification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monaco-bremen:
+    name: Monaco/Bremen source and store qualification
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned workloads
+        shell: bash
+        run: |
+          for dataset in monaco-260901 bremen-260901; do
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if bash benchmark/fetch-datasets.sh fetch "$dataset"; then
+                ok=1
+                break
+              fi
+              sleep $((attempt * 5))
+            done
+            test "$ok" = 1
+          done
+
+      - name: Build ByteSource qualification benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=parser-source-compare \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run decode and store modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark/evidence/pbf-source
+
+          run_mode() {
+            local id="$1"
+            local mode="$2"
+            local passes="$3"
+            local file="$4"
+            local base="benchmark/evidence/pbf-source/${id}-${mode}"
+
+            /usr/bin/time -v \
+              -o "${base}.time.txt" \
+              benchmark/bin/osm-d-bench-source-compare \
+                "$mode" "$passes" "$file" \
+              | tee "${base}.txt"
+          }
+
+          for spec in \
+            "monaco-260901:benchmark/data/geofabrik-2026-09-01/monaco-260901.osm.pbf:7" \
+            "bremen-260901:benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf:5"
+          do
+            IFS=: read -r id file passes <<< "$spec"
+
+            run_mode "$id" file-range-read "$passes" "$file"
+            run_mode "$id" slice-decode "$passes" "$file"
+            run_mode "$id" memory-source-decode "$passes" "$file"
+            run_mode "$id" file-source-decode "$passes" "$file"
+
+            # Store construction is much heavier; one warm-up plus two timed
+            # samples is sufficient for this decision-oriented qualification.
+            run_mode "$id" slice-store 3 "$file"
+            run_mode "$id" memory-source-store 3 "$file"
+            run_mode "$id" file-source-store 3 "$file"
+          done
+
+      - name: Verify semantic parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=benchmark/evidence/pbf-source
+
+          for id in monaco-260901 bremen-260901; do
+            expected="$(grep '^semantic ' "$ROOT/${id}-slice-decode.txt")"
+            test "$(grep '^semantic ' "$ROOT/${id}-memory-source-decode.txt")" = "$expected"
+            test "$(grep '^semantic ' "$ROOT/${id}-file-source-decode.txt")" = "$expected"
+
+            expected_store="$(grep '^store ' "$ROOT/${id}-slice-store.txt")"
+            test "$(grep '^store ' "$ROOT/${id}-memory-source-store.txt")" = "$expected_store"
+            test "$(grep '^store ' "$ROOT/${id}-file-source-store.txt")" = "$expected_store"
+          done
+
+      - name: Summarize evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=benchmark/evidence/pbf-source
+          OUT="$ROOT/summary.tsv"
+
+          printf 'dataset\tmode\tp50_ns\tmax_rss_kib\tsteady_gc_alloc_bytes\tretained_encoded_bytes\n' > "$OUT"
+
+          for id in monaco-260901 bremen-260901; do
+            for mode in \
+              file-range-read \
+              slice-decode \
+              memory-source-decode \
+              file-source-decode \
+              slice-store \
+              memory-source-store \
+              file-source-store
+            do
+              log="$ROOT/${id}-${mode}.txt"
+              time_log="$ROOT/${id}-${mode}.time.txt"
+
+              p50="$(awk -F= '/^p50_ns=/{print $2}' "$log")"
+              rss="$(awk -F: '/Maximum resident set size/{gsub(/[[:space:]]/,"",$2); print $2}' "$time_log")"
+              steady="$(awk '
+                /^pass=/ && /warmup=0/ {
+                  for (i = 1; i <= NF; ++i)
+                    if ($i ~ /^gc_allocated_bytes=/) {
+                      split($i, a, "=")
+                      last = a[2]
+                    }
+                }
+                END { print last + 0 }
+              ' "$log")"
+              retained="$(awk -F= '/^source_retained_encoded_buffer_bytes=/{print $2}' "$log")"
+              retained="${retained:-0}"
+
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$id" "$mode" "$p50" "$rss" "$steady" "$retained" >> "$OUT"
+            done
+          done
+
+          cat "$OUT"
+
+          for id in monaco-260901 bremen-260901; do
+            slice="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/${id}-slice-decode.txt")"
+            memory="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/${id}-memory-source-decode.txt")"
+            file="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/${id}-file-source-decode.txt")"
+            awk -v id="$id" -v s="$slice" -v m="$memory" -v f="$file" 'BEGIN {
+              printf "%s memory_source_over_slice=%.6f file_source_over_slice=%.6f\n", id, m/s, f/s
+            }' | tee -a "$ROOT/ratios.txt"
+          done
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: pbf-source-monaco-bremen-${{ github.sha }}
+          path: benchmark/evidence/pbf-source/
+          if-no-files-found: error
