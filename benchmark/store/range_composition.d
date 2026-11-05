@@ -62,7 +62,7 @@ private TraversalResult directState(OsmStore store)
     auto ways = store.ways;
     while (!ways.empty)
     {
-        const way = ways.front;
+        auto way = ways.front;
         if (way.state == StoreElementState.clean)
         {
             ++result.matches;
@@ -100,7 +100,7 @@ private TraversalResult directId(OsmStore store)
     auto ways = store.ways;
     while (!ways.empty)
     {
-        const way = ways.front;
+        auto way = ways.front;
         if ((way.id & 1) == 0)
         {
             ++result.matches;
@@ -137,7 +137,7 @@ private TraversalResult directTag(OsmStore store)
     auto ways = store.ways;
     while (!ways.empty)
     {
-        const way = ways.front;
+        auto way = ways.front;
         if (way.tags.hasTag("highway"))
         {
             ++result.matches;
@@ -175,7 +175,7 @@ private TraversalResult directChained(OsmStore store)
     auto ways = store.ways;
     while (!ways.empty)
     {
-        const way = ways.front;
+        auto way = ways.front;
         if ((way.id & 1) == 0 && way.tags.hasTag("highway"))
         {
             ++result.matches;
@@ -222,6 +222,11 @@ private long elapsedNs(alias traversal)(
     return sw.peek.total!"nsecs";
 }
 
+private ulong allocatedInCurrentThread() @trusted nothrow
+{
+    return GC.allocatedInCurrentThread();
+}
+
 private Timing summarize(
     ref long[sampleCount] values,
     TraversalResult result,
@@ -253,17 +258,17 @@ private PairTiming measurePair(alias directTraversal, alias composedTraversal)(
 
     GC.collect();
 
-    const directAllocatedBefore = GC.allocatedInCurrentThread();
+    const directAllocatedBefore = allocatedInCurrentThread();
     const directProfileBefore = GC.profileStats();
     const directAllocationResult = directTraversal(store);
     const directProfileAfter = GC.profileStats();
-    const directAllocatedAfter = GC.allocatedInCurrentThread();
+    const directAllocatedAfter = allocatedInCurrentThread();
 
-    const composedAllocatedBefore = GC.allocatedInCurrentThread();
+    const composedAllocatedBefore = allocatedInCurrentThread();
     const composedProfileBefore = GC.profileStats();
     const composedAllocationResult = composedTraversal(store);
     const composedProfileAfter = GC.profileStats();
-    const composedAllocatedAfter = GC.allocatedInCurrentThread();
+    const composedAllocatedAfter = allocatedInCurrentThread();
 
     assert(directAllocationResult == composedAllocationResult);
 
