@@ -368,7 +368,7 @@ private PbfSourceFillResult ensureSourceBytes(
             storage[cursor.end .. cursor.end + request],
             limits);
 
-        final switch (read.error)
+        switch (read.error)
         {
             case ReadError.none:
                 if (read.bytesRead == 0)
@@ -1447,6 +1447,19 @@ struct PbfReadResult
     }
 }
 
+
+/** Result of one ByteSource-backed one-shot PBF read. */
+struct PbfSourceReadResult
+{
+    PbfReadSummary summary;
+    PbfSourceReadStatus status;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return status.ok;
+    }
+}
+
 /**
  * Decode one complete PBF with a temporary reader workspace.
  *
@@ -1467,6 +1480,32 @@ PbfReadResult readPbf(Handler)(
         handler,
         result.summary,
         result.status);
+    return result;
+}
+
+
+/**
+ * Decode one complete PBF ByteSource with a temporary reusable workspace.
+ *
+ * Repeated/high-throughput consumers should retain a PbfReaderWorkspace and
+ * call `PbfReader.read(source, ...)` directly.
+ */
+PbfSourceReadResult readPbf(Handler)(
+    ByteSource source,
+    ref Handler handler,
+    PbfSourceReadOptions options = PbfSourceReadOptions.init)
+    @safe
+{
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfSourceReadResult result;
+    reader.read(
+        source,
+        workspace,
+        handler,
+        result.summary,
+        result.status,
+        options);
     return result;
 }
 
