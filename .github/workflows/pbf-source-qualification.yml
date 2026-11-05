@@ -173,3 +173,124 @@ jobs:
           name: pbf-source-monaco-bremen-${{ github.sha }}
           path: benchmark/evidence/pbf-source/
           if-no-files-found: error
+
+
+  austria-decode:
+    name: Austria country-scale decode qualification
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Fetch pinned Austria workload
+        shell: bash
+        run: |
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if bash benchmark/fetch-datasets.sh fetch austria-260901; then
+              ok=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          test "$ok" = 1
+
+      - name: Build ByteSource qualification benchmark
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=parser-source-compare \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run country-scale decode modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=benchmark/evidence/pbf-source-austria
+          FILE=benchmark/data/geofabrik-2026-09-01/austria-260901.osm.pbf
+          mkdir -p "$ROOT"
+
+          for mode in \
+            file-range-read \
+            slice-decode \
+            memory-source-decode \
+            file-source-decode
+          do
+            /usr/bin/time -v \
+              -o "$ROOT/${mode}.time.txt" \
+              benchmark/bin/osm-d-bench-source-compare \
+                "$mode" 3 "$FILE" \
+              | tee "$ROOT/${mode}.txt"
+          done
+
+      - name: Verify country-scale semantic parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=benchmark/evidence/pbf-source-austria
+          expected="$(grep '^semantic ' "$ROOT/slice-decode.txt")"
+          test "$(grep '^semantic ' "$ROOT/memory-source-decode.txt")" = "$expected"
+          test "$(grep '^semantic ' "$ROOT/file-source-decode.txt")" = "$expected"
+
+      - name: Summarize country-scale evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=benchmark/evidence/pbf-source-austria
+          OUT="$ROOT/summary.tsv"
+          printf 'mode\tp50_ns\tmax_rss_kib\tsteady_gc_alloc_bytes\tretained_encoded_bytes\n' > "$OUT"
+
+          for mode in \
+            file-range-read \
+            slice-decode \
+            memory-source-decode \
+            file-source-decode
+          do
+            log="$ROOT/${mode}.txt"
+            time_log="$ROOT/${mode}.time.txt"
+
+            p50="$(awk -F= '/^p50_ns=/{print $2}' "$log")"
+            rss="$(awk -F: '/Maximum resident set size/{gsub(/[[:space:]]/,"",$2); print $2}' "$time_log")"
+            steady="$(awk '
+              /^pass=/ && /warmup=0/ {
+                for (i = 1; i <= NF; ++i)
+                  if ($i ~ /^gc_allocated_bytes=/) {
+                    split($i, a, "=")
+                    last = a[2]
+                  }
+              }
+              END { print last + 0 }
+            ' "$log")"
+            retained="$(awk -F= '/^source_retained_encoded_buffer_bytes=/{print $2}' "$log")"
+            retained="${retained:-0}"
+
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+              "$mode" "$p50" "$rss" "$steady" "$retained" >> "$OUT"
+          done
+
+          cat "$OUT"
+
+          slice="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/slice-decode.txt")"
+          memory="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/memory-source-decode.txt")"
+          file="$(awk -F= '/^p50_ns=/{print $2}' "$ROOT/file-source-decode.txt")"
+          awk -v s="$slice" -v m="$memory" -v f="$file" 'BEGIN {
+            printf "austria-260901 memory_source_over_slice=%.6f file_source_over_slice=%.6f\n", m/s, f/s
+          }' | tee "$ROOT/ratios.txt"
+
+      - name: Upload country-scale evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: pbf-source-austria-${{ github.sha }}
+          path: benchmark/evidence/pbf-source-austria/
+          if-no-files-found: error
