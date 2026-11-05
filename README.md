@@ -331,9 +331,34 @@ foreach (scope ref RelationView relation; pbfRelations(pbfBytes))
 }
 ```
 
+When a streaming consumer wants only matching elements, use the push-filter
+adapter rather than materializing an intermediate result:
+
+```d
+bool hasHighway(scope ref WayView way) @safe nothrow @nogc
+{
+    return way.tags.hasTag("highway");
+}
+
+auto highways = pbfWays(pbfBytes).where!hasHighway;
+foreach (scope ref WayView way; highways)
+{
+    // matching borrowed Way only
+}
+assert(highways.status.ok);
+assert(highways.completed);
+```
+
+`where!` remains an `opApply`/foreach adapter, not a Phobos InputRange. It
+does not materialize elements or widen borrowed lifetimes. The predicate is
+applied after enough PBF work has been performed to produce a valid semantic
+element, so filtering does not promise protobuf-field predicate pushdown or
+avoid required framing/decompression/validation.
+
 The existing `PbfReader.nodes/ways/relations` methods remain equivalent
 advanced entry points. Natural completion validates the complete file; an
-early foreach exit is explicitly a partial traversal.
+early foreach exit, including from a filtered traversal, is explicitly a
+partial traversal.
 
 Loss-aware PBF documents, raw preservation, writing and PBF-specific semantic
 comparison are grouped under `import osm.pbf;` rather than expanding the
