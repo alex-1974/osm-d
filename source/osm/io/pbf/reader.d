@@ -20,7 +20,7 @@
 module osm.io.pbf.reader;
 
 import osm.io.pbf.blob : BlobView, decodeBlob;
-import osm.io.pbf.blob_header : BlobKind;
+import osm.io.pbf.blob_header : BlobHeaderView, BlobKind, decodeBlobHeader;
 import osm.io.pbf.decompress :
     BlobPayloadView,
     decodeBlobPayloadInto,
@@ -40,6 +40,7 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
+import osm.io.pbf.limits : maxBlobHeaderSize;
 import pbfNode = osm.io.pbf.node;
 import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
@@ -63,7 +64,9 @@ import osm.io.pbf.way :
     WayView,
     decodeWaysWithWorkspace,
     decodeWaysWithWorkspaceUntilStop;
+import osm.util.endian : readBigEndianU32;
 import osm.wire.cursor : WireCursor;
+import transport.source : ByteSource, ReadError, ReadLimits;
 
 /** High-level category of a complete-file PBF read failure. */
 enum PbfReadError : ubyte
@@ -116,6 +119,32 @@ struct PbfReadStatus
 }
 
 /**
+ * Combined transport/PBF diagnostic for one ByteSource-backed PBF read.
+ *
+ * A clean source EOF is not a transport failure. When EOF occurs in the middle
+ * of a PBF frame, `transportError` remains `ReadError.none` and `pbf`
+ * reports malformed/truncated input, preserving the distinction between an
+ * incomplete encoded file and an actual byte-source failure.
+ */
+struct PbfSourceReadStatus
+{
+    /// PBF semantic/framing status. Successful when transport alone failed.
+    PbfReadStatus pbf;
+    /// Generic transport failure, or ReadError.none.
+    ReadError transportError = ReadError.none;
+    /// Absolute source offset of the failed transport request.
+    ulong transportOffset;
+    /// Bytes returned by the failed transport request, when any.
+    size_t transportBytesRead;
+
+    /** True only when both transport and PBF processing succeeded. */
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return transportError == ReadError.none && pbf.ok;
+    }
+}
+
+/**
  * Counts from one successfully completed PbfReader.read operation.
  *
  * The fields are contractually valid only after read returns true.
@@ -151,6 +180,12 @@ private:
     ubyte[] decompressionBuffer;
     StringRef[] stringRefs;
     WayDecodePlan[] wayPlans;
+
+    // ByteSource framing scratch. Lengths retain the largest observed frame
+    // pieces so subsequent source reads reuse capacity without whole-file
+    // materialization.
+    ubyte[] sourceHeaderBuffer;
+    ubyte[] sourceBlobBuffer;
 }
 
 /**
@@ -177,6 +212,171 @@ bool decodeReaderBlobPayload(
         workspace.decompressionBuffer,
         payload,
         status);
+}
+
+
+private enum SourceFrameReadResult : ubyte
+{
+    block,
+    endOfInput,
+    pbfError,
+    transportError,
+}
+
+private void growSourceBuffer(ref ubyte[] buffer, size_t required) @safe
+{
+    if (buffer.length < required)
+        buffer.length = required;
+}
+
+private SourceFrameReadResult readSourceFileBlock(
+    scope ByteSource source,
+    ref ulong sourceOffset,
+    ulong sequence,
+    ref PbfReaderWorkspace workspace,
+    out FileBlockView block,
+    out PbfStatus pbfStatus,
+    out ReadError transportError,
+    out ulong transportOffset,
+    out size_t transportBytesRead)
+    @safe
+{
+    block = FileBlockView.init;
+    pbfStatus = PbfStatus.init;
+    transportError = ReadError.none;
+    transportOffset = 0;
+    transportBytesRead = 0;
+
+    const ulong blockOffset64 = sourceOffset;
+    const size_t blockOffset = cast(size_t)blockOffset64;
+
+    ubyte[4] prefix = void;
+    auto prefixRead = source.readSome(
+        sourceOffset,
+        prefix[],
+        ReadLimits(prefix.length));
+
+    if (prefixRead.error == ReadError.endOfSource)
+    {
+        if (prefixRead.bytesRead == 0)
+            return SourceFrameReadResult.endOfInput;
+
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    if (!prefixRead.ok)
+    {
+        transportError = prefixRead.error;
+        transportOffset = sourceOffset;
+        transportBytesRead = prefixRead.bytesRead;
+        return SourceFrameReadResult.transportError;
+    }
+
+    if (prefixRead.bytesRead != prefix.length)
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    uint headerLength;
+    if (!readBigEndianU32(prefix[], 0, headerLength))
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    if (headerLength >= maxBlobHeaderSize)
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.blobHeaderTooLarge,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    const ulong headerOffset64 = sourceOffset + prefix.length;
+    const size_t headerOffset = cast(size_t)headerOffset64;
+    const size_t headerSize = cast(size_t)headerLength;
+    growSourceBuffer(workspace.sourceHeaderBuffer, headerSize);
+    auto headerBytes = workspace.sourceHeaderBuffer[0 .. headerSize];
+
+    if (headerSize != 0)
+    {
+        auto headerRead = source.readSome(
+            headerOffset64,
+            headerBytes,
+            ReadLimits(headerSize));
+
+        if (headerRead.error == ReadError.endOfSource ||
+            (headerRead.ok && headerRead.bytesRead != headerSize))
+        {
+            pbfStatus = PbfStatus.failure(
+                PbfError.truncatedBlobHeader,
+                headerOffset);
+            return SourceFrameReadResult.pbfError;
+        }
+
+        if (!headerRead.ok)
+        {
+            transportError = headerRead.error;
+            transportOffset = headerOffset64;
+            transportBytesRead = headerRead.bytesRead;
+            return SourceFrameReadResult.transportError;
+        }
+    }
+
+    BlobHeaderView header;
+    if (!decodeBlobHeader(headerBytes, header, pbfStatus))
+    {
+        pbfStatus.offset += headerOffset;
+        return SourceFrameReadResult.pbfError;
+    }
+
+    const ulong blobOffset64 = headerOffset64 + headerSize;
+    const size_t blobOffset = cast(size_t)blobOffset64;
+    const size_t blobSize = cast(size_t)header.dataSize;
+    growSourceBuffer(workspace.sourceBlobBuffer, blobSize);
+    auto blobBytes = workspace.sourceBlobBuffer[0 .. blobSize];
+
+    if (blobSize != 0)
+    {
+        auto blobRead = source.readSome(
+            blobOffset64,
+            blobBytes,
+            ReadLimits(blobSize));
+
+        if (blobRead.error == ReadError.endOfSource ||
+            (blobRead.ok && blobRead.bytesRead != blobSize))
+        {
+            pbfStatus = PbfStatus.failure(
+                PbfError.truncatedBlobData,
+                blobOffset);
+            return SourceFrameReadResult.pbfError;
+        }
+
+        if (!blobRead.ok)
+        {
+            transportError = blobRead.error;
+            transportOffset = blobOffset64;
+            transportBytesRead = blobRead.bytesRead;
+            return SourceFrameReadResult.transportError;
+        }
+    }
+
+    block = FileBlockView(
+        sequence,
+        blockOffset,
+        header,
+        blobBytes);
+
+    sourceOffset = blobOffset64 + blobSize;
+    return SourceFrameReadResult.block;
 }
 
 /**
@@ -776,6 +976,201 @@ struct PbfReader
             return false;
         }
 
+
+        return true;
+    }
+
+    /**
+     * Decode one complete PBF from a bounded generic ByteSource.
+     *
+     * The source is consumed monotonically through `readSome`. Only the
+     * current BlobHeader, serialized Blob and existing reusable decode
+     * workspace are retained; the complete encoded resource is never
+     * materialized by this overload.
+     *
+     * A clean EOF at a block boundary completes the file. EOF inside a frame is
+     * a malformed/truncated PBF error, while generic source failures remain
+     * explicit in `PbfSourceReadStatus.transportError`.
+     */
+    bool read(Handler)(
+        scope ByteSource source,
+        ref PbfReaderWorkspace workspace,
+        ref Handler handler,
+        out PbfReadSummary summary,
+        out PbfSourceReadStatus sourceStatus)
+        @safe
+    {
+        summary = PbfReadSummary.init;
+        sourceStatus = PbfSourceReadStatus.init;
+
+        if (source is null)
+        {
+            sourceStatus.transportError = ReadError.sourceFailure;
+            return false;
+        }
+
+        SemanticSink!Handler sink = SemanticSink!Handler(handler);
+        bool sawHeader;
+        bool sawData;
+        ulong sequence;
+        ulong sourceOffset;
+
+        while (true)
+        {
+            const size_t blockOffset = cast(size_t)sourceOffset;
+            FileBlockView fileBlock;
+            PbfStatus pbfStatus;
+            ReadError transportError;
+            ulong transportOffset;
+            size_t transportBytesRead;
+
+            const frameResult = readSourceFileBlock(
+                source,
+                sourceOffset,
+                sequence,
+                workspace,
+                fileBlock,
+                pbfStatus,
+                transportError,
+                transportOffset,
+                transportBytesRead);
+
+            final switch (frameResult)
+            {
+                case SourceFrameReadResult.endOfInput:
+                    break;
+
+                case SourceFrameReadResult.transportError:
+                    sourceStatus.transportError = transportError;
+                    sourceStatus.transportOffset = transportOffset;
+                    sourceStatus.transportBytesRead = transportBytesRead;
+                    return false;
+
+                case SourceFrameReadResult.pbfError:
+                    sourceStatus.pbf = fromPbfFailure(
+                        sequence,
+                        blockOffset,
+                        pbfStatus);
+                    return false;
+
+                case SourceFrameReadResult.block:
+                    BlobView blob;
+                    if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                    {
+                        sourceStatus.pbf = fromPbfFailure(
+                            sequence,
+                            fileBlock.offset,
+                            pbfStatus);
+                        return false;
+                    }
+
+                    BlobPayloadView payload;
+                    if (!decodeReaderBlobPayload(
+                            blob,
+                            workspace,
+                            payload,
+                            pbfStatus))
+                    {
+                        sourceStatus.pbf = fromPbfFailure(
+                            sequence,
+                            fileBlock.offset,
+                            pbfStatus);
+                        return false;
+                    }
+
+                    final switch (fileBlock.header.kind)
+                    {
+                        case BlobKind.osmHeader:
+                            if (sawHeader || sawData)
+                            {
+                                sourceStatus.pbf = readerFailure(
+                                    PbfReadError.duplicateHeader,
+                                    sequence,
+                                    fileBlock.offset);
+                                return false;
+                            }
+
+                            HeaderBlockView header;
+                            if (!decodeHeaderBlock(
+                                    payload.bytes,
+                                    header,
+                                    pbfStatus))
+                            {
+                                sourceStatus.pbf = fromPbfFailure(
+                                    sequence,
+                                    fileBlock.offset,
+                                    pbfStatus);
+                                return false;
+                            }
+
+                            HeaderFeatureAssessment assessment;
+                            if (!validateRequiredFeatures(
+                                    header,
+                                    HeaderFeatureSupport.allKnown(),
+                                    assessment,
+                                    pbfStatus))
+                            {
+                                sourceStatus.pbf = fromPbfFailure(
+                                    sequence,
+                                    fileBlock.offset,
+                                    pbfStatus);
+                                return false;
+                            }
+
+                            sawHeader = true;
+                            ++summary.headerBlocks;
+                            break;
+
+                        case BlobKind.osmData:
+                            if (!sawHeader)
+                            {
+                                sourceStatus.pbf = readerFailure(
+                                    PbfReadError.dataBeforeHeader,
+                                    sequence,
+                                    fileBlock.offset);
+                                return false;
+                            }
+
+                            sawData = true;
+                            PbfReadStatus blockStatus;
+                            if (!decodeDataBlock(
+                                    payload.bytes,
+                                    workspace,
+                                    sink,
+                                    summary,
+                                    sequence,
+                                    fileBlock.offset,
+                                    blockStatus))
+                            {
+                                sourceStatus.pbf = blockStatus;
+                                return false;
+                            }
+                            break;
+
+                        case BlobKind.unknown:
+                            sourceStatus.pbf = readerFailure(
+                                PbfReadError.unsupportedBlockType,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                    }
+
+                    ++sequence;
+                    continue;
+            }
+
+            break;
+        }
+
+        if (!sawHeader)
+        {
+            sourceStatus.pbf = readerFailure(
+                PbfReadError.missingHeader,
+                sequence,
+                cast(size_t)sourceOffset);
+            return false;
+        }
+
         return true;
     }
 }
@@ -791,6 +1186,18 @@ struct PbfReadResult
 {
     PbfReadSummary summary;
     PbfReadStatus status;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return status.ok;
+    }
+}
+
+/** One-shot result for a ByteSource-backed PBF read. */
+struct PbfSourceReadResult
+{
+    PbfReadSummary summary;
+    PbfSourceReadStatus status;
 
     @property bool ok() const @safe pure nothrow @nogc
     {
@@ -814,6 +1221,28 @@ PbfReadResult readPbf(Handler)(
     PbfReadResult result;
     reader.read(
         input,
+        workspace,
+        handler,
+        result.summary,
+        result.status);
+    return result;
+}
+
+/**
+ * Decode one complete PBF from a generic ByteSource with temporary scratch.
+ *
+ * Repeated/high-throughput callers should retain a PbfReaderWorkspace and call
+ * PbfReader.read directly so block/decompression/index scratch is reused.
+ */
+PbfSourceReadResult readPbf(Handler)(
+    scope ByteSource source,
+    ref Handler handler) @safe
+{
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfSourceReadResult result;
+    reader.read(
+        source,
         workspace,
         handler,
         result.summary,
