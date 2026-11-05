@@ -3254,6 +3254,35 @@ public:
         return result;
     }
 
+    /*
+     * Package-internal tombstone enumeration for dataset-integrity validation.
+     *
+     * Deleted identities are absent from the live primary indexes by design.
+     * M15 validation needs to distinguish a known local tombstone from an
+     * unknown positive identity in a partial extract without exposing internal
+     * slot storage as public API.
+     */
+    package(osm) void visitDeletedIdentities(Sink)(ref Sink sink) @safe
+    {
+        foreach (slot; 0 .. _nodes.states.length)
+        {
+            if (_nodes.states[slot] == StoreElementState.deleted)
+                sink.put(ElementType.node, _nodes.ids[slot]);
+        }
+
+        foreach (slot; 0 .. _ways.states.length)
+        {
+            if (_ways.states[slot] == StoreElementState.deleted)
+                sink.put(ElementType.way, _ways.ids[slot]);
+        }
+
+        foreach (slot; 0 .. _relations.states.length)
+        {
+            if (_relations.states[slot] == StoreElementState.deleted)
+                sink.put(ElementType.relation, _relations.ids[slot]);
+        }
+    }
+
     @property StoreCounts counts() const @safe pure nothrow @nogc
     {
         StoreCounts result;
