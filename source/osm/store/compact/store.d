@@ -2037,6 +2037,40 @@ public:
         }
     }
 
+    /**
+     * Add retained tombstone IDs of one element type to a caller-owned set.
+     *
+     * Package-internal dataset validation builds this set once per validation
+     * pass so many unresolved references in a partial extract do not trigger a
+     * whole-slot scan for every lookup miss.
+     */
+    package(osm) void collectDeletedIdentities(
+        ElementType type,
+        ref bool[OsmId] ids) const
+        @safe
+    {
+        final switch (type)
+        {
+            case ElementType.node:
+                foreach (slot; 0 .. _nodes.ids.length)
+                    if (_nodes.states[slot] == StoreElementState.deleted)
+                        ids[_nodes.ids[slot]] = true;
+                return;
+
+            case ElementType.way:
+                foreach (slot; 0 .. _ways.ids.length)
+                    if (_ways.states[slot] == StoreElementState.deleted)
+                        ids[_ways.ids[slot]] = true;
+                return;
+
+            case ElementType.relation:
+                foreach (slot; 0 .. _relations.ids.length)
+                    if (_relations.states[slot] == StoreElementState.deleted)
+                        ids[_relations.ids[slot]] = true;
+                return;
+        }
+    }
+
     /** Return lifecycle state for a valid handle, including tombstones. */
     bool state(
         OsmHandle handle,

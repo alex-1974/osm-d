@@ -8,6 +8,9 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add explicit complete/partial dataset-reference validation for
+  `OwnedDataset` and `OsmStore` through `osm.validate`, including
+  deterministic missing/local/deleted-reference diagnostics.
 
 - Add exact, allocation-free `findTag`, `hasTag` and `tagEquals` helpers
   for borrowed OSM tag ranges. The free functions are UFCS-friendly, preserve

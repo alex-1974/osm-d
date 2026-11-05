@@ -4,13 +4,20 @@ import osm :
     ElementType,
     OwnedMetadata,
     OwnedNode,
+    OwnedNodeRef,
+    OwnedWay,
+    OwnedDataset,
     OwnedChangeEntry,
     OwnedChangeSequence,
     ChangeAction,
     LocationView;
 import osm.validate :
     CapabilityProfile,
+    DatasetValidationMode,
+    DatasetValidationError,
+    DatasetValidationIssue,
     UploadValidationIssue,
+    validateDataset,
     validateUploadChanges;
 
 @safe void main()
@@ -34,4 +41,32 @@ import osm.validate :
         issue);
     assert(ok);
     assert(issue.ok);
+
+    OwnedDataset dataset;
+    OwnedNode serverNode;
+    serverNode.id = 1;
+    dataset.nodes ~= serverNode;
+
+    OwnedWay way;
+    way.id = 2;
+    way.nodes ~= OwnedNodeRef(1);
+    dataset.ways ~= way;
+
+    DatasetValidationIssue datasetIssue;
+    assert(validateDataset(
+        dataset,
+        DatasetValidationMode.complete,
+        datasetIssue));
+    assert(datasetIssue.ok);
+
+    dataset.ways[0].nodes[0].id = 999;
+    assert(validateDataset(
+        dataset,
+        DatasetValidationMode.partial,
+        datasetIssue));
+    assert(!validateDataset(
+        dataset,
+        DatasetValidationMode.complete,
+        datasetIssue));
+    assert(datasetIssue.error == DatasetValidationError.missingReference);
 }
