@@ -155,6 +155,24 @@ import transport.source : MemorySink, MemorySource;
         capabilities: capabilities,
         issue: issue));
 
+    OwnedDataset dataset;
+    DatasetReferenceSummary referenceSummary;
+    DatasetReferenceIssue referenceIssue;
+    assert(validateDatasetReferences(
+        dataset: dataset,
+        mode: DatasetReferenceMode.complete,
+        summary: referenceSummary,
+        issue: referenceIssue));
+    assert(referenceIssue.ok);
+    assert(referenceSummary.referentiallyComplete);
+
+    auto referenceStore = new OsmStore();
+    assert(validateDatasetReferences(
+        store: referenceStore,
+        mode: DatasetReferenceMode.partial,
+        summary: referenceSummary,
+        issue: referenceIssue));
+
     OsmChangeDocument document;
     document.changes = changes;
 
