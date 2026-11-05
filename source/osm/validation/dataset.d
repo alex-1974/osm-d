@@ -761,3 +761,71 @@ unittest
     assert(issue.error == DatasetReferenceError.invalidReferenceType);
     assert(issue.childIndex == 0);
 }
+
+
+unittest
+{
+    auto store = new OsmStore();
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(999);
+
+    OsmHandle handle;
+    StoreStatus storeStatus;
+    assert(store.add(way, handle, storeStatus));
+
+    DatasetReferenceSummary summary;
+    DatasetReferenceIssue issue;
+
+    assert(validateDatasetReferences(
+        store,
+        DatasetReferenceMode.partial,
+        summary,
+        issue));
+    assert(issue.ok);
+    assert(summary.references == 1);
+    assert(summary.unresolvedReferences == 1);
+    assert(!summary.referentiallyComplete);
+
+    assert(!validateDatasetReferences(
+        store,
+        DatasetReferenceMode.complete,
+        summary,
+        issue));
+    assert(issue.error == DatasetReferenceError.missingReference);
+    assert(issue.referenceId == 999);
+}
+
+unittest
+{
+    auto store = new OsmStore();
+
+    OwnedNode node;
+    node.id = 1;
+
+    OsmHandle nodeHandle;
+    StoreStatus storeStatus;
+    assert(store.add(node, nodeHandle, storeStatus));
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(1);
+
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, storeStatus));
+    assert(store.remove(nodeHandle, storeStatus));
+
+    DatasetReferenceSummary summary;
+    DatasetReferenceIssue issue;
+    assert(!validateDatasetReferences(
+        store,
+        DatasetReferenceMode.partial,
+        summary,
+        issue));
+    assert(issue.error == DatasetReferenceError.deletedReference);
+    assert(issue.elementType == ElementType.way);
+    assert(issue.elementId == 10);
+    assert(issue.referenceType == ElementType.node);
+    assert(issue.referenceId == 1);
+}
