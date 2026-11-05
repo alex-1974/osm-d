@@ -163,7 +163,7 @@ instead of materializing the complete encoded PBF:
 
 ```d
 import osm;
-import transport : ByteSource, FileSource;
+import transport : ByteSource, FileSource, ReadError;
 
 ByteSource source = new FileSource("region.osm.pbf");
 
