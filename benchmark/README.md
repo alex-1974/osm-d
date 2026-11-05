@@ -132,6 +132,46 @@ By default the files live under
 `OSM_D_BENCH_DATA` to use another local storage location. Unknown explicitly
 requested dataset IDs are rejected before any dataset is processed.
 
+
+## Store range-composition qualification
+
+`store/range_composition.d` isolates the consumer-visible cost of composing
+the compact store's existing InputRanges with Phobos `filter`. PBF loading and
+store construction happen before the timed region.
+
+The benchmark compares a direct hand-written traversal with the equivalent
+lazy composed traversal for four Way predicates:
+
+- lifecycle state;
+- a trivial ID predicate;
+- exact tag-key lookup through `hasTag`;
+- two chained `filter` adapters (ID + tag).
+
+Every pair must produce the same match count and checksum. Samples alternate
+direct/composed order. The benchmark also records GC allocation and collection
+deltas after warm-up; lazy composition is expected to allocate no GC memory.
+
+Build and run with the controlled LDC baseline:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=store-range-composition \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-store-range-composition \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The GitHub `Store Range Qualification` workflow runs the same workload on the
+pinned Bremen snapshot. Hosted-runner timings are qualification evidence, not a
+controlled-workstation marketing baseline. A ratio materially above parity is
+an investigation trigger; no custom query engine is justified merely to reduce
+a small convenience-layer delta.
+
 ## DenseNodes microbenchmark
 
 `micro/dense_nodes.d` measures the production `decodeDenseNodes` path after
