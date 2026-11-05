@@ -48,6 +48,41 @@ if (!result.ok)
 
 Borrowed element views are valid only for their synchronous callback/body.
 
+### Read PBF from a bounded byte source
+
+When the encoded file is not already resident, reuse the workspace reader with
+the transport abstraction:
+
+```d
+import osm;
+import transport : ByteSource, FileSource, ReadError;
+
+ByteSource source = new FileSource("region.osm.pbf");
+
+PbfReader reader;
+PbfReaderWorkspace workspace;
+PbfReadSummary summary;
+PbfSourceReadStatus status;
+Handler handler;
+
+if (!reader.read(source, workspace, handler, summary, status))
+{
+    if (status.transportError != ReadError.none)
+    {
+        // generic byte-resource failure
+    }
+    else
+    {
+        // status.pbf identifies the PBF failure
+    }
+}
+```
+
+The source path does not materialize the complete PBF. It reuses bounded
+current-block and decode scratch. File/HTTP behavior remains in transport-d.
+Loss-aware `PbfDocument` reading is intentionally separate because preserving
+the exact raw source requires retaining the encoded bytes.
+
 ### Reuse scratch storage across many reads
 
 The explicit reader remains the high-throughput/reuse API:
