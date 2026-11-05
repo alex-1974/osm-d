@@ -158,6 +158,40 @@ For repeated/high-throughput reads, retain `PbfReaderWorkspace` and call
 `PbfReader.read` directly; this reuses grown scratch capacity. Borrowed views
 remain callback-scoped in both forms.
 
+For a bounded file, memory or remote resource, pass the transport abstraction
+instead of materializing the complete encoded PBF:
+
+```d
+import osm;
+import transport : ByteSource, FileSource;
+
+ByteSource source = new FileSource("region.osm.pbf");
+
+PbfReader reader;
+PbfReaderWorkspace workspace;
+PbfReadSummary summary;
+PbfSourceReadStatus status;
+Handler handler;
+
+if (!reader.read(source, workspace, handler, summary, status))
+{
+    if (status.transportError != ReadError.none)
+    {
+        // byte-resource access failed
+    }
+    else
+    {
+        // status.pbf reports malformed/unsupported PBF semantics
+    }
+}
+```
+
+This source overload retains only the current PBF header/blob and reusable
+decode scratch. Clean EOF inside an incomplete frame is reported as malformed
+PBF; a real ByteSource failure remains a transport error. The existing
+whole-buffer overload remains the fastest path when the bytes are already
+resident.
+
 A Way exposes ordered references through `way.nodes`; each value is a
 `NodeRefView` with an OSM ID and an optional `LocationView` when
 `LocationsOnWays` was present.
@@ -184,6 +218,12 @@ if (readPbfStore(pbfBytes, store, summary, readStatus))
         store.parentRelations(ElementType.node, 123);
 }
 ```
+
+The same direct build accepts a `ByteSource` with
+`PbfSourceStoreReadStatus`. This gives a bounded
+`ByteSource -> PBF decode -> OsmStore` path: the durable store grows normally,
+but the complete encoded PBF is never retained merely because of the parser
+API.
 
 The store returns the common semantic leaf types `MetadataView`, `TagView`,
 `NodeRefView` and `RelationMemberView`; only the borrowing ranges are
@@ -241,8 +281,15 @@ Copying one of these ranges copies only its cursor state. Every copy still
 borrows the same store, and structural store mutation invalidates outstanding
 ranges and views.
 
-The PBF input needs to remain alive only for `readPbfStore`; the resulting
-store owns its durable semantics and indexes.
+For the slice overload, PBF input bytes need to remain alive only during
+`readPbfStore`. For the ByteSource overload, even that complete encoded buffer
+is unnecessary. In both cases the resulting store owns its durable semantics
+and indexes.
+
+Loss-aware `PbfDocument` reading remains a separate whole-buffer contract
+because raw-source preservation intentionally retains original encoded bytes.
+The bounded ByteSource reader does not silently weaken or emulate that
+preservation contract.
 
 ### Materializing and acknowledging edits
 
