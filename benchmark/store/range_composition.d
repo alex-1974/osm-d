@@ -205,11 +205,13 @@ private TraversalResult composedChained(OsmStore store)
     return result;
 }
 
-private long elapsedNs(scope TraversalResult delegate() @safe operation)
+private long elapsedNs(alias traversal)(
+    OsmStore store,
+    out TraversalResult result)
     @trusted
 {
     StopWatch sw = StopWatch(AutoStart.yes);
-    const result = operation();
+    result = traversal(store);
     sw.stop();
 
     // Keep the result observable at the call boundary. Semantic parity is
@@ -277,22 +279,18 @@ private PairTiming measurePair(alias directTraversal, alias composedTraversal)(
         if ((sample & 1) == 0)
         {
             directSamples[sample] =
-                elapsedNs(() @safe { return directTraversal(store); });
-            directResult = directTraversal(store);
+                elapsedNs!directTraversal(store, directResult);
 
             composedSamples[sample] =
-                elapsedNs(() @safe { return composedTraversal(store); });
-            composedResult = composedTraversal(store);
+                elapsedNs!composedTraversal(store, composedResult);
         }
         else
         {
             composedSamples[sample] =
-                elapsedNs(() @safe { return composedTraversal(store); });
-            composedResult = composedTraversal(store);
+                elapsedNs!composedTraversal(store, composedResult);
 
             directSamples[sample] =
-                elapsedNs(() @safe { return directTraversal(store); });
-            directResult = directTraversal(store);
+                elapsedNs!directTraversal(store, directResult);
         }
 
         assert(directResult == composedResult);
@@ -369,9 +367,9 @@ int main(string[] args)
     if (!readPbfStore(input, store, summary, status))
     {
         stderr.writefln(
-            "PBF store read failed: error=%s pbf_error=%s",
-            status.error,
-            status.pbf.error);
+            "PBF store read failed: pbf_error=%s store_error=%s",
+            status.pbf.error,
+            status.store.error);
         return 1;
     }
 
