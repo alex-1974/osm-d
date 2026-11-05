@@ -57,6 +57,20 @@ private void inspectTags(T)(scope ref T value) @safe nothrow @nogc
 
     auto tags = value.tags;
 
+    // Lookup helpers consume only a copy of the borrowed range cursor.
+    const hasName = tags.hasTag("name");
+    assert(hasName || !hasName);
+
+    if (!tags.empty)
+    {
+        const expected = tags.front;
+        TagLookupResult found = tags.findTag(expected.key);
+        assert(found.found);
+        assert(found.tag.key == expected.key);
+        assert(found.tag.value == expected.value);
+        assert(tags.tagEquals(expected.key, expected.value));
+    }
+
     while (!tags.empty)
     {
         TagView tag = tags.front;
