@@ -14,7 +14,11 @@ module osm.store;
 public import osm.view.metadata : MetadataView;
 public import osm.view.node_ref : NodeRefView;
 public import osm.view.relation_member : RelationMemberView;
-public import osm.view.tag :\n    TagView,\n    findTag,\n    hasTag,\n    tagEquals;
+public import osm.view.tag :
+    TagView,
+    findTag,
+    hasTag,
+    tagEquals;
 
 public import osm.model.change :
     ChangeAction,
