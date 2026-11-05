@@ -16,6 +16,10 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 - Qualify compact-store element, child and parent traversal values as lazy D
   InputRanges and document cursor-copy and structural-mutation invalidation
   semantics for Phobos composition.
+- Add `where!` push filtering for `pbfNodes`, `pbfWays` and
+  `pbfRelations`. The compile-time predicate filters callback-scoped borrowed
+  elements without materialization while preserving foreach early-exit,
+  completion and validation semantics.
 
 ## 0.3.0 - 2026-11-04
 
