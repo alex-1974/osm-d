@@ -260,8 +260,8 @@ bool validateDatasetReferences(
     lookup.store = store;
 
     DeletedIdentityCollector collector;
-    collector.identities = &lookup.deleted;
     store.visitDeletedIdentities(collector);
+    lookup.deleted = collector.identities;
 
     size_t elementIndex;
     auto ways = store.ways;
@@ -390,11 +390,11 @@ struct StoreIdentityLookup
 
 struct DeletedIdentityCollector
 {
-    bool[Identity]* identities;
+    bool[Identity] identities;
 
     void put(ElementType type, OsmId id) @safe
     {
-        (*identities)[Identity(type, id)] = true;
+        identities[Identity(type, id)] = true;
     }
 }
 
