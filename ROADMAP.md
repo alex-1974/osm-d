@@ -17,6 +17,12 @@ criteria.
 - **M11 — OSM API diffResult codec:** #114
 - **M12 — Editing API capabilities discovery:** #119
 - **M13 — v0.3.0 API freeze and release qualification:** #121
+- **M14 — Consumer traversal, ranges and source ergonomics:** #129
+- **M15 — Dataset integrity and OSM topology resolution:** #133
+- **M16 — Complete OSM objects and area assembly:** #138
+- **M17 — Changesets and OSM Editing API protocol:** #143
+- **M18 — History, authoritative refresh and conflict foundation:** #148
+- **M19 — OSM replication and incremental synchronization:** #153
 
 Roadmap checkboxes describe capabilities or decisions, not mandatory
 implementation for its own sake. Conditional optimizations such as a worker
@@ -217,3 +223,86 @@ Tracked by M13: #121.
 M11/M12 are the complete feature set for v0.3.0. No HTTP/OAuth client,
 changeset lifecycle, JSON capability codec or other new feature family is
 admitted after this feature freeze.
+
+
+## Phase 14 — Consumer traversal, ranges and source ergonomics
+
+Tracked by M14: #129.
+
+- [ ] Add exact zero-allocation tag lookup helpers over semantic tag ranges. #126
+- [ ] Qualify compact-store traversal ranges for idiomatic Phobos composition. #127
+- [ ] Evaluate composable push filtering for PBF foreach traversal without
+  converting the push decoder into a Phobos InputRange. #128
+- [ ] Add bounded PBF reading from `transport-d.ByteSource` while preserving
+  whole-buffer loss-aware semantics where required. #125
+
+The direct statically dispatched `PbfReader.read(handler)` path remains the
+maximum-throughput reference. Convenience composition is admitted only when its
+lifetime and performance costs are explicit and measured.
+
+
+## Phase 15 — Dataset integrity and OSM topology resolution
+
+Tracked by M15: #133.
+
+- [ ] Define complete versus partial dataset/reference validity. #130
+- [ ] Add ordered, cycle-safe OSM reference resolution and topology traversal. #131
+- [ ] Qualify dataset validation and topology resolution on real OSM workloads. #132
+
+OSM identity/reference topology belongs here. Generic geometry algorithms,
+geodesy and spatial indexing remain separate workspace responsibilities.
+
+
+## Phase 16 — Complete OSM objects and area assembly
+
+Tracked by M16: #138.
+
+- [ ] Define the complete-object and OSM-to-geometry boundary. #134
+- [ ] Add complete Way and Relation resolution views/results. #135
+- [ ] Implement OSM-specific area and multipolygon assembly semantics. #136
+- [ ] Qualify complete objects and area assembly against real OSM data. #137
+
+OSM member/ring assembly may produce geometry-ready coordinate sequences, but
+robust generic polygon operations remain in `geo-d`.
+
+
+## Phase 17 — Changesets and OSM Editing API protocol
+
+Tracked by M17: #143.
+
+- [ ] Revise the v0.3 Editing API boundary so osm-d owns OSM protocol semantics
+  while generic network execution remains in `transport-d`. #139
+- [ ] Add a first-class OSM Changeset semantic model and XML codecs. #140
+- [ ] Implement the Editing API protocol client over generic HTTP transport. #141
+- [ ] Qualify Changeset and Editing API protocol semantics. #142
+
+Credential persistence remains in `credentials-d`; OAuth2/PKCE, account
+selection, retry/backoff and editor workflow remain outside the osm-d core.
+
+
+## Phase 18 — History, authoritative refresh and conflict foundation
+
+Tracked by M18: #148.
+
+- [ ] Define an OSM element history/version-sequence model distinct from editor
+  undo history. #144
+- [ ] Add authoritative server refresh and coherent store reconciliation. #145
+- [ ] Implement structured three-way base/local/remote conflict classification. #146
+- [ ] Qualify refresh, history and conflict workflows. #147
+
+osm-d reports OSM synchronization facts and conflicts; the application decides
+how to present or resolve them.
+
+
+## Phase 19 — OSM replication and incremental synchronization
+
+Tracked by M19: #153.
+
+- [ ] Define replication state, sequence, continuity and replay semantics. #149
+- [ ] Implement state/path handling and transactional osmChange application. #150
+- [ ] Compose bounded ByteSource + streaming GZIP + osmChange ingestion. #151
+- [ ] Qualify continuity, replay, restart and incremental store updates. #152
+
+Generic resource retrieval stays in `transport-d`; GZIP belongs in
+`compression-d`; scheduling, retry policy and checkpoint persistence remain
+application responsibilities.
