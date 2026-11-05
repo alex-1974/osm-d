@@ -615,6 +615,11 @@ unittest
     assert(resolvedNodes.front.reference.id == 1);
     assert(resolvedNodes.front.target == nodeHandle);
 
+    OwnedNode localNode;
+    localNode.id = -7;
+    OsmHandle localNodeHandle;
+    assert(store.add(localNode, localNodeHandle, status));
+
     OwnedRelation relation;
     relation.id = 20;
     relation.members ~= OwnedRelationMember(
@@ -628,6 +633,7 @@ unittest
 
     OsmHandle relationHandle;
     assert(store.add(relation, relationHandle, status));
+    assert(store.remove(localNodeHandle, status));
 
     StoreRelationView relationView;
     assert(store.relation(relationHandle, relationView, status));
