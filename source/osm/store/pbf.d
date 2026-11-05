@@ -14,12 +14,14 @@ module osm.store.pbf;
 
 import osm.io.pbf.reader :
     PbfReadStatus,
+    PbfSourceReadStatus,
     PbfReadSummary,
     PbfReader,
     PbfReaderWorkspace;
 import osm.store.compact.store :
     OsmStore,
     StoreStatus;
+import transport.source : ByteSource;
 
 /**
  * Combined diagnostic for one direct PBF-to-store read.
@@ -38,6 +40,17 @@ struct PbfStoreReadStatus
     @property bool ok() const @safe pure nothrow @nogc
     {
         return pbf.ok && store.ok;
+    }
+}
+
+struct PbfSourceStoreReadStatus
+{
+    PbfSourceReadStatus source;
+    StoreStatus store;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return source.ok && store.ok;
     }
 }
 
