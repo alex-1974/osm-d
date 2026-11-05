@@ -64,10 +64,10 @@ private void inspectTags(T)(scope ref T value) @safe nothrow @nogc
     if (!tags.empty)
     {
         const expected = tags.front;
-        TagView found;
-        assert(tags.findTag(expected.key, found));
-        assert(found.key == expected.key);
-        assert(found.value == expected.value);
+        TagLookupResult found = tags.findTag(expected.key);
+        assert(found.found);
+        assert(found.tag.key == expected.key);
+        assert(found.tag.value == expected.value);
         assert(tags.tagEquals(expected.key, expected.value));
     }
 
