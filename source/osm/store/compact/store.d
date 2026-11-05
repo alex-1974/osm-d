@@ -45,6 +45,7 @@ import osm.view.node_ref : NodeRefView;
 import osm.view.relation_member : RelationMemberView;
 import osm.view.tag : TagView;
 import std.algorithm.sorting : sort;
+import std.range.primitives : isInputRange;
 
 
 /**
@@ -336,7 +337,12 @@ alias StoreTagView = TagView;
 alias StoreWayNodeView = NodeRefView;
 alias StoreRelationMemberView = RelationMemberView;
 
-/** Borrowed ordered tag range. Invalidated by structural store mutation. */
+/**
+ * Borrowed ordered tag InputRange.
+ *
+ * Copying the range copies only its cursor state; every copy still borrows the
+ * same store. Structural store mutation invalidates all outstanding copies.
+ */
 struct StoreTagRange
 {
 private:
@@ -368,7 +374,12 @@ public:
     }
 }
 
-/** Borrowed ordered Way-node range. Invalidated by structural mutation. */
+/**
+ * Borrowed ordered Way-node InputRange.
+ *
+ * Copying the range copies only its cursor state. Structural store mutation
+ * invalidates all outstanding copies.
+ */
 struct StoreNodeRefRange
 {
 private:
@@ -440,7 +451,12 @@ public:
 /// v0.1 compatibility alias. Prefer StoreNodeRefRange.
 alias StoreWayNodeRange = StoreNodeRefRange;
 
-/** Borrowed ordered Relation-member range. Invalidated by structural mutation. */
+/**
+ * Borrowed ordered Relation-member InputRange.
+ *
+ * Copying the range copies only its cursor state. Structural store mutation
+ * invalidates all outstanding copies.
+ */
 struct StoreRelationMemberRange
 {
 private:
@@ -512,8 +528,9 @@ struct StoreRelationView
 /**
  * Borrowed range of distinct live Ways that reference one Node ID.
  *
- * Duplicate references from the same Way are reported once. The range is
- * invalidated by structural store mutation.
+ * Duplicate references from the same Way are reported once. This is an
+ * InputRange; copying it copies only traversal cursor state. Every copy borrows
+ * the same store and is invalidated by structural store mutation.
  */
 struct StoreParentWayRange
 {
@@ -564,8 +581,9 @@ public:
 /**
  * Borrowed range of distinct live Relations that reference one typed OSM ID.
  *
- * Duplicate members from the same Relation are reported once. The range is
- * invalidated by structural store mutation.
+ * Duplicate members from the same Relation are reported once. This is an
+ * InputRange; copying it copies only traversal cursor state. Every copy borrows
+ * the same store and is invalidated by structural store mutation.
  */
 struct StoreParentRelationRange
 {
@@ -614,7 +632,12 @@ public:
     }
 }
 
-/** Deterministic live Node range in slot/insertion order. */
+/**
+ * Deterministic live Node InputRange in slot/insertion order.
+ *
+ * Copying the range copies only the slot cursor. Every copy borrows the same
+ * store and is invalidated by structural store mutation.
+ */
 struct StoreNodeRange
 {
 private:
@@ -649,7 +672,12 @@ public:
     }
 }
 
-/** Deterministic live Way range in slot/insertion order. */
+/**
+ * Deterministic live Way InputRange in slot/insertion order.
+ *
+ * Copying the range copies only the slot cursor. Every copy borrows the same
+ * store and is invalidated by structural store mutation.
+ */
 struct StoreWayRange
 {
 private:
@@ -684,7 +712,12 @@ public:
     }
 }
 
-/** Deterministic live Relation range in slot/insertion order. */
+/**
+ * Deterministic live Relation InputRange in slot/insertion order.
+ *
+ * Copying the range copies only the slot cursor. Every copy borrows the same
+ * store and is invalidated by structural store mutation.
+ */
 struct StoreRelationRange
 {
 private:
@@ -718,6 +751,15 @@ public:
         skipDeleted();
     }
 }
+
+static assert(isInputRange!StoreTagRange);
+static assert(isInputRange!StoreNodeRefRange);
+static assert(isInputRange!StoreRelationMemberRange);
+static assert(isInputRange!StoreParentWayRange);
+static assert(isInputRange!StoreParentRelationRange);
+static assert(isInputRange!StoreNodeRange);
+static assert(isInputRange!StoreWayRange);
+static assert(isInputRange!StoreRelationRange);
 
 private shared uint nextStoreEpoch;
 
