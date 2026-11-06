@@ -152,6 +152,10 @@ struct AreaAssemblyIssue
     OsmId memberId;
 
     OsmId nodeId;
+
+    size_t childIndex;
+    bool hasChildIndex;
+
     size_t candidateCount;
 
     ReferenceResolutionState resolution;
@@ -842,8 +846,7 @@ void assembleRole(
                     candidateCount,
                     ReferenceResolutionState.none,
                     AreaAssemblyState.ambiguous);
-                failed = true;
-                break;
+                return;
             }
 
             ref candidate = pieces[candidateIndex];
@@ -1039,7 +1042,8 @@ void addNodeIssue(
     issue.memberType = ElementType.way;
     issue.memberId = wayId;
     issue.nodeId = nodeId;
-    issue.candidateCount = childIndex;
+    issue.childIndex = childIndex;
+    issue.hasChildIndex = true;
     issue.resolution = resolution;
 
     result.issues ~= issue;
@@ -1166,14 +1170,15 @@ unittest
     auto store = new OsmStore();
     StoreStatus status;
 
-    foreach (id, lat, lon;
-             [1L, 2L, 3L],
-             [10L, 20L, 30L],
-             [100L, 200L, 300L])
+    const ids = [1L, 2L, 3L];
+    const lats = [10L, 20L, 30L];
+    const lons = [100L, 200L, 300L];
+
+    foreach (i; 0 .. ids.length)
     {
         OwnedNode node;
-        node.id = id;
-        node.location = LocationView(lat, lon);
+        node.id = ids[i];
+        node.location = LocationView(lats[i], lons[i]);
         OsmHandle handle;
         assert(store.add(node, handle, status));
     }
