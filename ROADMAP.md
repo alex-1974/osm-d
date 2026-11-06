@@ -288,6 +288,10 @@ Tracked by M17: #143.
 - [x] Add a first-class OSM Changeset semantic model and XML codecs. #140
 - [ ] Implement the Editing API protocol client over generic HTTP transport. #141
 - [ ] Qualify Changeset and Editing API protocol semantics. #142
+  - [x] transport-independent semantic pipeline: Changeset -> store changes ->
+    capability validation -> osmChange -> diffResult -> store reconciliation.
+  - [ ] protocol/mock-transport status qualification remains blocked on #141 /
+    transport-d#3.
 
 Credential persistence remains in `credentials-d`; OAuth2/PKCE, account
 selection, retry/backoff and editor workflow remain outside the osm-d core.
