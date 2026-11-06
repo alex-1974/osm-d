@@ -272,7 +272,7 @@ Tracked by M16: #138.
 
 - [x] Define the complete-object and OSM-to-geometry boundary. #134
 - [x] Add complete Way and Relation resolution views/results. #135
-- [ ] Implement OSM-specific area and multipolygon assembly semantics. #136
+- [x] Implement OSM-specific area and multipolygon assembly semantics. #136
 - [ ] Qualify complete objects and area assembly against real OSM data. #137
 
 OSM member/ring assembly may produce geometry-ready coordinate sequences, but
