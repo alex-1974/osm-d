@@ -165,7 +165,16 @@ struct OwnedChangeset
         result.hasUsername = hasUsername;
         result.username = username;
         result.hasBounds = hasBounds;
-        result.bounds = bounds;
+        if (hasBounds)
+        {
+            result.bounds = ChangesetBounds(
+                LocationView(
+                    bounds.minimum.latitudeNanodegrees,
+                    bounds.minimum.longitudeNanodegrees),
+                LocationView(
+                    bounds.maximum.latitudeNanodegrees,
+                    bounds.maximum.longitudeNanodegrees));
+        }
         result.hasCommentsCount = hasCommentsCount;
         result.commentsCount = commentsCount;
         result.hasChangesCount = hasChangesCount;
@@ -176,7 +185,7 @@ struct OwnedChangeset
         result.modifiedCount = modifiedCount;
         result.hasDeletedCount = hasDeletedCount;
         result.deletedCount = deletedCount;
-        result.tags = tags.dup;
+        result.tags = copyTags(tags);
         result.hasDiscussion = hasDiscussion;
         result.comments.length = comments.length;
         foreach (i, ref const comment; comments)
@@ -203,9 +212,21 @@ struct ChangesetTagRequest
     ChangesetTagRequest deepCopy() const @safe
     {
         ChangesetTagRequest result;
-        result.tags = tags.dup;
+        result.tags = copyTags(tags);
         return result;
     }
+}
+
+private OwnedTag[] copyTags(scope const(OwnedTag)[] values) @safe
+{
+    OwnedTag[] result;
+    result.length = values.length;
+    foreach (i, ref const value; values)
+    {
+        result[i].key = value.key;
+        result[i].value = value.value;
+    }
+    return result;
 }
 
 unittest
