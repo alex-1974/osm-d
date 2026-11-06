@@ -57,6 +57,8 @@ The supported high-level facades are:
   child/parent closure traversal;
 - `import osm.complete;` — borrowed complete Way/Relation projections,
   direct completeness, exact OSM-native bounds and closed-Way identity;
+- `import osm.area;` — owning OSM closed-Way/multipolygon ring assembly
+  with explicit roles, provenance and partial/ambiguous/invalid diagnostics;
 - `import osm.upload;` — bounded OSM API diffResult response parsing;
 - `import osm.capabilities;` — Editing API capability discovery projected
   into upload-validation policy.
@@ -330,6 +332,40 @@ not imply polygon validity.
 
 The package has no direct `geo-d` dependency. Geometry conversion remains an
 explicit consumer boundary.
+
+## OSM area assembly contract
+
+The focused `osm.area` facade owns OSM-specific ring assembly, not generic
+polygon computation.
+
+`assembleClosedWayArea` structurally assembles a caller-selected closed Way.
+It does not infer area semantics from the complete OSM tagging universe.
+
+`assembleMultipolygon` requires a `type=multipolygon` Relation whose
+supported geometry members are Ways with exact `outer` or `inner` roles.
+Empty/unknown roles are not guessed. Node and nested Relation members are
+reported explicitly as unsupported.
+
+Open Way members are joined by exact endpoint Node ID. Relation member order is
+not required to be ring order; source Way direction may be reversed in the
+result without mutating source. A multiply-connectable endpoint is
+`ambiguous`; no candidate is selected by hash order, coordinates or hidden
+heuristics.
+
+The owning `AreaAssemblyResult` retains assembled `AreaRing` values,
+diagnostic `AreaOpenChain` values, detailed `AreaAssemblyIssue` entries and
+source Way/member provenance. Resolved `LocationView` nanodegrees are copied
+exactly.
+
+`AreaAssemblyState` distinguishes `complete`, `partial`, `ambiguous`
+and `invalid`. Missing positive/server references are partial. Invalid local,
+zero or unsupported structure is not silently downgraded to partial data.
+
+Ring identity may still assemble when a referenced Node object is omitted:
+Node IDs remain available while `locationsComplete` becomes false.
+
+No claim is made about ring simplicity, containment, orientation or polygon
+validity. No direct `geo-d` dependency is introduced.
 
 ## Failure and `.init` contract
 
