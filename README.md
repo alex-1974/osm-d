@@ -641,6 +641,56 @@ The complete-object layer does not depend on `geo-d`. A consumer that chooses
 Euclidean geometry maps longitude to x and latitude to y explicitly. Generic
 polygon/segment algorithms remain outside osm-d.
 
+## OSM area and multipolygon assembly
+
+Use `osm.area` when OSM Way/Relation topology must be assembled into
+geometry-ready rings without importing generic polygon algorithms:
+
+```d
+import osm.area;
+
+auto area = assembleMultipolygon(store, relation);
+
+if (area.complete)
+{
+    foreach (ref const ring; area.rings)
+    {
+        // ring.role is outer or inner.
+        // ring.vertices preserve exact Node IDs and LocationView nanodegrees.
+        // ring.segments preserve source Way/member provenance and reversal.
+    }
+}
+```
+
+`assembleClosedWayArea` structurally assembles a caller-selected closed Way
+as one outer ring. It deliberately does **not** infer from arbitrary tags
+whether every closed Way represents an area.
+
+`assembleMultipolygon` requires `type=multipolygon`, Way members and exact
+`outer` / `inner` roles. Member order need not match ring order and source
+Way direction may be reversed in the owning result without mutating source
+data. Connectivity is exact OSM Node identity; coordinates are never used as a
+tolerance-based join key.
+
+The result distinguishes:
+
+- `complete` — all requested rings and Node locations are available;
+- `partial` — positive/server references are missing from the available
+  dataset;
+- `ambiguous` — more than one same-role Way can continue an endpoint;
+- `invalid` — the available graph violates the supported structural contract.
+
+Failed or incomplete chains remain available as `AreaOpenChain` diagnostics.
+`AreaAssemblyIssue` identifies invalid roles/member types, unresolved Ways or
+Nodes, duplicates, unclosed chains and ambiguous junctions.
+
+Assembly owns the new ring/path/provenance arrays. Exact `LocationView`
+nanodegrees are copied; no implicit floating-point conversion occurs.
+
+This layer does not test polygon simplicity, intersections, containment,
+orientation, area, clipping or projection. Those remain explicit downstream
+geometry/geodesy operations.
+
 ## Upload validation
 
 Parsing and upload readiness are separate contracts. Use `osm.validate` when
