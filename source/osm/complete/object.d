@@ -1049,6 +1049,92 @@ unittest
 
 unittest
 {
+    // Open versus syntactically closed Way remains identity-only.
+    OwnedWay open;
+    open.id = 1;
+    open.nodes ~= OwnedNodeRef(10);
+    open.nodes ~= OwnedNodeRef(11);
+    assert(!isClosedWay(open));
+
+    open.nodes ~= OwnedNodeRef(10);
+    assert(isClosedWay(open));
+}
+
+unittest
+{
+    // Nested Relations resolve the direct typed target without recursive
+    // materialization or special-casing a cycle.
+    OwnedDataset dataset;
+
+    OwnedRelation outer;
+    outer.id = 20;
+    outer.members ~= OwnedRelationMember(
+        ElementType.relation,
+        21,
+        null);
+    dataset.relations ~= outer;
+
+    OwnedRelation inner;
+    inner.id = 21;
+    inner.members ~= OwnedRelationMember(
+        ElementType.relation,
+        20,
+        null);
+    dataset.relations ~= inner;
+
+    import osm.validate : DatasetValidationIssue;
+    DatasetValidationIssue issue;
+    OwnedDatasetIndex index;
+    assert(index.build(dataset, issue));
+
+    auto full =
+        completeRelation(dataset, index, dataset.relations[0]);
+    auto members = full.members;
+    assert(members.front.resolved);
+    assert(members.front.target.type == ElementType.relation);
+    assert(members.front.target.relation.id == 21);
+    assert(completeStatus(full).complete);
+}
+
+unittest
+{
+    // Structural store mutation invalidates borrowed projections. A fresh
+    // projection deterministically reflects tombstone and restore state.
+    auto store = new OsmStore();
+    StoreStatus status;
+
+    OwnedNode node;
+    node.id = 1;
+    node.location = LocationView(1, 2);
+    OsmHandle nodeHandle;
+    assert(store.add(node, nodeHandle, status));
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(1);
+    OsmHandle wayHandle;
+    assert(store.add(way, wayHandle, status));
+
+    StoreWayView wayView;
+    assert(store.way(wayHandle, wayView, status));
+    assert(completeStatus(completeWay(store, wayView)).complete);
+
+    assert(store.remove(nodeHandle, status));
+
+    assert(store.way(wayHandle, wayView, status));
+    auto deleted = completeStatus(completeWay(store, wayView));
+    assert(deleted.state == CompleteObjectState.partial);
+    assert(deleted.issue ==
+        ReferenceResolutionState.unresolvedPositive);
+
+    assert(store.restore(nodeHandle, status));
+
+    assert(store.way(wayHandle, wayView, status));
+    assert(completeStatus(completeWay(store, wayView)).complete);
+}
+
+unittest
+{
     auto store = new OsmStore();
     StoreStatus status;
 
