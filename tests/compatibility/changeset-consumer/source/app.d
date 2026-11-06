@@ -1,7 +1,7 @@
 module app;
 
 import osm.changeset;
-import osm.model.owned :
+import osm :
     OwnedTag,
     ownBytes;
 import transport.source :
