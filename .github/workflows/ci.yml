@@ -86,6 +86,15 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M17 Editing API read-response fixtures
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-read-responses \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
