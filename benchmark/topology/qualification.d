@@ -21,7 +21,6 @@ import osm :
     OwnedWay,
     PbfReadSummary,
     PbfStoreReadStatus,
-    StoreCounts,
     StoreRelationView,
     StoreStatus,
     StoreWayView,
@@ -50,7 +49,7 @@ import std.algorithm.sorting : sort;
 import std.conv : to;
 import std.datetime.stopwatch : AutoStart, StopWatch;
 import std.file : read;
-import std.stdio : stderr, writeln, writefln;
+import std.stdio : stderr, writefln;
 
 private enum defaultRounds = 5;
 
@@ -102,7 +101,8 @@ private SelectedWay selectLargestWay(OsmStore store) @safe
     while (!ways.empty)
     {
         auto way = ways.front;
-        if (way.nodes.length > result.nodes)
+        if (!result.handle.valid ||
+            way.nodes.length > result.nodes)
         {
             result.handle = way.handle;
             result.id = way.id;
@@ -129,7 +129,8 @@ private SelectedRelation selectRelations(
         auto relation = relations.front;
         const memberCount = relation.members.length;
 
-        if (memberCount > largest.members)
+        if (!largest.handle.valid ||
+            memberCount > largest.members)
         {
             largest.handle = relation.handle;
             largest.id = relation.id;
@@ -475,6 +476,92 @@ private long timeParents(
     return medianNs(samples);
 }
 
+private SelectedWay selectLargestCompleteWay(OsmStore store) @safe
+{
+    SelectedWay result;
+
+    auto ways = store.ways;
+    while (!ways.empty)
+    {
+        auto way = ways.front;
+
+        bool complete = true;
+        auto refs = store.resolveNodes(way);
+        while (!refs.empty)
+        {
+            if (!refs.front.resolved)
+            {
+                complete = false;
+                break;
+            }
+            refs.popFront();
+        }
+
+        if (complete &&
+            way.nodes.length > 0 &&
+            (!result.handle.valid ||
+             way.nodes.length > result.nodes))
+        {
+            result.handle = way.handle;
+            result.id = way.id;
+            result.nodes = way.nodes.length;
+        }
+
+        ways.popFront();
+    }
+
+    require(
+        result.handle.valid,
+        "real workload has no complete Way with Node references");
+    return result;
+}
+
+private SelectedWay selectEditableWay(OsmStore store) @safe
+{
+    StoreStatus status;
+
+    auto ways = store.ways;
+    while (!ways.empty)
+    {
+        auto view = ways.front;
+        ways.popFront();
+
+        if (view.nodes.length < 2)
+            continue;
+
+        OwnedWay way;
+        if (!store.copyWay(view.handle, way, status))
+            continue;
+
+        foreach (i, ref const candidate; way.nodes)
+        {
+            size_t occurrences;
+            foreach (ref const other; way.nodes)
+                if (other.id == candidate.id)
+                    ++occurrences;
+
+            if (occurrences != 1)
+                continue;
+
+            foreach (ref const replacement; way.nodes)
+            {
+                if (replacement.id != candidate.id)
+                {
+                    return SelectedWay(
+                        view.handle,
+                        view.id,
+                        view.nodes.length);
+                }
+            }
+        }
+    }
+
+    require(
+        false,
+        "real workload has no editable Way with a unique Node reference");
+    return SelectedWay.init;
+}
+
 private bool buildRealSubsets(
     OsmStore store,
     SelectedWay selected,
@@ -770,11 +857,17 @@ private int run(string filename, size_t rounds)
         completeValidationP50);
 
     const largestWay = selectLargestWay(store);
+    const completeWay = selectLargestCompleteWay(store);
+    const editableWay = selectEditableWay(store);
     SelectedRelation nestedRelation;
     const largestRelation = selectRelations(store, nestedRelation);
 
     writefln("largest_way_id=%s", largestWay.id);
     writefln("largest_way_nodes=%s", largestWay.nodes);
+    writefln("complete_way_id=%s", completeWay.id);
+    writefln("complete_way_nodes=%s", completeWay.nodes);
+    writefln("editable_way_id=%s", editableWay.id);
+    writefln("editable_way_nodes=%s", editableWay.nodes);
     writefln("largest_relation_id=%s", largestRelation.id);
     writefln("largest_relation_members=%s", largestRelation.members);
     writefln("closure_root_relation_id=%s", nestedRelation.id);
@@ -849,7 +942,7 @@ private int run(string filename, size_t rounds)
     require(
         buildRealSubsets(
             store,
-            largestWay,
+            completeWay,
             completeSubset,
             partialSubset,
             parentProbeNode),
@@ -903,7 +996,7 @@ private int run(string filename, size_t rounds)
     require(
         qualifyParentEdit(
             store,
-            largestWay,
+            editableWay,
             oldNodeId,
             replacementNodeId),
         "parent closure/indexes became stale across Way edit/revert");
