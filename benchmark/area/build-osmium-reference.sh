@@ -30,22 +30,27 @@ errors="${output%.tsv}.osmium-errors.txt"
 # First isolate only the matching Relation identities. Then recursively recover
 # every referenced Way and Node from the original snapshot. This avoids relying
 # on tags-filter to provide transitive Relation -> Way -> Node completeness.
+echo "oracle_stage=tags-filter"
 osmium tags-filter \
+    --verbose \
     --omit-referenced \
     --overwrite \
     -o "$matches" \
     "$input" \
     r/type=multipolygon
 
+echo "matched_relations=$(osmium fileinfo -e -g data.count.relations "$matches")"
+echo "oracle_stage=getid"
 osmium getid \
+    --verbose \
     --add-referenced \
     --id-osm-file="$matches" \
     --overwrite \
     -o "$filtered" \
     "$input"
 
-echo "matched_relations=$(osmium fileinfo -e -g data.count.relations "$matches")"
 echo "recursive_relations=$(osmium fileinfo -e -g data.count.relations "$filtered")"
+echo "oracle_stage=export"
 
 if ! osmium export \
     --overwrite \
