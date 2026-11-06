@@ -13,9 +13,14 @@ import osm :
     StoreStatus,
     StoreWayView;
 import osm.topology :
+    OwnedChildVisit,
     OwnedDatasetIndex,
     ReferenceResolutionState,
-    resolveNodes;
+    TopologyTraversalLimits,
+    TopologyTraversalStatus,
+    TopologyTraversalWorkspace,
+    resolveNodes,
+    walkRelationClosure;
 
 void main()
 {
@@ -66,4 +71,42 @@ void main()
     auto storeRefs = store.resolveNodes(wayView);
     assert(storeRefs.front.resolved);
     assert(storeRefs.front.target == nodeHandle);
+
+    OwnedRelation nested;
+    nested.id = 21;
+    nested.members ~= OwnedRelationMember(
+        ElementType.relation,
+        20,
+        null);
+    data.relations ~= nested;
+
+    data.relations[0].members ~= OwnedRelationMember(
+        ElementType.relation,
+        21,
+        null);
+
+    assert(index.build(data, issue));
+
+    TopologyTraversalWorkspace workspace;
+    TopologyTraversalLimits limits;
+    TopologyTraversalStatus traversal;
+
+    size_t relationVisits;
+    int collect(scope ref const OwnedChildVisit visit) @safe
+    {
+        if (visit.type == ElementType.relation)
+            ++relationVisits;
+        return 0;
+    }
+
+    assert(walkRelationClosure(
+        data,
+        index,
+        20,
+        workspace,
+        limits,
+        &collect,
+        traversal));
+    assert(traversal.completed);
+    assert(relationVisits == 2);
 }

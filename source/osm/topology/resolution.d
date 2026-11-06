@@ -183,8 +183,11 @@ StoreResolvedRelationMemberRange resolveMembers(
 /**
  * Explicit reusable primary index for one OwnedDataset identity layout.
  *
- * The index does not retain or copy the dataset. Rebuild it after mutations
- * that change IDs, element ordering, insertion, or removal.
+ * The index does not retain or copy the dataset. It contains typed primary
+ * lookup plus reverse Way/Relation parent edges. Rebuild it after mutations
+ * that change IDs, element ordering, insertion/removal, Way node references,
+ * or Relation members. Tag, metadata and coordinate-only edits do not affect
+ * the index.
  */
 struct OwnedDatasetIndex
 {
@@ -193,19 +196,29 @@ private:
     size_t[OsmId] _ways;
     size_t[OsmId] _relations;
 
+    size_t[][OsmId] _nodeWayParents;
+    size_t[][OsmId] _nodeRelationParents;
+    size_t[][OsmId] _wayRelationParents;
+    size_t[][OsmId] _relationRelationParents;
+
 public:
     void clear() @safe nothrow
     {
         _nodes = null;
         _ways = null;
         _relations = null;
+        _nodeWayParents = null;
+        _nodeRelationParents = null;
+        _wayRelationParents = null;
+        _relationRelationParents = null;
     }
 
     /**
-     * Build typed ID-to-array indices transactionally.
+     * Build typed ID-to-array indices and reverse parent edges transactionally.
      *
-     * ID zero and duplicate IDs within one element type fail. References are
-     * not inspected here.
+     * ID zero and duplicate IDs within one element type fail. Outgoing
+     * references are indexed exactly as stored, including duplicates and
+     * unresolved positive IDs; full integrity remains validateDataset's job.
      */
     bool build(
         ref const OwnedDataset dataset,
@@ -252,10 +265,94 @@ public:
                 return false;
         }
 
+        size_t[][OsmId] nodeWayParents;
+        size_t[][OsmId] nodeRelationParents;
+        size_t[][OsmId] wayRelationParents;
+        size_t[][OsmId] relationRelationParents;
+
+        foreach (wayIndex, ref const way; dataset.ways)
+        {
+            foreach (ref const nodeRef; way.nodes)
+                nodeWayParents[nodeRef.id] ~= wayIndex;
+        }
+
+        foreach (relationIndex, ref const relation; dataset.relations)
+        {
+            foreach (ref const member; relation.members)
+            {
+                if (!validReferenceType(member.type))
+                    continue;
+
+                final switch (member.type)
+                {
+                    case ElementType.node:
+                        nodeRelationParents[member.id] ~= relationIndex;
+                        break;
+                    case ElementType.way:
+                        wayRelationParents[member.id] ~= relationIndex;
+                        break;
+                    case ElementType.relation:
+                        relationRelationParents[member.id] ~= relationIndex;
+                        break;
+                }
+            }
+        }
+
         _nodes = nodes;
         _ways = ways;
         _relations = relations;
+        _nodeWayParents = nodeWayParents;
+        _nodeRelationParents = nodeRelationParents;
+        _wayRelationParents = wayRelationParents;
+        _relationRelationParents = relationRelationParents;
         return true;
+    }
+
+    /**
+     * Parent Way indices for one Node identity.
+     *
+     * Duplicate child references may yield duplicate indices in this raw
+     * reverse edge list. Bounded closure traversal deduplicates parent
+     * elements while preserving first-discovery order.
+     */
+    package(osm.topology) const(size_t)[] parentWays(OsmId nodeId)
+        @safe nothrow
+    {
+        if (auto p = nodeId in _nodeWayParents)
+            return *p;
+        return null;
+    }
+
+    /**
+     * Parent Relation indices for one typed OSM identity.
+     *
+     * This is package-internal topology plumbing for closure traversal.
+     */
+    package(osm.topology) const(size_t)[] parentRelations(
+        ElementType type,
+        OsmId id)
+        @safe nothrow
+    {
+        if (!validReferenceType(type))
+            return null;
+
+        final switch (type)
+        {
+            case ElementType.node:
+                if (auto p = id in _nodeRelationParents)
+                    return *p;
+                return null;
+
+            case ElementType.way:
+                if (auto p = id in _wayRelationParents)
+                    return *p;
+                return null;
+
+            case ElementType.relation:
+                if (auto p = id in _relationRelationParents)
+                    return *p;
+                return null;
+        }
     }
 
     /** Find one typed element array index. */
