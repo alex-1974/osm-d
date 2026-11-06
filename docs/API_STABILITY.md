@@ -53,6 +53,8 @@ The supported high-level facades are:
 - `import osm.xml;` — ordinary OSM XML;
 - `import osm.osmchange;` — osmChange 0.6;
 - `import osm.validate;` — dataset/reference and upload-readiness validation;
+- `import osm.topology;` — ordered OSM reference resolution and bounded
+  child/parent closure traversal;
 - `import osm.upload;` — bounded OSM API diffResult response parsing;
 - `import osm.capabilities;` — Editing API capability discovery projected
   into upload-validation policy.
@@ -258,6 +260,41 @@ fails as `deletedReference` even in partial mode.
 This contract is deliberately weaker than `validateUploadChanges`. It does
 not infer changeset/version policy, target-server limits, upload coordinate
 precision or geometry validity.
+
+## Topology resolution and traversal contract
+
+The focused `osm.topology` facade owns OSM identity/reference graph
+navigation.
+
+Direct resolution preserves Way-node and Relation-member order and duplicates.
+Store targets resolve to stable `OsmHandle` values. `OwnedDataset` uses an
+explicit caller-built `OwnedDatasetIndex` and reports target array indices.
+
+`OwnedDatasetIndex` contains typed primary lookup plus reverse parent edges.
+It must be rebuilt after changes to IDs, element order, insert/remove operations,
+Way Node references or Relation members. Tag, metadata and coordinate-only edits
+do not invalidate it.
+
+`walkRelationClosure` emits descendant edges depth-first, expands resolved Way
+members to ordered Node references and expands each Relation identity at most
+once. Relation occurrences themselves are still emitted, so cycles remain
+observable without causing recursion loops.
+
+`walkParentClosure` emits distinct parent elements in deterministic
+first-discovery order. `OsmStore` reuses its maintained reverse indexes;
+`OwnedDataset` reuses the reverse edges in its explicit index.
+
+Recursive traversal requires `TopologyTraversalWorkspace`,
+`TopologyTraversalLimits` and `TopologyTraversalStatus`. Depth, visit and
+Relation bounds fail explicitly. A visitor-requested early stop is non-error
+partial completion.
+
+Unresolved references are reported, not repaired. `validateDataset` remains
+the authority for complete/partial integrity. Structural store mutation during
+borrowed topology traversal is outside the contract.
+
+Complete-object materialization and area/multipolygon assembly are not part of
+this M15 surface.
 
 ## Failure and `.init` contract
 
