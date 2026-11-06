@@ -588,6 +588,59 @@ This layer owns OSM graph semantics only. Complete-object materialization,
 multipolygon/area assembly, generic geometry, projections, spatial indexing,
 rendering and network retrieval of missing objects remain separate concerns.
 
+## Complete OSM objects
+
+Use the focused `osm.complete` facade when ID/reference resolution is not
+enough and the consumer needs the resolved semantic child objects themselves:
+
+```d
+import osm.complete;
+
+auto full = completeWay(store, way);
+
+auto nodes = full.nodes;
+while (!nodes.empty)
+{
+    auto node = nodes.front;
+
+    if (node.resolved)
+    {
+        LocationView location = node.location;
+        // Exact latitude/longitude nanodegrees; no implicit double conversion.
+    }
+    else
+    {
+        // Partial/invalid reference remains explicit.
+    }
+
+    nodes.popFront();
+}
+```
+
+`completeWay` and `completeRelation` are available for `OsmStore` and for
+`OwnedDataset` with its explicit `OwnedDatasetIndex`. They are lazy,
+preserve source order and duplicates, and do not materialize a second deep
+object graph.
+
+`completeStatus` reduces direct child resolution to
+`CompleteObjectState.complete`, `.partial` or `.invalid`.
+`isClosedWay` performs only the OSM identity test (first and last Node ID are
+equal); it does not imply polygon validity.
+
+`locationBounds` computes exact latitude/longitude bounds in signed
+nanodegrees from resolved Way Nodes. Resolved locations still contribute when
+another child is partial, and the returned completeness status makes that
+partial result explicit.
+
+Structural `OsmStore` mutation invalidates outstanding borrowed complete
+projections just like ordinary store views. Re-borrow after mutation.
+`OwnedDatasetIndex` must be rebuilt after identity/order/insert-remove,
+Way-node or Relation-member topology changes.
+
+The complete-object layer does not depend on `geo-d`. A consumer that chooses
+Euclidean geometry maps longitude to x and latitude to y explicitly. Generic
+polygon/segment algorithms remain outside osm-d.
+
 ## Upload validation
 
 Parsing and upload readiness are separate contracts. Use `osm.validate` when

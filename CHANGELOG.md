@@ -8,6 +8,11 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.complete` borrowed complete-object projections for
+  `OsmStore` and indexed `OwnedDataset`, including resolved Way Nodes and
+  typed Relation members, direct complete/partial/invalid status,
+  identity-based closed-Way detection, and exact nanodegree
+  `LocationBounds`.
 - Add focused `osm.topology` resolution and bounded closure traversal:
   ordered Way/Relation resolution, explicit `OwnedDatasetIndex`, cycle-safe
   Relation child closure, distinct parent closure over maintained reverse
