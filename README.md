@@ -540,6 +540,54 @@ The same API accepts `OwnedDataset` and `OsmStore`. It does not apply
 changeset/version metadata, server capability limits, tag upload rules,
 canonical upload coordinate precision, geometry validity or editor policy.
 
+## OSM topology resolution
+
+Use the focused `osm.topology` facade when a consumer needs to navigate OSM
+identity/reference graphs rather than merely inspect stored IDs:
+
+```d
+import osm.topology;
+
+auto resolved = store.resolveMembers(relation);
+while (!resolved.empty)
+{
+    auto member = resolved.front;
+
+    if (member.resolved)
+    {
+        // member.target is a stable OsmHandle.
+    }
+    else
+    {
+        // unresolvedPositive / unresolvedLocal / zero / invalid type remain
+        // explicit; topology traversal never fetches or repairs them.
+    }
+
+    resolved.popFront();
+}
+```
+
+Direct Way/Relation resolution is lazy, preserves source order and duplicates,
+and materializes no complete objects. `OsmStore` reuses its existing primary
+indexes. For `OwnedDataset`, build an explicit reusable `OwnedDatasetIndex`;
+rebuild it after identity/order/insert-remove changes or after Way-node or
+Relation-member topology changes.
+
+For recursive graph work, `walkRelationClosure` and `walkParentClosure`
+take a reusable `TopologyTraversalWorkspace`, explicit
+`TopologyTraversalLimits`, and a visitor callback. Relation child closure is
+depth-first and preserves member/Way-node occurrences; Relation identities are
+expanded only once so self-reference and longer cycles terminate. Parent
+closure returns distinct parent elements and reuses the store's maintained
+reverse indexes.
+
+Limit exhaustion is explicit. A visitor-requested early stop is a non-error
+partial traversal with `status.completed == false`.
+
+This layer owns OSM graph semantics only. Complete-object materialization,
+multipolygon/area assembly, generic geometry, projections, spatial indexing,
+rendering and network retrieval of missing objects remain separate concerns.
+
 ## Upload validation
 
 Parsing and upload readiness are separate contracts. Use `osm.validate` when
