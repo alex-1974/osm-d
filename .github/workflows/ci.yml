@@ -77,6 +77,15 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M17 semantic editing pipeline
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-semantic-pipeline \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
