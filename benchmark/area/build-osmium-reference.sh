@@ -44,7 +44,10 @@ osmium getid \
     -o "$filtered" \
     "$input"
 
-osmium export \
+echo "matched_relations=$(osmium fileinfo -e -g data.count.relations "$matches")"
+echo "recursive_relations=$(osmium fileinfo -e -g data.count.relations "$filtered")"
+
+if ! osmium export \
     --overwrite \
     --show-errors \
     --geometry-types=polygon \
@@ -53,6 +56,10 @@ osmium export \
     -o "$geojson" \
     "$filtered" \
     2>"$errors"
+then
+    cat "$errors" >&2
+    exit 1
+fi
 
 jq -r '
     .features[]
