@@ -23,11 +23,13 @@ import osm :
     OwnedWay,
     PbfReadSummary,
     PbfStoreReadStatus,
+    StoreNodeView,
     StoreRelationView,
     StoreStatus,
     StoreWayView,
     readPbfStore;
 import osm.area :
+    AreaAssemblyIssue,
     AreaAssemblyResult,
     AreaAssemblyState,
     AreaOpenChain,
@@ -355,7 +357,7 @@ private size_t visibleAreaPayloadBytes(scope ref const AreaAssemblyResult area)
     size_t bytes =
         area.rings.length * AreaRing.sizeof +
         area.openChains.length * AreaOpenChain.sizeof +
-        area.issues.length * area.issues[0].sizeof;
+        area.issues.length * AreaAssemblyIssue.sizeof;
 
     foreach (ref const ring; area.rings)
     {
@@ -734,7 +736,7 @@ private bool addNodeOnce(
         return true;
 
     StoreStatus status;
-    typeof(store.nodes.front) view;
+    StoreNodeView view;
     if (!store.node(id, view, status))
         return false;
 
