@@ -41,6 +41,7 @@ osmium tags-filter \
 
 echo "matched_relations=$(osmium fileinfo -e -g data.count.relations "$matches")"
 echo "oracle_stage=getid"
+set +e
 osmium getid \
     --verbose \
     --add-referenced \
@@ -48,7 +49,19 @@ osmium getid \
     --overwrite \
     -o "$filtered" \
     "$input"
+getid_status=$?
+set -e
 
+# osmium getid returns 1 when requested/referenced objects are absent. Pinned
+# regional extracts can legitimately be partial at their boundary. The output
+# still contains every available recursively referenced object, which is the
+# correct independent oracle input for areas that can actually be assembled.
+if ((getid_status > 1)); then
+    echo "osmium getid failed with status $getid_status" >&2
+    exit "$getid_status"
+fi
+test -s "$filtered"
+echo "getid_status=$getid_status"
 echo "recursive_relations=$(osmium fileinfo -e -g data.count.relations "$filtered")"
 echo "oracle_stage=export"
 
