@@ -1430,3 +1430,73 @@ unittest // independently authored current API-shaped fixtures
         assert(cast(string) value.comments[0].text == "Thanks & checked.");
     }
 }
+
+
+unittest // unknown Changeset content is explicit
+{
+    import transport.source : MemorySource;
+
+    {
+        enum xml =
+            "<osm version=\"0.6\"><changeset id=\"20\" " ~
+            "created_at=\"2026-02-01T12:00:00Z\" open=\"true\" " ~
+            "future_field=\"x\"/></osm>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        OwnedChangeset value;
+        ChangesetReadStatus status;
+        assert(!readChangeset(source, value, status));
+        assert(status.error == ChangesetReadError.unsupportedContent);
+        assert(value == OwnedChangeset.init);
+    }
+
+    {
+        enum xml =
+            "<osm version=\"0.6\"><changeset id=\"21\" " ~
+            "created_at=\"2026-02-01T12:00:00Z\" open=\"true\">" ~
+            "<future/></changeset></osm>";
+
+        auto source = new MemorySource(cast(const(ubyte)[]) xml);
+        OwnedChangeset value;
+        ChangesetReadStatus status;
+        assert(!readChangeset(source, value, status));
+        assert(status.error == ChangesetReadError.unsupportedContent);
+        assert(value == OwnedChangeset.init);
+    }
+}
+
+unittest // materialization limits fail explicitly and transactionally
+{
+    import transport.source : MemorySource;
+
+    enum twoChangesets =
+        "<osm version=\"0.6\">" ~
+        "<changeset id=\"30\" created_at=\"2026-01-01T00:00:00Z\" open=\"true\"/>" ~
+        "<changeset id=\"31\" created_at=\"2026-01-02T00:00:00Z\" open=\"true\"/>" ~
+        "</osm>";
+
+    ChangesetReadOptions options;
+    options.maximumChangesets = 1;
+
+    auto source = new MemorySource(cast(const(ubyte)[]) twoChangesets);
+    ChangesetDocument document;
+    ChangesetReadStatus status;
+    assert(!readChangesetDocument(source, document, status, options));
+    assert(status.error == ChangesetReadError.resourceLimit);
+    assert(document.changesets.length == 0);
+
+    enum comment =
+        "<osm version=\"0.6\"><changeset id=\"32\" " ~
+        "created_at=\"2026-01-01T00:00:00Z\" open=\"false\">" ~
+        "<discussion><comment id=\"1\"><text>abcd</text></comment></discussion>" ~
+        "</changeset></osm>";
+
+    options = ChangesetReadOptions.init;
+    options.maximumCommentTextBytes = 3;
+
+    source = new MemorySource(cast(const(ubyte)[]) comment);
+    OwnedChangeset value;
+    assert(!readChangeset(source, value, status, options));
+    assert(status.error == ChangesetReadError.resourceLimit);
+    assert(value == OwnedChangeset.init);
+}
