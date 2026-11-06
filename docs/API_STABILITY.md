@@ -382,6 +382,9 @@ Important meanings include:
 - `OsmHandle.init`: invalid handle;
 - `OwnedDataset.init`, `OwnedChangeSequence.init`, `UploadResult.init`:
   valid empty carriers;
+- `AreaAssemblyResult.init`: valid empty/not-yet-assembled carrier with
+  `AreaAssemblyState.notAssembled`; `AreaRingRole.none` means no accepted
+  outer/inner role;
 - `UploadResultEntry.init`: invalid diff-result entry because old ID is zero;
 - `UploadResultDocument.init` and `EditingApiCapabilitiesDocument.init`:
   empty carrier/default projection values, not successful parsed documents;
