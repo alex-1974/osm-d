@@ -218,6 +218,42 @@ a benefit for columnar numerical operations, but it is not a parser
 prerequisite.
 
 
+## Complete-object and geometry boundary
+
+M16 layers complete OSM projections above `osm.topology` without turning
+osm-d into a Euclidean geometry library.
+
+The default complete-object representation remains OSM-native:
+
+- exact `LocationView` latitude/longitude nanodegrees;
+- ordered Way Node references and Relation members;
+- explicit resolved/incomplete/invalid reference state;
+- borrowed projections over `OsmStore` or `OwnedDataset` plus its explicit
+  `OwnedDatasetIndex`.
+
+No direct `geo-d` dependency is introduced merely to reuse geometry types.
+Consumers enter Euclidean geometry space explicitly by mapping longitude to x
+and latitude to y. Generic geometry algorithms remain in `geo-d`; projection
+and geodesy remain in `geodesy-d`; spatial indexing remains in
+`spatial-index-d`.
+
+M16 may expose exact OSM-native location bounds and identity-based closed-Way
+detection. A syntactically closed Way is not thereby a valid polygon or area.
+
+Complete-object traversal does not deep-copy an object graph and does not
+silently allocate coordinate arrays. Data-dependent OSM ring/multipolygon
+assembly may use explicit owning result/workspace storage because assembly
+creates new structure; generic polygon computation remains outside osm-d.
+
+Focused facades are:
+
+- `osm.complete` for resolved complete-object projections;
+- `osm.area` for OSM area/multipolygon assembly.
+
+Neither is part of the curated package root by default.
+
+
+
 ## Editing API upload-response boundary
 
 osm-d owns the OSM semantics and wire formats around a diff upload, but not the
