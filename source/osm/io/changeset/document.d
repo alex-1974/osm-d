@@ -45,7 +45,16 @@ struct ChangesetDocument
     ChangesetDocument deepCopy() const @safe
     {
         ChangesetDocument result;
-        result.info = info;
+        result.info.hasVersion = info.hasVersion;
+        result.info.versionText = info.versionText;
+        result.info.hasGenerator = info.hasGenerator;
+        result.info.generator = info.generator;
+        result.info.hasCopyright = info.hasCopyright;
+        result.info.copyrightText = info.copyrightText;
+        result.info.hasAttribution = info.hasAttribution;
+        result.info.attribution = info.attribution;
+        result.info.hasLicense = info.hasLicense;
+        result.info.license = info.license;
         result.changesets.length = changesets.length;
         foreach (i, ref const value; changesets)
             result.changesets[i] = value.deepCopy();
