@@ -1500,3 +1500,22 @@ unittest // materialization limits fail explicitly and transactionally
     assert(status.error == ChangesetReadError.resourceLimit);
     assert(value == OwnedChangeset.init);
 }
+
+
+unittest // malformed XML remains distinct from unsupported semantics
+{
+    import transport.source : MemorySource;
+
+    enum xml =
+        "<osm version=\"0.6\"><changeset id=\"40\" " ~
+        "created_at=\"2026-01-01T00:00:00Z\" open=\"true\">" ~
+        "<tag k=\"comment\" v=\"broken\"></changeset></osm>";
+
+    auto source = new MemorySource(cast(const(ubyte)[]) xml);
+    OwnedChangeset value;
+    ChangesetReadStatus status;
+
+    assert(!readChangeset(source, value, status));
+    assert(status.error == ChangesetReadError.malformedXml);
+    assert(value == OwnedChangeset.init);
+}
