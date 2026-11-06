@@ -715,9 +715,9 @@ private AllocationEvidence allocationEvidence(
         store.relation(handle, relation, status),
         "selected allocation Relation became unavailable");
 
-    const before = GC.allocatedInCurrentThread();
+    const before = GC.stats().allocatedInCurrentThread;
     auto area = assembleMultipolygon(store, relation);
-    const after = GC.allocatedInCurrentThread();
+    const after = GC.stats().allocatedInCurrentThread;
 
     AllocationEvidence result;
     result.allocatedBytes = after - before;
