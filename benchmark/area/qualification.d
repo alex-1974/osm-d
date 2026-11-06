@@ -515,6 +515,12 @@ private struct MultipolygonScan
     size_t referenceAcceptedButNotComplete;
     size_t completeNotReference;
 
+    OsmId firstReferenceMismatchId;
+    size_t firstReferenceOsmOuter;
+    size_t firstReferenceOsmInner;
+    size_t firstReferenceOracleOuter;
+    size_t firstReferenceOracleInner;
+
     ulong checksum;
 
     SelectedArea largestComplete;
@@ -635,7 +641,21 @@ private MultipolygonScan scanMultipolygons(
                 ++result.referenceCompleteOverlap;
                 if (area.outerRingCount != oracle.outer ||
                     area.innerRingCount != oracle.inner)
+                {
                     ++result.referenceRingMismatches;
+                    if (result.firstReferenceMismatchId == 0)
+                    {
+                        result.firstReferenceMismatchId = relation.id;
+                        result.firstReferenceOsmOuter =
+                            area.outerRingCount;
+                        result.firstReferenceOsmInner =
+                            area.innerRingCount;
+                        result.firstReferenceOracleOuter =
+                            oracle.outer;
+                        result.firstReferenceOracleInner =
+                            oracle.inner;
+                    }
+                }
             }
             else
             {
@@ -658,9 +678,6 @@ private MultipolygonScan scanMultipolygons(
         require(
             result.referenceCompleteOverlap > 0,
             "osmium reference has no overlap with structurally complete osm-d area");
-        require(
-            result.referenceRingMismatches == 0,
-            "osmium and osm-d disagree on outer/inner ring counts");
     }
 
     return result;
@@ -691,6 +708,11 @@ private bool sameScan(scope ref const MultipolygonScan a, scope ref const Multip
         a.referenceRingMismatches == b.referenceRingMismatches &&
         a.referenceAcceptedButNotComplete == b.referenceAcceptedButNotComplete &&
         a.completeNotReference == b.completeNotReference &&
+        a.firstReferenceMismatchId == b.firstReferenceMismatchId &&
+        a.firstReferenceOsmOuter == b.firstReferenceOsmOuter &&
+        a.firstReferenceOsmInner == b.firstReferenceOsmInner &&
+        a.firstReferenceOracleOuter == b.firstReferenceOracleOuter &&
+        a.firstReferenceOracleInner == b.firstReferenceOracleInner &&
         a.checksum == b.checksum &&
         a.largestComplete.id == b.largestComplete.id &&
         a.largestComplete.members == b.largestComplete.members &&
@@ -1016,6 +1038,25 @@ private int run(
     writefln(
         "osm_complete_not_osmium_reference=%s",
         firstScan.completeNotReference);
+    writefln(
+        "osmium_first_mismatch_id=%s",
+        firstScan.firstReferenceMismatchId);
+    writefln(
+        "osmium_first_mismatch_osm_outer=%s",
+        firstScan.firstReferenceOsmOuter);
+    writefln(
+        "osmium_first_mismatch_osm_inner=%s",
+        firstScan.firstReferenceOsmInner);
+    writefln(
+        "osmium_first_mismatch_oracle_outer=%s",
+        firstScan.firstReferenceOracleOuter);
+    writefln(
+        "osmium_first_mismatch_oracle_inner=%s",
+        firstScan.firstReferenceOracleInner);
+
+    require(
+        firstScan.referenceRingMismatches == 0,
+        "independent osmium ring-count comparison failed");
 
     writefln("m16_area_qualification=pass");
     return 0;
