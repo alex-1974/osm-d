@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="OpenStreetMap server">
+  <relation id="301" version="5" changeset="7001" user="mapper" uid="123"
+            visible="true" timestamp="2026-11-06T09:02:00Z">
+    <member type="way" ref="201" role="outer"/>
+    <member type="node" ref="101" role="label"/>
+    <tag k="type" v="multipolygon"/>
+  </relation>
+</osm>
