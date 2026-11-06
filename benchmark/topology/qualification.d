@@ -53,7 +53,7 @@ import std.stdio : stderr, writefln;
 
 private enum defaultRounds = 5;
 
-private void require(bool condition, string message)
+private void require(bool condition, string message) @safe
 {
     if (!condition)
         throw new Exception(message);
@@ -67,7 +67,7 @@ private long elapsedNs(scope void delegate() operation) @trusted
     return sw.peek.total!"nsecs";
 }
 
-private long medianNs(long[] values)
+private long medianNs(long[] values) @safe
 {
     sort(values);
     return values[values.length / 2];
