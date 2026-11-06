@@ -224,6 +224,13 @@ does not fabricate those fields.
 Network upload transport, OAuth/account state and changeset creation/closing
 remain outside osm-d.
 
+That sentence describes the released v0.3.x contract. For post-v0.3 development,
+ADR 0032 accepts a broader OSM protocol boundary: osm-d will own OSM
+method/path/media/status semantics and changeset protocol operations over an
+injected generic transport. This does not retroactively add that client to the
+frozen v0.3.x API; concrete public protocol-client symbols remain unfrozen until
+M17 #141 is implemented and qualified.
+
 ## Ownership and lifetime
 
 Borrowed PBF views are valid only for the documented synchronous callback or
