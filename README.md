@@ -720,6 +720,7 @@ if (!writeChangesetTagRequest(request, sink, writeStatus))
 }
 
 // A GET/query response is parsed separately into server-owned semantics.
+const(ubyte)[] responseBytes = /* bytes from the protocol/transport layer */ null;
 OwnedChangeset changeset;
 ChangesetReadStatus readStatus;
 auto source = new MemorySource(responseBytes);
