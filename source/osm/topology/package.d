@@ -19,3 +19,16 @@ public import osm.topology.resolution :
     OwnedResolvedRelationMemberRange,
     resolveNodes,
     resolveMembers;
+
+
+public import osm.topology.closure :
+    TopologyTraversalError,
+    TopologyTraversalLimits,
+    TopologyTraversalStatus,
+    TopologyTraversalWorkspace,
+    StoreChildVisit,
+    OwnedChildVisit,
+    StoreParentVisit,
+    OwnedParentVisit,
+    walkRelationClosure,
+    walkParentClosure;
