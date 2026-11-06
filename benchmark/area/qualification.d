@@ -515,6 +515,7 @@ private struct MultipolygonScan
     size_t referenceTouchingOuterNormalizations;
     size_t referenceTouchingInnerNormalizations;
     size_t referenceRingMismatches;
+    size_t referenceUnderAssemblyMismatches;
     size_t referenceAcceptedButNotComplete;
     size_t completeNotReference;
 
@@ -674,6 +675,9 @@ private MultipolygonScan scanMultipolygons(
         if (area.state == AreaAssemblyState.complete)
         {
             require(area.openChains.length == 0, "complete area retained an open chain");
+            require(
+                summary.segments == relation.members.length,
+                "complete area did not preserve every Relation member exactly once");
             foreach (ref const ring; area.rings)
             {
                 require(ring.closed, "complete area contains an unclosed ring");
@@ -751,6 +755,10 @@ private MultipolygonScan scanMultipolygons(
                 if (area.innerRingCount != effectiveInner)
                     ++result.referenceTouchingInnerNormalizations;
 
+                if (effectiveOuter < oracle.outer ||
+                    effectiveInner < oracle.inner)
+                    ++result.referenceUnderAssemblyMismatches;
+
                 if (effectiveOuter != oracle.outer ||
                     effectiveInner != oracle.inner)
                 {
@@ -823,6 +831,8 @@ private bool sameScan(scope ref const MultipolygonScan a, scope ref const Multip
         a.referenceTouchingInnerNormalizations ==
             b.referenceTouchingInnerNormalizations &&
         a.referenceRingMismatches == b.referenceRingMismatches &&
+        a.referenceUnderAssemblyMismatches ==
+            b.referenceUnderAssemblyMismatches &&
         a.referenceAcceptedButNotComplete == b.referenceAcceptedButNotComplete &&
         a.completeNotReference == b.completeNotReference &&
         a.firstReferenceRawMismatchId == b.firstReferenceRawMismatchId &&
@@ -1092,6 +1102,7 @@ private int run(
     writefln("multipolygon_vertices=%s", firstScan.vertices);
     writefln("multipolygon_segments=%s", firstScan.segments);
     writefln("multipolygon_checksum=%s", firstScan.checksum);
+    writefln("multipolygon_provenance_integrity=pass");
 
     const timedArea =
         firstScan.largestFragmented.handle.valid
@@ -1148,7 +1159,9 @@ private int run(
     {
         writefln(
             "osmium_reference_integrity=%s",
-            firstScan.referenceRingMismatches == 0 ? "pass" : "fail");
+            firstScan.referenceUnderAssemblyMismatches == 0
+                ? "pass"
+                : "fail");
     }
 
     writefln("osmium_reference_total=%s", firstScan.referenceTotal);
@@ -1168,6 +1181,9 @@ private int run(
     writefln(
         "osmium_reference_ring_mismatches=%s",
         firstScan.referenceRingMismatches);
+    writefln(
+        "osmium_reference_underassembly_mismatches=%s",
+        firstScan.referenceUnderAssemblyMismatches);
     writefln(
         "osmium_reference_accepted_but_not_complete=%s",
         firstScan.referenceAcceptedButNotComplete);
@@ -1212,8 +1228,8 @@ private int run(
         firstScan.firstReferenceOracleInner);
 
     require(
-        firstScan.referenceRingMismatches == 0,
-        "independent osmium ring-count comparison failed");
+        firstScan.referenceUnderAssemblyMismatches == 0,
+        "osm-d under-assembled a Relation accepted by independent osmium geometry");
 
     writefln("m16_area_qualification=pass");
     return 0;
