@@ -4,11 +4,11 @@
  * `import osm;` exposes the common semantic model, borrowed PBF traversal and
  * editable store workflows. Format-specialized loss-aware PBF document/write
  * facilities live in `osm.pbf`; XML, osmChange, upload validation, Editing
- * API response codecs and capability discovery use their corresponding
- * focused facades.
+ * API response codecs, Changesets and capability discovery use their
+ * corresponding focused facades.
  *
- * Editing API response/policy facades remain opt-in: `osm.upload` and
- * `osm.capabilities` are intentionally not re-exported from this root.
+ * Editing API facades remain opt-in: `osm.upload`, `osm.capabilities` and
+ * post-v0.3 `osm.changeset` are intentionally not re-exported from this root.
  * Raw upload-result values remain available here for store reconciliation.
  * Result effects require exact request context through
  * `UploadResultEntry.effectFor`; the root exposes no context-free action
