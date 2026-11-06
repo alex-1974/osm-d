@@ -1492,6 +1492,231 @@ unittest
 
 unittest
 {
+    // A missing positive Way member makes assembly partial rather than
+    // inventing a ring or declaring the available fragment intrinsically
+    // invalid.
+    import osm.model.owned :
+        OwnedNode,
+        OwnedNodeRef,
+        OwnedTag;
+
+    OwnedDataset dataset;
+
+    OwnedNode a;
+    a.id = 1;
+    dataset.nodes ~= a;
+
+    OwnedNode b;
+    b.id = 2;
+    dataset.nodes ~= b;
+
+    OwnedWay fragment;
+    fragment.id = 10;
+    fragment.nodes ~= OwnedNodeRef(1);
+    fragment.nodes ~= OwnedNodeRef(2);
+    dataset.ways ~= fragment;
+
+    OwnedRelation relation;
+    relation.id = 20;
+    relation.tags ~= OwnedTag(
+        cast(immutable(ubyte)[])"type",
+        cast(immutable(ubyte)[])"multipolygon");
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        10,
+        cast(immutable(ubyte)[])"outer");
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        999,
+        cast(immutable(ubyte)[])"outer");
+    dataset.relations ~= relation;
+
+    import osm.validate : DatasetValidationIssue;
+    DatasetValidationIssue issue;
+    OwnedDatasetIndex index;
+    assert(index.build(dataset, issue));
+
+    auto area = assembleMultipolygon(
+        dataset,
+        index,
+        dataset.relations[0]);
+
+    assert(area.state == AreaAssemblyState.partial);
+    assert(area.openChains.length == 1);
+
+    bool sawMissingWay;
+    bool sawIncompleteChain;
+    foreach (ref const problem; area.issues)
+    {
+        if (problem.kind ==
+            AreaAssemblyIssueKind.unresolvedWayMember)
+        {
+            sawMissingWay = true;
+            assert(problem.memberId == 999);
+            assert(problem.resolution ==
+                ReferenceResolutionState.unresolvedPositive);
+        }
+        if (problem.kind ==
+            AreaAssemblyIssueKind.incompleteChain)
+            sawIncompleteChain = true;
+    }
+    assert(sawMissingWay);
+    assert(sawIncompleteChain);
+}
+
+unittest
+{
+    // With no missing data, a dangling role chain is structurally invalid.
+    import osm.model.owned :
+        OwnedNode,
+        OwnedNodeRef,
+        OwnedTag;
+
+    OwnedDataset dataset;
+
+    foreach (id; 1L .. 4L)
+    {
+        OwnedNode node;
+        node.id = id;
+        dataset.nodes ~= node;
+    }
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(1);
+    way.nodes ~= OwnedNodeRef(2);
+    way.nodes ~= OwnedNodeRef(3);
+    dataset.ways ~= way;
+
+    OwnedRelation relation;
+    relation.id = 20;
+    relation.tags ~= OwnedTag(
+        cast(immutable(ubyte)[])"type",
+        cast(immutable(ubyte)[])"multipolygon");
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        10,
+        cast(immutable(ubyte)[])"outer");
+    dataset.relations ~= relation;
+
+    import osm.validate : DatasetValidationIssue;
+    DatasetValidationIssue issue;
+    OwnedDatasetIndex index;
+    assert(index.build(dataset, issue));
+
+    auto area = assembleMultipolygon(
+        dataset,
+        index,
+        dataset.relations[0]);
+
+    assert(area.state == AreaAssemblyState.invalid);
+    assert(area.openChains.length == 1);
+
+    bool sawUnclosed;
+    foreach (ref const problem; area.issues)
+        if (problem.kind == AreaAssemblyIssueKind.unclosedChain)
+            sawUnclosed = true;
+    assert(sawUnclosed);
+}
+
+unittest
+{
+    // Roles are not guessed. Current multipolygon members must say outer or
+    // inner explicitly.
+    import osm.model.owned :
+        OwnedNode,
+        OwnedNodeRef,
+        OwnedTag;
+
+    OwnedDataset dataset;
+
+    OwnedNode node;
+    node.id = 1;
+    dataset.nodes ~= node;
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(1);
+    way.nodes ~= OwnedNodeRef(1);
+    dataset.ways ~= way;
+
+    OwnedRelation relation;
+    relation.id = 20;
+    relation.tags ~= OwnedTag(
+        cast(immutable(ubyte)[])"type",
+        cast(immutable(ubyte)[])"multipolygon");
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        10,
+        null);
+    dataset.relations ~= relation;
+
+    import osm.validate : DatasetValidationIssue;
+    DatasetValidationIssue issue;
+    OwnedDatasetIndex index;
+    assert(index.build(dataset, issue));
+
+    auto area = assembleMultipolygon(
+        dataset,
+        index,
+        dataset.relations[0]);
+
+    assert(area.state == AreaAssemblyState.invalid);
+
+    bool sawRole;
+    foreach (ref const problem; area.issues)
+        if (problem.kind ==
+            AreaAssemblyIssueKind.invalidMemberRole)
+            sawRole = true;
+    assert(sawRole);
+}
+
+unittest
+{
+    // A generic Relation is not silently interpreted as a multipolygon.
+    import osm.model.owned :
+        OwnedNode,
+        OwnedNodeRef;
+
+    OwnedDataset dataset;
+
+    OwnedNode node;
+    node.id = 1;
+    dataset.nodes ~= node;
+
+    OwnedWay way;
+    way.id = 10;
+    way.nodes ~= OwnedNodeRef(1);
+    way.nodes ~= OwnedNodeRef(1);
+    dataset.ways ~= way;
+
+    OwnedRelation relation;
+    relation.id = 20;
+    relation.members ~= OwnedRelationMember(
+        ElementType.way,
+        10,
+        cast(immutable(ubyte)[])"outer");
+    dataset.relations ~= relation;
+
+    import osm.validate : DatasetValidationIssue;
+    DatasetValidationIssue issue;
+    OwnedDatasetIndex index;
+    assert(index.build(dataset, issue));
+
+    auto area = assembleMultipolygon(
+        dataset,
+        index,
+        dataset.relations[0]);
+
+    assert(area.state == AreaAssemblyState.invalid);
+    assert(area.rings.length == 0);
+    assert(area.issues.length == 1);
+    assert(area.issues[0].kind ==
+        AreaAssemblyIssueKind.notMultipolygon);
+}
+
+unittest
+{
     import osm.model.owned :
         OwnedTag;
 
