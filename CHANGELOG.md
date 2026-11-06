@@ -8,6 +8,11 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.area` structural area/multipolygon assembly: exact
+  Node-ID Way joining, explicit outer/inner roles, reversible source-Way
+  traversal with provenance, multiple rings, owning path results, and
+  distinct partial/ambiguous/invalid diagnostics for missing data, dangling
+  chains and multiply-connectable junctions.
 - Add focused `osm.complete` borrowed complete-object projections for
   `OsmStore` and indexed `OwnedDataset`, including resolved Way Nodes and
   typed Relation members, direct complete/partial/invalid status,
