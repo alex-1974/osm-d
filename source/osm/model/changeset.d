@@ -62,7 +62,20 @@ struct OwnedChangesetComment
     /** Copy this comment. Immutable byte strings are intentionally shared. */
     OwnedChangesetComment deepCopy() const @safe
     {
-        return this;
+        OwnedChangesetComment result;
+        result.hasId = hasId;
+        result.id = id;
+        result.hasDate = hasDate;
+        result.dateMilliseconds = dateMilliseconds;
+        result.hasUserId = hasUserId;
+        result.userId = userId;
+        result.hasUsername = hasUsername;
+        result.username = username;
+        result.hasVisibility = hasVisibility;
+        result.visible = visible;
+        result.hasText = hasText;
+        result.text = text;
+        return result;
     }
 }
 
@@ -138,9 +151,36 @@ struct OwnedChangeset
      */
     OwnedChangeset deepCopy() const @safe
     {
-        OwnedChangeset result = this;
+        OwnedChangeset result;
+        result.hasId = hasId;
+        result.id = id;
+        result.hasOpenState = hasOpenState;
+        result.open = open;
+        result.hasCreatedAt = hasCreatedAt;
+        result.createdAtMilliseconds = createdAtMilliseconds;
+        result.hasClosedAt = hasClosedAt;
+        result.closedAtMilliseconds = closedAtMilliseconds;
+        result.hasUserId = hasUserId;
+        result.userId = userId;
+        result.hasUsername = hasUsername;
+        result.username = username;
+        result.hasBounds = hasBounds;
+        result.bounds = bounds;
+        result.hasCommentsCount = hasCommentsCount;
+        result.commentsCount = commentsCount;
+        result.hasChangesCount = hasChangesCount;
+        result.changesCount = changesCount;
+        result.hasCreatedCount = hasCreatedCount;
+        result.createdCount = createdCount;
+        result.hasModifiedCount = hasModifiedCount;
+        result.modifiedCount = modifiedCount;
+        result.hasDeletedCount = hasDeletedCount;
+        result.deletedCount = deletedCount;
         result.tags = tags.dup;
-        result.comments = comments.dup;
+        result.hasDiscussion = hasDiscussion;
+        result.comments.length = comments.length;
+        foreach (i, ref const comment; comments)
+            result.comments[i] = comment.deepCopy();
         return result;
     }
 }
