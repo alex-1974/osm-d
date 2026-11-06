@@ -290,6 +290,8 @@ Tracked by M17: #143.
 - [ ] Qualify Changeset and Editing API protocol semantics. #142
   - [x] transport-independent semantic pipeline: Changeset -> store changes ->
     capability validation -> osmChange -> diffResult -> store reconciliation.
+  - [x] current/version/history/full XML response shapes for Node/Way/Relation
+    reuse the existing semantic OSM XML reader.
   - [ ] protocol/mock-transport status qualification remains blocked on #141 /
     transport-d#3.
 
