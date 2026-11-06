@@ -1,0 +1,8 @@
+name "osm-d-m17-semantic-pipeline"
+description "Deterministic transport-independent M17 Editing API semantic qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
