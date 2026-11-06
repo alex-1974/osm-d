@@ -1391,3 +1391,42 @@ unittest // query/list response shares the same semantic model
     assert(document.changesets[0].id == 1);
     assert(document.changesets[1].id == 2);
 }
+
+
+unittest // independently authored current API-shaped fixtures
+{
+    import transport.source : MemorySource;
+
+    {
+        enum fixture = import("changeset/current-open.xml");
+        auto source = new MemorySource(cast(const(ubyte)[]) fixture);
+
+        OwnedChangeset value;
+        ChangesetReadStatus status;
+        assert(readChangeset(source, value, status));
+        assert(status.ok);
+        assert(value.id == 1001);
+        assert(value.open);
+        assert(!value.hasBounds);
+        assert(value.hasCreatedCount && value.createdCount == 0);
+        assert(value.tags.length == 2);
+    }
+
+    {
+        enum fixture = import("changeset/current-closed-discussion.xml");
+        auto source = new MemorySource(cast(const(ubyte)[]) fixture);
+
+        OwnedChangeset value;
+        ChangesetReadStatus status;
+        assert(readChangeset(source, value, status));
+        assert(status.ok);
+        assert(value.id == 1002);
+        assert(!value.open);
+        assert(value.hasBounds);
+        assert(value.hasCreatedCount && value.createdCount == 2);
+        assert(value.hasModifiedCount && value.modifiedCount == 5);
+        assert(value.hasDeletedCount && value.deletedCount == 3);
+        assert(value.hasDiscussion && value.comments.length == 1);
+        assert(cast(string) value.comments[0].text == "Thanks & checked.");
+    }
+}
