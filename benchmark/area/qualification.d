@@ -511,9 +511,18 @@ private struct MultipolygonScan
     size_t referenceTotal;
     size_t referenceOverlap;
     size_t referenceCompleteOverlap;
+    size_t referenceRawRingMismatches;
+    size_t referenceTouchingInnerNormalizations;
     size_t referenceRingMismatches;
     size_t referenceAcceptedButNotComplete;
     size_t completeNotReference;
+
+    OsmId firstReferenceRawMismatchId;
+    size_t firstReferenceRawOsmOuter;
+    size_t firstReferenceRawOsmInner;
+    size_t firstReferenceRawEffectiveInner;
+    size_t firstReferenceRawOracleOuter;
+    size_t firstReferenceRawOracleInner;
 
     OsmId firstReferenceMismatchId;
     size_t firstReferenceOsmOuter;
@@ -558,6 +567,66 @@ private bool fragmented(scope ref const AreaAssemblyResult area)
         if (ring.segments.length > 1)
             return true;
     return false;
+}
+
+private bool ringsShareNode(
+    scope ref const AreaRing a,
+    scope ref const AreaRing b)
+    @safe pure nothrow @nogc
+{
+    foreach (ref const av; a.vertices)
+        foreach (ref const bv; b.vertices)
+            if (av.nodeId == bv.nodeId)
+                return true;
+    return false;
+}
+
+/**
+ * Geometry assemblers may merge touching inner OSM rings into one polygon
+ * hole. Count connected components of inner rings under shared Node identity
+ * for comparison with that downstream geometry representation.
+ */
+private size_t connectedInnerComponents(
+    scope ref const AreaAssemblyResult area)
+    @safe
+{
+    bool[] visited = new bool[area.rings.length];
+    size_t[] queue;
+    size_t components;
+
+    foreach (i, ref const ring; area.rings)
+    {
+        if (ring.role != AreaRingRole.inner || visited[i])
+            continue;
+
+        ++components;
+        queue.length = 0;
+        queue ~= i;
+        visited[i] = true;
+
+        size_t position;
+        while (position < queue.length)
+        {
+            const current = queue[position++];
+
+            foreach (j, ref const candidate; area.rings)
+            {
+                if (visited[j] ||
+                    candidate.role != AreaRingRole.inner)
+                    continue;
+
+                if (ringsShareNode(
+                        area.rings[current],
+                        candidate))
+                {
+                    visited[j] = true;
+                    queue ~= j;
+                }
+            }
+        }
+    }
+
+    return components;
 }
 
 private MultipolygonScan scanMultipolygons(
@@ -639,8 +708,38 @@ private MultipolygonScan scanMultipolygons(
             if (area.state == AreaAssemblyState.complete)
             {
                 ++result.referenceCompleteOverlap;
+
+                const effectiveInner =
+                    connectedInnerComponents(area);
+
+                const rawMismatch =
+                    area.outerRingCount != oracle.outer ||
+                    area.innerRingCount != oracle.inner;
+
+                if (rawMismatch)
+                {
+                    ++result.referenceRawRingMismatches;
+                    if (result.firstReferenceRawMismatchId == 0)
+                    {
+                        result.firstReferenceRawMismatchId = relation.id;
+                        result.firstReferenceRawOsmOuter =
+                            area.outerRingCount;
+                        result.firstReferenceRawOsmInner =
+                            area.innerRingCount;
+                        result.firstReferenceRawEffectiveInner =
+                            effectiveInner;
+                        result.firstReferenceRawOracleOuter =
+                            oracle.outer;
+                        result.firstReferenceRawOracleInner =
+                            oracle.inner;
+                    }
+                }
+
+                if (area.innerRingCount != effectiveInner)
+                    ++result.referenceTouchingInnerNormalizations;
+
                 if (area.outerRingCount != oracle.outer ||
-                    area.innerRingCount != oracle.inner)
+                    effectiveInner != oracle.inner)
                 {
                     ++result.referenceRingMismatches;
                     if (result.firstReferenceMismatchId == 0)
@@ -649,7 +748,7 @@ private MultipolygonScan scanMultipolygons(
                         result.firstReferenceOsmOuter =
                             area.outerRingCount;
                         result.firstReferenceOsmInner =
-                            area.innerRingCount;
+                            effectiveInner;
                         result.firstReferenceOracleOuter =
                             oracle.outer;
                         result.firstReferenceOracleInner =
@@ -705,9 +804,21 @@ private bool sameScan(scope ref const MultipolygonScan a, scope ref const Multip
         a.referenceTotal == b.referenceTotal &&
         a.referenceOverlap == b.referenceOverlap &&
         a.referenceCompleteOverlap == b.referenceCompleteOverlap &&
+        a.referenceRawRingMismatches == b.referenceRawRingMismatches &&
+        a.referenceTouchingInnerNormalizations ==
+            b.referenceTouchingInnerNormalizations &&
         a.referenceRingMismatches == b.referenceRingMismatches &&
         a.referenceAcceptedButNotComplete == b.referenceAcceptedButNotComplete &&
         a.completeNotReference == b.completeNotReference &&
+        a.firstReferenceRawMismatchId == b.firstReferenceRawMismatchId &&
+        a.firstReferenceRawOsmOuter == b.firstReferenceRawOsmOuter &&
+        a.firstReferenceRawOsmInner == b.firstReferenceRawOsmInner &&
+        a.firstReferenceRawEffectiveInner ==
+            b.firstReferenceRawEffectiveInner &&
+        a.firstReferenceRawOracleOuter ==
+            b.firstReferenceRawOracleOuter &&
+        a.firstReferenceRawOracleInner ==
+            b.firstReferenceRawOracleInner &&
         a.firstReferenceMismatchId == b.firstReferenceMismatchId &&
         a.firstReferenceOsmOuter == b.firstReferenceOsmOuter &&
         a.firstReferenceOsmInner == b.firstReferenceOsmInner &&
@@ -1029,6 +1140,12 @@ private int run(
         "osmium_reference_complete_overlap=%s",
         firstScan.referenceCompleteOverlap);
     writefln(
+        "osmium_reference_raw_ring_mismatches=%s",
+        firstScan.referenceRawRingMismatches);
+    writefln(
+        "osmium_reference_touching_inner_normalizations=%s",
+        firstScan.referenceTouchingInnerNormalizations);
+    writefln(
         "osmium_reference_ring_mismatches=%s",
         firstScan.referenceRingMismatches);
     writefln(
@@ -1037,6 +1154,24 @@ private int run(
     writefln(
         "osm_complete_not_osmium_reference=%s",
         firstScan.completeNotReference);
+    writefln(
+        "osmium_first_raw_mismatch_id=%s",
+        firstScan.firstReferenceRawMismatchId);
+    writefln(
+        "osmium_first_raw_mismatch_osm_outer=%s",
+        firstScan.firstReferenceRawOsmOuter);
+    writefln(
+        "osmium_first_raw_mismatch_osm_inner=%s",
+        firstScan.firstReferenceRawOsmInner);
+    writefln(
+        "osmium_first_raw_mismatch_effective_inner=%s",
+        firstScan.firstReferenceRawEffectiveInner);
+    writefln(
+        "osmium_first_raw_mismatch_oracle_outer=%s",
+        firstScan.firstReferenceRawOracleOuter);
+    writefln(
+        "osmium_first_raw_mismatch_oracle_inner=%s",
+        firstScan.firstReferenceRawOracleInner);
     writefln(
         "osmium_first_mismatch_id=%s",
         firstScan.firstReferenceMismatchId);
