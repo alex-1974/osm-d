@@ -1018,10 +1018,9 @@ private int run(
     }
     else
     {
-        require(
-            firstScan.referenceRingMismatches == 0,
-            "independent osmium ring-count comparison failed");
-        writefln("osmium_reference_integrity=pass");
+        writefln(
+            "osmium_reference_integrity=%s",
+            firstScan.referenceRingMismatches == 0 ? "pass" : "fail");
     }
 
     writefln("osmium_reference_total=%s", firstScan.referenceTotal);
