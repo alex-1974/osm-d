@@ -298,10 +298,13 @@ Entry order and raw old/new ID/version fields are preserved. The parser never
 infers create/modify/delete from response shape; semantic interpretation uses
 the exact uploaded request entry through `UploadResultEntry.effectFor`.
 
-HTTP method selection, endpoint URLs, authentication, retry/backoff,
-changeset creation/closing and editor workflow remain application/service
-concerns. This prevents osm-d from becoming an OSM account/network client while
-still keeping OSM-specific response parsing reusable.
+In released v0.3.x, HTTP method selection, endpoint URLs, authentication,
+retry/backoff and changeset creation/closing remained outside osm-d. ADR 0032
+supersedes that architectural boundary for post-v0.3 development: osm-d now
+owns OSM method/path/media/status semantics and the changeset protocol
+operations, while transport-d still owns generic network execution. Secret
+storage, OAuth login/account selection, retry/backoff and editor workflow remain
+outside osm-d.
 
 
 ## Editing API capability discovery boundary
@@ -325,5 +328,43 @@ This asymmetry is deliberate: the parser does not claim to be a lossless
 capabilities-document model. It is a named editing/upload projection whose
 forward-compatible skip policy is part of its contract.
 
-Endpoint selection, HTTP caching, authentication, refresh cadence and behavior
-when the API reports readonly/offline remain consumer/service policy.
+The caller still selects the target server and owns caching/refresh cadence.
+Under ADR 0032 the post-v0.3 protocol layer owns the OSM capability endpoint,
+HTTP method and OSM-specific readonly/offline interpretation. Generic network
+execution remains in transport-d, while credential storage and OAuth/account
+policy remain outside osm-d.
+
+
+## Editing API protocol boundary
+
+ADR 0032 defines the post-v0.3 Editing API architecture.
+
+```text
+credentials-d -- scoped secret ----+
+                                    |
+                                    v
+application policy ---> osm-d OSM protocol layer ---> transport-d HTTP exchange
+                        | method/path/media/status     | TLS/socket/curl
+                        | changeset operations         | generic limits/errors
+                        | existing XML codecs          | secret-safe provenance
+                        v                              v
+                    OSM semantic values              network
+```
+
+The consumer explicitly selects the API base URL. osm-d appends OSM
+operation-relative paths and owns the method/media/status semantics. It never
+silently chooses the production OpenStreetMap server for write-capable work.
+
+The intended focused facade is `osm.api`, centered on an
+`EditingApiClient`-style domain API. The concrete transport adapter is blocked
+on the generic bounded HTTP exchange requested in `transport-d#3`; osm-d must
+not bypass that dependency by importing a concrete HTTP backend.
+
+Authorization material is request-scoped and must not be retained or copied
+into ordinary diagnostics/provenance. credentials-d may supply protected
+secrets, while OAuth2/PKCE login, token refresh, account selection and retry
+policy remain outside osm-d.
+
+The protocol client is synchronous at this seam and accepts an injected generic
+exchange so deterministic fake/mock transport can qualify every operation
+without live network access. Async execution remains caller/executor policy.

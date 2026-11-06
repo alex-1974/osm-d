@@ -116,8 +116,11 @@ common semantic/PBF-traversal/store workflows, while specialized format and
 Editing API families use focused facades.
 
 v0.3 adds `osm.upload` for successful diff-upload responses and
-`osm.capabilities` for dynamic target-server upload limits. It deliberately
-does not add HTTP/OAuth, changeset lifecycle or retry policy. The exact v0.3.x
+`osm.capabilities` for dynamic target-server upload limits. The released
+v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
+Post-v0.3 M17 now accepts OSM protocol ownership in osm-d (ADR 0032) while
+generic HTTP remains in transport-d and OAuth/account/retry policy stays
+outside the core. The exact v0.3.x
 promise is in `docs/API_STABILITY.md`; migration from v0.2 is in
 `docs/API_V0_3.md`.
 
