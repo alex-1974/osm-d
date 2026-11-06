@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="OpenStreetMap server">
+  <way id="201" version="4" changeset="7001" user="mapper" uid="123"
+       visible="true" timestamp="2026-11-06T09:01:00Z">
+    <nd ref="101"/>
+    <nd ref="102"/>
+    <tag k="highway" v="service"/>
+  </way>
+</osm>
