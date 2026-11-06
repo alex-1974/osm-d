@@ -258,8 +258,8 @@ remains whole-buffer.
 
 Tracked by M15: #133.
 
-- [ ] Define complete versus partial dataset/reference validity. #130
-- [ ] Add ordered, cycle-safe OSM reference resolution and topology traversal. #131
+- [x] Define complete versus partial dataset/reference validity. #130
+- [x] Add ordered, cycle-safe OSM reference resolution and topology traversal. #131
 - [ ] Qualify dataset validation and topology resolution on real OSM workloads. #132
 
 OSM identity/reference topology belongs here. Generic geometry algorithms,

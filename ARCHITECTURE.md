@@ -175,6 +175,40 @@ cycles are reference-valid when every typed target exists; recursive traversal
 must handle cycles separately.
 
 
+## OSM topology boundary
+
+Dataset/reference validation and topology traversal are separate layers.
+
+`osm.validate` answers whether typed identities/references satisfy a complete
+or intentionally partial dataset contract. `osm.topology` navigates those
+references without changing that validity decision.
+
+Direct topology resolution is ordered and lazy:
+
+- `OsmStore` resolves through its authoritative typed primary indexes and
+  reports stable handles;
+- `OwnedDataset` uses an explicit consumer-built `OwnedDatasetIndex` rather
+  than acquiring a hidden permanent index.
+
+Recursive Relation child closure preserves member occurrence order and expands
+Way members to ordered Node-reference occurrences. Relation identities are
+expanded once per traversal so graph cycles terminate while the cyclic edge
+remains visible.
+
+Parent closure is distinct-element traversal. The compact store reuses its
+maintained reverse indexes; OwnedDataset uses reverse edges built as part of
+its explicit topology index.
+
+Traversal work is bounded through caller-visible depth/visit/Relation limits and
+a reusable workspace. Missing references remain explicit resolution states.
+No topology API performs network fetch, geometry construction or silent repair.
+
+Complete-object resolution and OSM area/multipolygon assembly are layered above
+this graph API in M16; generic geometry/geodesy/spatial indexing remain outside
+osm-d.
+
+
+
 ## Store architecture
 
 The parser remains streaming. The future editor store solves a separate random
