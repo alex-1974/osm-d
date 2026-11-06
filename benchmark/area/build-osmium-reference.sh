@@ -79,12 +79,12 @@ then
     exit 1
 fi
 
+echo "export_features=$(jq '.features | length' "$geojson")"
+echo "export_relation_areas=$(jq '[.features[] | select(.properties["@type"] == "relation")] | length' "$geojson")"
+
 jq -r '
     .features[]
-    | select(
-        .properties["@type"] == "relation"
-        and .properties.type == "multipolygon"
-      )
+    | select(.properties["@type"] == "relation")
     | [
         (.properties["@id"] | tostring),
         (
