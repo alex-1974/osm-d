@@ -714,3 +714,41 @@ values subtract separately measured p50 medians. They are diagnostic estimates,
 not independently timed production stages. The production `full-decode` result
 remains the plausibility anchor and should stay comparable with the committed
 regular-Way baseline before an architecture change is accepted.
+
+
+## M15 dataset/topology qualification
+
+`topology/qualification.d` is the consumer-scale M15 gate for
+dataset/reference validity and OSM graph traversal.
+
+It loads one pinned PBF into `OsmStore` before timing and then exercises:
+
+- full-store complete/partial validation;
+- largest real Way and Relation resolution;
+- bounded nested-Relation child closure;
+- real parent closure;
+- complete and deliberately partial subsets derived from real Way data;
+- parent-index coherence across a supported Way edit and revert;
+- explicit adversarial depth and Relation-cycle behavior.
+
+The targeted workflow uses Monaco as a smoke workload and Bremen as the primary
+city/editor-scale workload. Timings are reported as evidence and are not
+hard-coded release thresholds.
+
+Build and run manually:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=topology-qualification \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-topology-qualification \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf 5
+```
+
+The accepted M15 hosted-runner evidence is summarized in
+`docs/BENCHMARKS.md`.
