@@ -8,6 +8,10 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.topology` resolution and bounded closure traversal:
+  ordered Way/Relation resolution, explicit `OwnedDatasetIndex`, cycle-safe
+  Relation child closure, distinct parent closure over maintained reverse
+  indexes, and caller-visible traversal workspace/limits/status.
 - Add explicit complete/partial dataset-reference validation for
   `OwnedDataset` and `OsmStore` through `osm.validate`, including
   deterministic missing/local/deleted-reference diagnostics.
