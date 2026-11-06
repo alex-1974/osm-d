@@ -254,6 +254,29 @@ Neither is part of the curated package root by default.
 
 
 
+## OSM area assembly boundary
+
+`osm.area` sits above `osm.complete` and owns the OSM-specific transformation
+from Way/member graphs into ring sequences.
+
+Its connectivity primitive is exact OSM Node identity. It may reverse the
+traversal of a source Way without mutating source and it preserves source
+Way/member provenance in the assembled path.
+
+Current multipolygon assembly accepts explicit `outer` / `inner` Way
+members. It does not guess missing roles or reinterpret nested Relations.
+
+The result is owning because ring assembly creates new data-dependent path
+structure. Missing positive references remain partial; multiply-connectable
+endpoints remain ambiguous; complete-data dangling chains are invalid.
+
+The assembler deliberately stops before generic geometry. Ring simplicity,
+intersection, containment, orientation, area, clipping and projection remain
+outside osm-d. This preserves the ADR 0030 no-implicit-`geo-d` dependency
+boundary.
+
+
+
 ## Editing API upload-response boundary
 
 osm-d owns the OSM semantics and wire formats around a diff upload, but not the
