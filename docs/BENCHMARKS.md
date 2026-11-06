@@ -3422,3 +3422,111 @@ median difference is not a material regression. The run used a shared GitHub
 runner rather than the controlled local benchmark host, so these absolute
 times are retained only as an orchestration-overhead qualification and do not
 replace the controlled libosmium throughput baseline.
+
+
+## M15 real-workload dataset/topology qualification
+
+M15 #132 qualifies the public dataset/reference and topology APIs on the pinned
+Geofabrik 2026-09-01 baseline. The qualification is intentionally a
+consumer-workload gate rather than a synthetic graph benchmark.
+
+### Method
+
+The committed `benchmark/topology/qualification.d` harness:
+
+1. loads the PBF into `OsmStore` before timing;
+2. warms each measured operation once;
+3. records the median of 3 Monaco or 5 Bremen timed passes;
+4. requires stable semantic summaries/checksums between passes;
+5. derives complete and deliberately partial datasets from real Way data;
+6. performs a real Way edit/revert and checks parent-closure index coherence;
+7. separately verifies adversarial depth bounds and a cyclic Relation fixture.
+
+The targeted workflow uses LDC 1.41.0 in release/allAtOnce mode. Timings are
+decision evidence only; no arbitrary wall-clock release threshold is imposed.
+
+### Extract completeness result
+
+Both pinned Geofabrik files are valid **partial** OSM datasets under the M15
+contract:
+
+| Dataset | Nodes | Ways | Relations | partial mode | complete mode | first missing target |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| Monaco | 41,703 | 6,249 | 348 | PASS | `missingReference` | Node 1,701,090,139 |
+| Bremen | 1,662,874 | 328,626 | 5,985 | PASS | `missingReference` | Node 9,044,256,560 |
+
+This is an important consumer result rather than a benchmark failure:
+extract-boundary references remain observable and are accepted only when the
+caller explicitly chooses `DatasetValidationMode.partial`.
+
+Complete subsets derived from a real Way plus all referenced Nodes passed
+`complete` validation on both datasets. The corresponding Way-only subsets
+passed `partial` and were rejected by `complete` with
+`missingReference`.
+
+### Direct resolution and closure evidence
+
+Hosted-runner p50 values:
+
+| Operation | Monaco | Bremen |
+| --- | ---: | ---: |
+| full-store partial validation | 2.239 ms | 178.689 ms |
+| complete validation until first missing reference | 1.392 ms | 168.925 ms |
+| largest-Way Node resolution | 32.0 µs / 1,302 refs | 33.5 µs / 1,338 refs |
+| largest-Relation member resolution | 152.3 µs / 6,819 members | 185.9 µs / 4,820 members |
+| selected nested-Relation closure | 297.4 µs / 7,353 visits | 572.2 µs / 10,436 visits |
+| selected Node parent closure | 0.4 µs / 1 visit | 1.0 µs / 2 visits |
+
+The complete-validation timing is fail-fast and therefore is **not** a
+full-dataset throughput comparison with partial validation.
+
+The largest selected Ways resolved every Node reference:
+
+- Monaco: 1,302 / 1,302;
+- Bremen: 1,338 / 1,338.
+
+Large Relations demonstrated the partial-dataset behavior directly:
+
+- Monaco largest Relation: 6,819 members, 14 resolved, 6,805 unresolved;
+- Bremen largest Relation: 4,820 members, 97 resolved, 4,723 unresolved.
+
+The selected nested closures completed under the default qualification bounds:
+
+- Monaco: 7,353 visits, 5 Relations expanded, depth 6, 4,764 unresolved
+  occurrences;
+- Bremen: 10,436 visits, 3 Relations expanded, depth 3, 2,398 unresolved
+  occurrences.
+
+All repeated runs retained identical checksums.
+
+### Edit/index and adversarial gates
+
+On both real datasets a supported Way reference edit changed parent closure
+immediately, the replacement Node acquired the Way parent, and
+`OsmStore.revert` restored the original parent result. No stale reverse-index
+result was observed.
+
+The synthetic-but-focused safety gates also passed in the same executable:
+
+- a 24-Relation chain with `maxDepth = 8` failed explicitly with
+  `TopologyTraversalError.depthLimit`;
+- a two-Relation mutual cycle completed, emitted the cyclic occurrence, and
+  expanded each Relation identity only once.
+
+### M15 decision
+
+The current architecture is **KEEP**.
+
+The city-scale evidence does not justify another global precomputed structure:
+
+- store validation is practical on Bremen;
+- direct resolution remains microsecond-scale for large real objects;
+- recursive closure remains sub-millisecond for the selected nested real
+  relation;
+- existing maintained store parent indexes stay coherent across supported
+  edits/revert;
+- explicit partial-dataset semantics match real extract behavior;
+- explicit work bounds terminate adversarial depth and cycles.
+
+M15 therefore closes without adding a second graph store, generic geometry
+layer, or hidden network completion mechanism.
