@@ -81,6 +81,16 @@ is clear rather than merely because the server exposes them.
 
 ### Changesets
 
+The semantic/XML foundation is provided by `osm.changeset`:
+
+- `OwnedChangeset` represents server-returned Changeset state;
+- `ChangesetTagRequest` represents the tag-only create/update request body;
+- `readChangeset` / `readChangesetDocument` parse read/query XML;
+- `writeChangesetTagRequest` serializes create/update XML without pretending
+  that server-managed fields are writable.
+
+The protocol client composes that foundation for:
+
 - create;
 - read;
 - update;

@@ -307,6 +307,38 @@ storage, OAuth login/account selection, retry/backoff and editor workflow remain
 outside osm-d.
 
 
+
+## Changeset semantic/XML boundary
+
+Changesets are first-class OSM domain objects but are not Node/Way/Relation
+elements. The focused `osm.changeset` facade therefore owns a separate
+`OwnedChangeset` model with explicit presence for optional server fields.
+
+Server state and editable request state are deliberately distinct:
+
+```text
+Changeset read/query XML
+    -> OwnedChangeset
+       id/open/timestamps/user/bounds/counts/tags/discussion
+
+Changeset create/update intent
+    -> ChangesetTagRequest
+       tags only
+    -> Changeset XML request body
+```
+
+This prevents server-managed identity, bounds, timestamps, ownership and
+statistics from appearing writable. Update tags are a complete replacement
+set, matching the Editing API contract.
+
+The reader accepts the same model for one read response and Changeset query/list
+responses, retains exact nanodegree bounds and distinguishes discussion absent
+from discussion present-but-empty. Resource limits bound Changeset, child,
+comment and comment-text materialization.
+
+The codec layer has no HTTP behavior. ADR 0032's protocol client composes these
+values/codecs with the future generic transport exchange.
+
 ## Editing API capability discovery boundary
 
 Target-server upload limits are policy, not format constants. osm-d discovers

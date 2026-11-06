@@ -103,6 +103,14 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler Editing API capabilities consumer compile"
 
+    echo "=== CHANGESET DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/changeset-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler Changeset consumer compile"
+
     echo "=== RELEASE API DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/release-consumer" \

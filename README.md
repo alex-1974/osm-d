@@ -694,6 +694,52 @@ This layer does not test polygon simplicity, intersections, containment,
 orientation, area, clipping or projection. Those remain explicit downstream
 geometry/geodesy operations.
 
+
+## Changesets
+
+Post-v0.3 M17 provides a focused Changeset semantic/XML facade:
+
+```d
+import osm.changeset;
+import osm : OwnedTag, ownBytes;
+import transport.source : MemorySink, MemorySource;
+
+ChangesetTagRequest request;
+request.tags ~= OwnedTag(
+    ownBytes(cast(const(ubyte)[]) "created_by"),
+    ownBytes(cast(const(ubyte)[]) "osm-d"));
+request.tags ~= OwnedTag(
+    ownBytes(cast(const(ubyte)[]) "comment"),
+    ownBytes(cast(const(ubyte)[]) "Improve footpaths"));
+
+auto sink = new MemorySink();
+ChangesetWriteStatus writeStatus;
+if (!writeChangesetTagRequest(request, sink, writeStatus))
+{
+    // transport/XML output failure
+}
+
+// A GET/query response is parsed separately into server-owned semantics.
+const(ubyte)[] responseBytes = /* bytes from the protocol/transport layer */ null;
+OwnedChangeset changeset;
+ChangesetReadStatus readStatus;
+auto source = new MemorySource(responseBytes);
+if (!readChangeset(source, changeset, readStatus))
+{
+    // transport/XML/semantic response failure
+}
+```
+
+`OwnedChangeset` keeps ID, open state, creation/closure timestamps, owner,
+optional exact bounds, current change counters, tags and optional discussion
+data with explicit presence. An absent discussion is distinct from an
+explicitly present empty discussion.
+
+Create/update XML deliberately uses the separate `ChangesetTagRequest` type.
+The server owns identity, timestamps, bounds, owner and counters; update tags
+are a complete replacement set. The codec performs no HTTP, authentication or
+policy decision about when an editor opens, reuses or closes a Changeset.
+
 ## Upload validation
 
 Parsing and upload readiness are separate contracts. Use `osm.validate` when
