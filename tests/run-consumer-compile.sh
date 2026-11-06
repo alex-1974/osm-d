@@ -71,6 +71,14 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler topology DUB consumer compile"
 
+    echo "=== COMPLETE-OBJECT DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/complete-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler complete-object DUB consumer compile"
+
     echo "=== UPLOAD RESULT DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/upload-consumer" \
