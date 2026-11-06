@@ -1,6 +1,7 @@
 module app;
 
 import osm :
+    ElementType,
     LocationView,
     OsmHandle,
     OsmStore,
@@ -194,7 +195,7 @@ import transport.source :
 
     // Successful delete removes the established identity.
     OsmHandle shouldBeMissing;
-    assert(!store.find(createdView.type, 43, shouldBeMissing));
+    assert(!store.find(ElementType.node, 43, shouldBeMissing));
 
     OwnedChangeSequence remaining;
     assert(store.collectChanges(remaining, storeStatus));
