@@ -55,6 +55,8 @@ The supported high-level facades are:
 - `import osm.validate;` — dataset/reference and upload-readiness validation;
 - `import osm.topology;` — ordered OSM reference resolution and bounded
   child/parent closure traversal;
+- `import osm.complete;` — borrowed complete Way/Relation projections,
+  direct completeness, exact OSM-native bounds and closed-Way identity;
 - `import osm.upload;` — bounded OSM API diffResult response parsing;
 - `import osm.capabilities;` — Editing API capability discovery projected
   into upload-validation policy.
@@ -295,6 +297,39 @@ borrowed topology traversal is outside the contract.
 
 Complete-object materialization and area/multipolygon assembly are not part of
 this M15 surface.
+
+## Complete-object contract
+
+The focused `osm.complete` facade enriches M15 reference resolution with
+resolved semantic child objects.
+
+For `OsmStore`, complete projections borrow existing store views and indexes.
+Structural store mutation invalidates outstanding projections; consumers must
+re-borrow afterwards.
+
+For `OwnedDataset`, complete projections borrow dataset arrays and reuse a
+caller-built `OwnedDatasetIndex`. The index invalidation rules from
+`osm.topology` remain unchanged.
+
+Direct resolution:
+
+- preserves Way Node and Relation member order and duplicates;
+- performs no network fetch or repair;
+- exposes missing/invalid child states explicitly;
+- allocates no second complete-object graph.
+
+`CompleteObjectState` distinguishes `complete`, `partial` and `invalid`
+after direct-child inspection. Store tombstones are not exposed as live
+resolved targets; `validateDataset` remains the authority for distinguishing
+known deletion from ordinary external omission.
+
+`LocationBounds` and `locationBounds` preserve exact signed nanodegrees and
+perform no projection, dateline reinterpretation or implicit floating-point
+conversion. `isClosedWay` is the identity-only first/last-Node test and does
+not imply polygon validity.
+
+The package has no direct `geo-d` dependency. Geometry conversion remains an
+explicit consumer boundary.
 
 ## Failure and `.init` contract
 
