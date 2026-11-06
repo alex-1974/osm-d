@@ -63,6 +63,14 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler upload validation DUB consumer compile"
 
+    echo "=== TOPOLOGY DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/topology-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler topology DUB consumer compile"
+
     echo "=== UPLOAD RESULT DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/upload-consumer" \
