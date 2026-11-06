@@ -126,6 +126,7 @@ jobs:
               multipolygon_scan_integrity \
               multipolygon_determinism \
               multipolygon_assembly_integrity \
+              multipolygon_provenance_integrity \
               allocation_integrity \
               real_partial_area_integrity \
               m16_area_qualification; do
@@ -140,7 +141,7 @@ jobs:
             grep -Eq '^multipolygon_assembly_p50_ns=[0-9]+$' "$file"
             grep -Eq '^multipolygon_allocated_bytes=[0-9]+$' "$file"
             grep -Eq '^multipolygon_visible_payload_bytes=[0-9]+$' "$file"
-            grep -qx 'osmium_reference_ring_mismatches=0' "$file"
+            grep -qx 'osmium_reference_underassembly_mismatches=0' "$file"
           done
 
           grep -qx 'osmium_reference_integrity=pass' \
