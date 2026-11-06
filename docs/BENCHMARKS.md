@@ -3530,3 +3530,147 @@ The city-scale evidence does not justify another global precomputed structure:
 
 M15 therefore closes without adding a second graph store, generic geometry
 layer, or hidden network completion mechanism.
+
+
+## M16 real-workload complete-object and area qualification
+
+M16 #137 qualifies the focused \`osm.complete\` and \`osm.area\` surfaces on
+the same pinned Geofabrik 2026-09-01 baseline used by M15.
+
+### Method
+
+The committed \`benchmark/area/qualification.d\` harness:
+
+1. loads one PBF into \`OsmStore\` before timing;
+2. selects the largest fully resolved Way and largest fully resolved closed Way;
+3. scans every \`type=multipolygon\` Relation twice and requires deterministic
+   summaries/checksums;
+4. requires every structurally complete Relation to preserve every Relation
+   member exactly once in \`AreaRingSegment\` provenance;
+5. records complete/partial/ambiguous/invalid outcomes and ring/path counts;
+6. repeatedly assembles a large real complete/fragmented multipolygon;
+7. records thread-local GC allocation volume separately from visible owning
+   result payload;
+8. derives a real complete multipolygon subset and then removes one Node and one
+   Way to verify explicit partial-area behavior;
+9. independently builds polygon geometry with osmium-tool 1.16.0 /
+   libosmium 2.20.0.
+
+The hosted gate uses LDC 1.41.0, release/allAtOnce. PBF input and independent
+osmium processing are outside the timed regions. Timings are decision evidence,
+not release SLAs.
+
+### Complete-Way evidence
+
+| Dataset | selected Way | Nodes | complete projection + exact bounds p50 | selected closed Way area p50 |
+| --- | ---: | ---: | ---: | ---: |
+| Monaco | 1,172,678,032 | 1,302 | 153.9 µs | 28.9 µs / 212 Nodes |
+| Bremen | 294,068,542 | 1,338 | 154.4 µs | 174.7 µs / 1,338 Nodes |
+
+All repeated summaries/checksums were stable. Closed-Way area assembly produced
+one closed outer ring with complete locations.
+
+### Full multipolygon scan
+
+| Dataset | type=multipolygon | complete | partial | ambiguous | invalid | fragmented complete | multiple-outer complete | complete with inner |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 49 | 48 | 1 | 0 | 0 | 8 | 0 | 41 |
+| Bremen | 1,201 | 1,197 | 4 | 0 | 0 | 261 | 126 | 882 |
+
+Aggregate assembled output:
+
+| Dataset | rings | outer | inner | vertices | source segments | open chains | issues |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 107 | 49 | 58 | 2,060 | 123 | 0 | 1 |
+| Bremen | 3,258 | 1,523 | 1,735 | 111,292 | 4,604 | 1 | 58 |
+
+For every \`complete\` Relation, the qualification requires the number of
+assembled provenance segments to equal the Relation member count. This passed
+for both datasets. The repeated full scan was deterministic.
+
+The real partial-subset gate also passed on both datasets: removing one
+referenced Node preserves ring identity but produces unresolved location state;
+removing one referenced Way produces a partial assembly rather than a fabricated
+or silently repaired ring.
+
+### Independent osmium comparison
+
+The oracle is built independently with:
+
+1. \`osmium tags-filter --omit-referenced r/type=multipolygon\`;
+2. \`osmium getid --add-referenced\` against the original pinned snapshot;
+3. \`osmium export --geometry-types=polygon --attributes=type,id\`.
+
+This makes extract-boundary omissions visible while allowing libosmium to
+perform its own geometry assembly.
+
+Raw OSM ring counts are **not** forced to equal exported polygon-ring counts.
+OSM permits touching rings, while an OGC-oriented geometry exporter may merge
+rings sharing Nodes into one polygon component. For the geometry comparison,
+the qualification therefore also counts connected outer/inner ring components
+under exact shared OSM Node identity. The raw \`osm.area\` rings remain
+unchanged and separately reported.
+
+| Dataset | osmium relation areas | complete overlap | raw ring-count differences | touching outer normalizations | touching inner normalizations | residual geometry-count differences | osm-d under-assembly |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 48 | 48 | 1 | 0 | 1 | 0 | **0** |
+| Bremen | 1,196 | 1,196 | 12 | 1 | 10 | 1 | **0** |
+
+The Monaco raw difference is Relation 11,384,697: \`osm.area\` retains one
+outer plus two touching inner OSM rings; the geometry oracle exports one outer
+plus one hole component.
+
+Bremen retains one residual geometry-domain difference after touching-ring
+normalization (Relation 20,429,426: one outer plus one inner structurally,
+versus one outer and no hole in exported geometry). One additional
+structurally complete Bremen Relation is omitted entirely by osmium geometry.
+These are retained as evidence rather than coerced into \`osm.area\`: M16 does
+not own containment, ring simplicity, intersection, or OGC polygon validity.
+
+The decisive independent gate is therefore **no structural under-assembly**:
+for every Relation accepted by both implementations, osm-d must expose at least
+the independently exported outer/inner component count after the documented
+touching-ring normalization. Monaco and Bremen both pass with zero
+under-assembly cases.
+
+### Representative repeated assembly and allocation
+
+The timing target is the largest selected complete fragmented Relation when one
+is available.
+
+| Dataset | Relation | members / segments | rings | p50 | allocated bytes | visible result payload |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 19,851,153 | 6 / 6 | 3 | 7.3 µs | 7,920 B | 1,616 B |
+| Bremen | 2,088,648 | 85 / 85 | 2 | 473.3 µs | 613,664 B | 93,456 B |
+
+The allocation probe runs after warm repeated assembly. It measures bytes
+allocated in the current GC thread for one owning result construction; visible
+payload counts the public ring/open-chain/issue arrays and their vertex/segment
+storage. It is not a retained-heap measurement.
+
+The Bremen case shows substantial transient allocation overhead relative to
+visible payload, but the measured representative assembly remains below one
+millisecond on the hosted runner. This evidence does **not** justify a hidden
+persistent geometry cache. A reusable explicit assembly workspace may be
+reconsidered only if a real repeated editor/renderer workload demonstrates
+allocation pressure.
+
+### M16 decision
+
+The current architecture is **KEEP**.
+
+- complete-object projection is practical for large real Ways;
+- structural area assembly is deterministic across complete and partial
+  extracts;
+- provenance covers every member of every structurally complete real
+  multipolygon;
+- independent osmium geometry shows no structural under-assembly on Monaco or
+  Bremen;
+- observed geometry-domain differences align with the documented M16 boundary
+  rather than requiring generic polygon algorithms inside osm-d;
+- no persistent area cache or generic geometry dependency is justified by the
+  measured workload.
+
+M16 therefore closes with \`osm.complete\` and \`osm.area\` as the OSM semantic
+layers and leaves generic polygon validity/containment/metrics in the geometry
+libraries.
