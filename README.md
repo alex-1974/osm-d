@@ -701,7 +701,7 @@ Post-v0.3 M17 provides a focused Changeset semantic/XML facade:
 
 ```d
 import osm.changeset;
-import osm.model.owned : OwnedTag, ownBytes;
+import osm : OwnedTag, ownBytes;
 import transport.source : MemorySink, MemorySource;
 
 ChangesetTagRequest request;
