@@ -1,0 +1,158 @@
+name: M16 Area Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "source/osm/complete/**"
+      - "source/osm/area/**"
+      - "source/osm/topology/**"
+      - "source/osm/store/**"
+      - "benchmark/area/**"
+      - "benchmark/dub.sdl"
+      - "benchmark/datasets/**"
+      - ".github/workflows/area-qualification.yml"
+  push:
+    branches:
+      - "release/**"
+    paths:
+      - "source/osm/complete/**"
+      - "source/osm/area/**"
+      - "source/osm/topology/**"
+      - "source/osm/store/**"
+      - "benchmark/area/**"
+      - "benchmark/dub.sdl"
+      - "benchmark/datasets/**"
+      - ".github/workflows/area-qualification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  real-workloads:
+    name: Monaco + Bremen complete-object/area qualification
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Install independent OSM reference tool
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool jq
+          osmium --version
+          jq --version
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned M16 workloads
+        shell: bash
+        run: |
+          for dataset in monaco-260901 bremen-260901; do
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if bash benchmark/fetch-datasets.sh fetch "$dataset"; then
+                ok=1
+                break
+              fi
+              sleep $((attempt * 5))
+            done
+            test "$ok" = 1
+          done
+
+      - name: Build independent osmium references
+        shell: bash
+        run: |
+          mkdir -p benchmark/area/evidence
+
+          for dataset in monaco-260901 bremen-260901; do
+            bash benchmark/area/build-osmium-reference.sh \
+              "benchmark/data/geofabrik-2026-09-01/$dataset.osm.pbf" \
+              "benchmark/area/evidence/$dataset-osmium.tsv"
+          done
+
+      - name: Build M16 qualification
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=area-qualification \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run Monaco smoke
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-area-qualification \
+            benchmark/data/geofabrik-2026-09-01/monaco-260901.osm.pbf \
+            3 \
+            benchmark/area/evidence/monaco-260901-osmium.tsv \
+            | tee benchmark/area/evidence/monaco-260901.txt
+
+      - name: Run Bremen city-scale qualification
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-area-qualification \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            5 \
+            benchmark/area/evidence/bremen-260901-osmium.tsv \
+            | tee benchmark/area/evidence/bremen-260901.txt
+
+      - name: Verify semantic and evidence gates
+        shell: bash
+        run: |
+          for file in \
+            benchmark/area/evidence/monaco-260901.txt \
+            benchmark/area/evidence/bremen-260901.txt; do
+            for key in \
+              complete_way_integrity \
+              closed_way_area_integrity \
+              multipolygon_scan_integrity \
+              multipolygon_determinism \
+              multipolygon_assembly_integrity \
+              allocation_integrity \
+              real_partial_area_integrity \
+              m16_area_qualification; do
+              grep -qx "$key=pass" "$file"
+            done
+
+            grep -Eq '^osmium_reference_integrity=(pass|no-reference-areas)$' "$file"
+            grep -Eq '^multipolygon_total=[1-9][0-9]*$' "$file"
+            grep -Eq '^multipolygon_complete=[1-9][0-9]*$' "$file"
+            grep -Eq '^complete_way_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^closed_way_area_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^multipolygon_assembly_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^multipolygon_allocated_bytes=[0-9]+$' "$file"
+            grep -Eq '^multipolygon_visible_payload_bytes=[0-9]+$' "$file"
+            grep -qx 'osmium_reference_ring_mismatches=0' "$file"
+          done
+
+          grep -qx 'osmium_reference_integrity=pass' \
+            benchmark/area/evidence/bremen-260901.txt
+          grep -Eq '^osmium_reference_complete_overlap=[1-9][0-9]*$' \
+            benchmark/area/evidence/bremen-260901.txt
+
+      - name: Upload M16 qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: m16-area-\${{ github.sha }}
+          path: |
+            benchmark/area/evidence/*.txt
+            benchmark/area/evidence/*.tsv
+          if-no-files-found: error
