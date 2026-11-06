@@ -158,3 +158,13 @@ configuration "release-io" {
     importPaths "release"
     mainSourceFile "release/io_baseline.d"
 }
+
+
+configuration "topology-qualification" {
+    targetType "executable"
+    targetName "osm-d-bench-topology-qualification"
+    targetPath "bin"
+    sourcePaths "topology"
+    importPaths "topology"
+    mainSourceFile "topology/qualification.d"
+}

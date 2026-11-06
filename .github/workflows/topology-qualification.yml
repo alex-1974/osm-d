@@ -1,0 +1,129 @@
+name: M15 Topology Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "source/osm/topology/**"
+      - "source/osm/validation/dataset.d"
+      - "source/osm/validate.d"
+      - "source/osm/store/**"
+      - "benchmark/topology/**"
+      - "benchmark/dub.sdl"
+      - "benchmark/datasets/**"
+      - ".github/workflows/topology-qualification.yml"
+  push:
+    branches:
+      - "release/**"
+    paths:
+      - "source/osm/topology/**"
+      - "source/osm/validation/dataset.d"
+      - "source/osm/validate.d"
+      - "source/osm/store/**"
+      - "benchmark/topology/**"
+      - "benchmark/dub.sdl"
+      - "benchmark/datasets/**"
+      - ".github/workflows/topology-qualification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  real-workloads:
+    name: Monaco + Bremen dataset/topology qualification
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install LDC performance compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+          dub: 1.40.0
+
+      - name: Compiler versions
+        shell: bash
+        run: |
+          "$DC" --version
+          dub --version
+
+      - name: Fetch pinned M15 workloads
+        shell: bash
+        run: |
+          for dataset in monaco-260901 bremen-260901; do
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if bash benchmark/fetch-datasets.sh fetch "$dataset"; then
+                ok=1
+                break
+              fi
+              sleep $((attempt * 5))
+            done
+            test "$ok" = 1
+          done
+
+      - name: Build topology qualification
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=topology-qualification \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Run Monaco smoke
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-topology-qualification \
+            benchmark/data/geofabrik-2026-09-01/monaco-260901.osm.pbf \
+            3 | tee benchmark/topology/monaco-260901.txt
+
+      - name: Run Bremen city-scale qualification
+        shell: bash
+        run: |
+          benchmark/bin/osm-d-bench-topology-qualification \
+            benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf \
+            5 | tee benchmark/topology/bremen-260901.txt
+
+      - name: Verify semantic gates
+        shell: bash
+        run: |
+          for file in \
+            benchmark/topology/monaco-260901.txt \
+            benchmark/topology/bremen-260901.txt; do
+            for key in \
+              partial_store_validation \
+              way_resolution_integrity \
+              relation_resolution_integrity \
+              closure_integrity \
+              real_complete_subset_validation \
+              real_partial_subset_validation \
+              real_partial_subset_complete_rejected \
+              parent_closure_integrity \
+              parent_edit_integrity \
+              bounded_depth_integrity \
+              cycle_integrity; do
+              grep -qx "$key=pass" "$file"
+            done
+
+            grep -Eq '^complete_store_validation=(pass|partial-extract)$' "$file"
+            grep -Eq '^way_resolution_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^relation_resolution_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^closure_p50_ns=[0-9]+$' "$file"
+            grep -Eq '^parent_closure_p50_ns=[0-9]+$' "$file"
+          done
+
+      - name: Upload qualification evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: m15-topology-${{ github.sha }}
+          path: |
+            benchmark/topology/monaco-260901.txt
+            benchmark/topology/bremen-260901.txt
+          if-no-files-found: error
