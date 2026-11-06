@@ -285,7 +285,7 @@ Tracked by M17: #143.
 
 - [x] Revise the v0.3 Editing API boundary so osm-d owns OSM protocol semantics
   while generic network execution remains in `transport-d`. #139
-- [ ] Add a first-class OSM Changeset semantic model and XML codecs. #140
+- [x] Add a first-class OSM Changeset semantic model and XML codecs. #140
 - [ ] Implement the Editing API protocol client over generic HTTP transport. #141
 - [ ] Qualify Changeset and Editing API protocol semantics. #142
 
