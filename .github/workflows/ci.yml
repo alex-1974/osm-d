@@ -126,6 +126,17 @@ jobs:
             --build-mode=allAtOnce \
             --force
 
+      - name: Build M16 area qualification
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=area-qualification \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
       - name: Build compact-store layout benchmark
         if: matrix.compiler == 'ldc-1.41.0'
         shell: bash

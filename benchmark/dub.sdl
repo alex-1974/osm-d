@@ -168,3 +168,13 @@ configuration "topology-qualification" {
     importPaths "topology"
     mainSourceFile "topology/qualification.d"
 }
+
+
+configuration "area-qualification" {
+    targetType "executable"
+    targetName "osm-d-bench-area-qualification"
+    targetPath "bin"
+    sourcePaths "area"
+    importPaths "area"
+    mainSourceFile "area/qualification.d"
+}
