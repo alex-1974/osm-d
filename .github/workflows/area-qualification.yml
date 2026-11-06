@@ -151,7 +151,7 @@ jobs:
       - name: Upload M16 qualification evidence
         uses: actions/upload-artifact@v6
         with:
-          name: m16-area-\${{ github.sha }}
+          name: m16-area-${{ github.sha }}
           path: |
             benchmark/area/evidence/*.txt
             benchmark/area/evidence/*.tsv
