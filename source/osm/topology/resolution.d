@@ -183,8 +183,11 @@ StoreResolvedRelationMemberRange resolveMembers(
 /**
  * Explicit reusable primary index for one OwnedDataset identity layout.
  *
- * The index does not retain or copy the dataset. Rebuild it after mutations
- * that change IDs, element ordering, insertion, or removal.
+ * The index does not retain or copy the dataset. It contains typed primary
+ * lookup plus reverse Way/Relation parent edges. Rebuild it after mutations
+ * that change IDs, element ordering, insertion/removal, Way node references,
+ * or Relation members. Tag, metadata and coordinate-only edits do not affect
+ * the index.
  */
 struct OwnedDatasetIndex
 {
@@ -211,10 +214,11 @@ public:
     }
 
     /**
-     * Build typed ID-to-array indices transactionally.
+     * Build typed ID-to-array indices and reverse parent edges transactionally.
      *
-     * ID zero and duplicate IDs within one element type fail. References are
-     * not inspected here.
+     * ID zero and duplicate IDs within one element type fail. Outgoing
+     * references are indexed exactly as stored, including duplicates and
+     * unresolved positive IDs; full integrity remains validateDataset's job.
      */
     bool build(
         ref const OwnedDataset dataset,
