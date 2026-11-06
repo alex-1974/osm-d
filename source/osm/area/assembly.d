@@ -972,7 +972,8 @@ void finalizeMultipolygon(
     bool missingOuter)
     @safe
 {
-    if (result.outerRingCount != 0)
+    if (result.outerRingCount != 0 ||
+        result.state == AreaAssemblyState.ambiguous)
         return;
 
     addIssue(
