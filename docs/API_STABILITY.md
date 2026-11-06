@@ -231,6 +231,11 @@ injected generic transport. This does not retroactively add that client to the
 frozen v0.3.x API; concrete public protocol-client symbols remain unfrozen until
 M17 #141 is implemented and qualified.
 
+M17 #140 adds the post-v0.3 focused `osm.changeset` facade. Its semantic model
+separates server-returned `OwnedChangeset` state from the tag-only
+`ChangesetTagRequest` create/update body. These symbols are post-v0.3
+development API and do not alter the frozen v0.3.x surface.
+
 ## Ownership and lifetime
 
 Borrowed PBF views are valid only for the documented synchronous callback or
