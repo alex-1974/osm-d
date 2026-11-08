@@ -144,13 +144,6 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
         "https://example.test/api/0.6/node/101/2");
 
     fake.succeed(200, import("editing-api/node-history.xml"));
-    OwnedNode[] nodes;
-    assert(client.readNodeHistory(101, nodes, status));
-    assert(nodes.length == 3);
-    assert(fake.lastUrl ==
-        "https://example.test/api/0.6/node/101/history");
-
-    fake.succeed(200, import("editing-api/node-history.xml"));
     NodeHistory nodeHistory;
     assert(client.readNodeHistory(101, nodeHistory, status));
     assert(nodeHistory.coverage == HistoryCoverage.complete);
@@ -165,11 +158,6 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     fake.succeed(200, import("editing-api/way-version.xml"));
     assert(client.readWayVersion(201, 2, way, status));
     assert(way.metadata.versionNumber == 2);
-
-    fake.succeed(200, import("editing-api/way-history.xml"));
-    OwnedWay[] ways;
-    assert(client.readWayHistory(201, ways, status));
-    assert(ways.length == 3);
 
     fake.succeed(200, import("editing-api/way-history.xml"));
     WayHistory wayHistory;
@@ -192,11 +180,6 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     fake.succeed(200, import("editing-api/relation-version.xml"));
     assert(client.readRelationVersion(301, 3, relation, status));
     assert(relation.metadata.versionNumber == 3);
-
-    fake.succeed(200, import("editing-api/relation-history.xml"));
-    OwnedRelation[] relations;
-    assert(client.readRelationHistory(301, relations, status));
-    assert(relations.length == 3);
 
     fake.succeed(200, import("editing-api/relation-history.xml"));
     RelationHistory relationHistory;
