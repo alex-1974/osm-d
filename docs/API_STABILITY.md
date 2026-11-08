@@ -85,6 +85,26 @@ Successful returned OSM values are owning semantic values. Non-success HTTP
 responses preserve the exact status, an OSM-oriented classification where
 known, and a bounded owned diagnostic prefix.
 
+M18 additionally adds the focused `import osm.sync;` development facade. It
+is likewise not retroactively part of the published v0.3.x compatibility
+promise. The facade exposes:
+
+- typed owning Node/Way/Relation authoritative histories with explicit complete
+  versus partial coverage;
+- explicit present/absent base/local/remote element states and deterministic
+  `ConflictReport` classification;
+- transport-independent `AuthoritativeBatch` /
+  `reconcileAuthoritative` store synchronization.
+
+The synchronization facade reports facts and conservative conflict boundaries;
+it does not expose editor undo/redo, a merged-object result, automatic
+conflict-resolution policy, networking or credential state. Successful clean
+refresh preserves existing live handles; authoritative deletion invalidates
+the old handle. Batch data/contract failures are preflighted before mutation.
+
+The M17 `EditingApiClient` history methods also gain typed history overloads
+that project complete /history responses into these M18 models.
+
 ## Curated package root
 
 `import osm;` intentionally exports:
