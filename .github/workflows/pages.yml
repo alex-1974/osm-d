@@ -78,7 +78,7 @@ jobs:
           # DUB 1.40 does not forward application arguments from dub build.
           # Configure DDox through DUB's documented recipe extension, but only
           # in this disposable checkout.
-          printf '\\nx:ddoxFilterArgs "--unittest-examples" "--min-protection=Public"\\n' >> release-source/dub.sdl
+          printf '\nx:ddoxFilterArgs "--unittest-examples" "--min-protection=Public"\n' >> release-source/dub.sdl
 
           (
             cd release-source
