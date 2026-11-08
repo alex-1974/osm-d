@@ -54,7 +54,7 @@ struct HistoryStatus
     HistoryError error = HistoryError.none;
     ElementType type;
     OsmId id;
-    int version;
+    int versionNumber;
     size_t index;
 
     @property bool ok() const @safe pure nothrow @nogc
@@ -131,29 +131,29 @@ public:
                 return false;
             }
 
-            const version = value.metadata.versionNumber;
-            status.version = version;
-            if (version <= 0)
+            const versionNumber = value.metadata.versionNumber;
+            status.versionNumber = versionNumber;
+            if (versionNumber <= 0)
             {
                 status.error = HistoryError.invalidVersion;
                 return false;
             }
 
-            if (i != 0 && version <= previous)
+            if (i != 0 && versionNumber <= previous)
             {
                 status.error = HistoryError.nonIncreasingVersion;
                 return false;
             }
 
             if (coverage == HistoryCoverage.complete &&
-                version != cast(int)i + 1)
+                versionNumber != cast(int)i + 1)
             {
                 status.error = HistoryError.incompleteSequence;
                 return false;
             }
 
             owned[i] = value.deepCopy();
-            previous = version;
+            previous = versionNumber;
         }
 
         result.versions_ = owned;
@@ -242,7 +242,7 @@ public:
      * Returns a zero- or one-element const slice. This avoids exposing a raw
      * pointer and prevents mutation of history-owned child arrays.
      */
-    const(T)[] version(int number) const return
+    const(T)[] findVersion(int number) const return
         @safe pure nothrow @nogc
     {
         size_t low;
@@ -270,7 +270,7 @@ public:
     HistoricalVisibility visibility(int number) const
         @safe pure nothrow @nogc
     {
-        const found = version(number);
+        const found = findVersion(number);
         if (found.length == 0)
             return HistoricalVisibility.unknown;
 
@@ -334,7 +334,7 @@ unittest
     assert(history.firstVersion == 1);
     assert(history.lastVersion == 2);
     assert(!history.hasGap);
-    assert(history.version(2).length == 1);
+    assert(history.findVersion(2).length == 1);
     assert(history.visibility(2) == HistoricalVisibility.deleted);
 }
 
