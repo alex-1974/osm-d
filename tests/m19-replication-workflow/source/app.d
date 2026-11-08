@@ -491,66 +491,66 @@ private string semanticFingerprint(OsmStore store) @safe
 {
     import std.array : appender;
 
-    auto out = appender!string();
-    out.put("nodes=");
+    auto fingerprint = appender!string();
+    fingerprint.put("nodes=");
 
     bool first;
     auto nodes = store.nodes;
     while (!nodes.empty)
     {
         if (first)
-            out.put(",");
+            fingerprint.put(",");
         first = true;
-        out.put(format("%s@%s", nodes.front.id, nodes.front.metadata.versionNumber));
+        fingerprint.put(format("%s@%s", nodes.front.id, nodes.front.metadata.versionNumber));
         nodes.popFront();
     }
 
-    out.put(";way=");
+    fingerprint.put(";way=");
     auto ways = store.ways;
     while (!ways.empty)
     {
         auto way = ways.front;
-        out.put(format("%s@%s[", way.id, way.metadata.versionNumber));
+        fingerprint.put(format("%s@%s[", way.id, way.metadata.versionNumber));
         auto refs = way.nodes;
         bool refFirst;
         while (!refs.empty)
         {
             if (refFirst)
-                out.put(",");
+                fingerprint.put(",");
             refFirst = true;
-            out.put(format("%s", refs.front.id));
+            fingerprint.put(format("%s", refs.front.id));
             refs.popFront();
         }
-        out.put("]");
+        fingerprint.put("]");
         ways.popFront();
     }
 
-    out.put(";relation=");
+    fingerprint.put(";relation=");
     auto relations = store.relations;
     while (!relations.empty)
     {
         auto relation = relations.front;
-        out.put(format("%s@%s[", relation.id, relation.metadata.versionNumber));
+        fingerprint.put(format("%s@%s[", relation.id, relation.metadata.versionNumber));
         auto members = relation.members;
         bool memberFirst;
         while (!members.empty)
         {
             if (memberFirst)
-                out.put(",");
+                fingerprint.put(",");
             memberFirst = true;
             const kind = members.front.type == ElementType.node
                 ? "node"
                 : members.front.type == ElementType.way
                     ? "way"
                     : "relation";
-            out.put(format("%s:%s", kind, members.front.id));
+            fingerprint.put(format("%s:%s", kind, members.front.id));
             members.popFront();
         }
-        out.put("]");
+        fingerprint.put("]");
         relations.popFront();
     }
 
-    return out.data;
+    return fingerprint.data;
 }
 
 private void assertNodeVersion(
@@ -594,11 +594,11 @@ private ReplicationState readState(string text) @safe
     return state;
 }
 
-private OwnedMetadata metadata(int version) @safe pure nothrow
+private OwnedMetadata metadata(int versionNumber) @safe pure nothrow
 {
     OwnedMetadata result;
     result.hasVersion = true;
-    result.versionNumber = version;
+    result.versionNumber = versionNumber;
     result.hasVisibility = true;
     result.visible = true;
     return result;
