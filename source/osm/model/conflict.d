@@ -426,6 +426,42 @@ bool classifyExistenceAndVersions(T)(
                 return false;
             }
         }
+        else if (remote.hasVersion &&
+                 remote.versionNumber < base.versionNumber)
+        {
+            result.disposition = ConflictDisposition.baselineMismatch;
+            return false;
+        }
+    }
+    else if (base.hasVersion)
+    {
+        if (base.versionNumber <= 0)
+        {
+            result.disposition = ConflictDisposition.baselineMismatch;
+            return false;
+        }
+
+        if (local.exists)
+        {
+            result.disposition = ConflictDisposition.baselineMismatch;
+            return false;
+        }
+
+        if (remote.exists)
+        {
+            if (!remote.hasVersion ||
+                remote.versionNumber <= base.versionNumber)
+            {
+                result.disposition = ConflictDisposition.baselineMismatch;
+                return false;
+            }
+        }
+        else if (remote.hasVersion &&
+                 remote.versionNumber < base.versionNumber)
+        {
+            result.disposition = ConflictDisposition.baselineMismatch;
+            return false;
+        }
     }
 
     result.existence = classifyExistence(
@@ -445,7 +481,17 @@ void finishPresenceOnly(T)(
     {
         if (!local.exists && !remote.exists)
         {
-            result.disposition = ConflictDisposition.unchanged;
+            if (base.hasVersion &&
+                remote.hasVersion &&
+                remote.versionNumber > base.versionNumber)
+            {
+                result.remoteChanged = true;
+                result.disposition = ConflictDisposition.remoteOnly;
+            }
+            else
+            {
+                result.disposition = ConflictDisposition.unchanged;
+            }
             return;
         }
         if (local.exists && !remote.exists)
