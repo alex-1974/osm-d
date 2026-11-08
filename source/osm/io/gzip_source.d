@@ -347,35 +347,56 @@ private:
 
     Result drive(scope ubyte[] output) @safe
     {
+        size_t consumed;
+        size_t produced;
+
         while (true)
         {
             if (inputBegin == inputEnd && !compressedEnd)
             {
                 if (!refillInput())
                     return Result.failure(
-                        ErrorCode.invalidArgument);
+                        ErrorCode.invalidArgument,
+                        consumed,
+                        produced);
             }
 
             auto step = decodeGzip(
                 decoder,
                 workspace,
                 inputBuffer[inputBegin .. inputEnd],
-                output,
+                output[produced .. $],
                 compressedEnd);
 
             inputBegin += step.consumed;
+            consumed += step.consumed;
+            produced += step.produced;
 
             if (step.status != DecodeStatus.needInput)
+            {
+                step.consumed = consumed;
+                step.produced = produced;
                 return step;
+            }
+
+            // A need-input transition can coincide exactly with filling the
+            // caller's output. Report backpressure first; the decoder can
+            // request the next compressed chunk on the following call.
+            if (produced == output.length)
+                return Result.needOutput(consumed, produced);
 
             if (compressedEnd)
+            {
+                step.consumed = consumed;
+                step.produced = produced;
                 return step;
+            }
 
             if (!refillInput())
                 return Result.failure(
                     ErrorCode.invalidArgument,
-                    step.consumed,
-                    step.produced);
+                    consumed,
+                    produced);
         }
     }
 
