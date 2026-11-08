@@ -28,6 +28,10 @@ import osm.model.change :
     UploadResult,
     UploadResultEffect,
     UploadResultEntry;
+import osm.model.conflict :
+    NodeState,
+    RelationState,
+    WayState;
 import osm.model.owned :
     OwnedBytes,
     OwnedDataset,
@@ -3344,6 +3348,404 @@ public:
             result.editBaselines += ownedRelationBytes(value);
 
         return result;
+    }
+
+
+    /**
+     * Package-internal base/local snapshot for authoritative Node reconciliation.
+     *
+     * false means the store has no current or locally-deleted state for id.
+     */
+    package(osm) bool syncNodeStates(
+        OsmId id,
+        out OsmHandle handle,
+        out NodeState base,
+        out NodeState local) @safe
+    {
+        handle = OsmHandle.init;
+        base = NodeState.absent(id);
+        local = NodeState.absent(id);
+
+        uint slot;
+        if (!_nodeIndex.find(id, slot))
+        {
+            bool foundDeleted;
+            foreach (candidate, ref ignored; _nodeBaselines)
+            {
+                if (candidate < _nodes.ids.length &&
+                    _nodes.ids[candidate] == id &&
+                    _nodes.states[candidate] == StoreElementState.deleted)
+                {
+                    slot = candidate;
+                    foundDeleted = true;
+                    break;
+                }
+            }
+            if (!foundDeleted)
+                return false;
+        }
+
+        handle = makeHandle(
+            ElementType.node, slot, _nodes.generations[slot]);
+        const state = _nodes.states[slot];
+
+        if (state == StoreElementState.created)
+        {
+            local = NodeState.present(copyNodeAt(slot));
+            return true;
+        }
+
+        if (state == StoreElementState.clean)
+        {
+            auto current = copyNodeAt(slot);
+            base = NodeState.present(current);
+            local = NodeState.present(current);
+            return true;
+        }
+
+        if (auto saved = slot in _nodeBaselines)
+            base = NodeState.present(*saved);
+
+        if (state == StoreElementState.modified)
+            local = NodeState.present(copyNodeAt(slot));
+        else
+            local = NodeState.absent(
+                id,
+                base.hasVersion ? base.version : 0);
+
+        return true;
+    }
+
+    /// Package-internal Way base/local snapshot for M18 reconciliation.
+    package(osm) bool syncWayStates(
+        OsmId id,
+        out OsmHandle handle,
+        out WayState base,
+        out WayState local) @safe
+    {
+        handle = OsmHandle.init;
+        base = WayState.absent(id);
+        local = WayState.absent(id);
+
+        uint slot;
+        if (!_wayIndex.find(id, slot))
+        {
+            bool foundDeleted;
+            foreach (candidate, ref ignored; _wayBaselines)
+            {
+                if (candidate < _ways.ids.length &&
+                    _ways.ids[candidate] == id &&
+                    _ways.states[candidate] == StoreElementState.deleted)
+                {
+                    slot = candidate;
+                    foundDeleted = true;
+                    break;
+                }
+            }
+            if (!foundDeleted)
+                return false;
+        }
+
+        handle = makeHandle(
+            ElementType.way, slot, _ways.generations[slot]);
+        const state = _ways.states[slot];
+
+        if (state == StoreElementState.created)
+        {
+            local = WayState.present(copyWayAt(slot));
+            return true;
+        }
+
+        if (state == StoreElementState.clean)
+        {
+            auto current = copyWayAt(slot);
+            base = WayState.present(current);
+            local = WayState.present(current);
+            return true;
+        }
+
+        if (auto saved = slot in _wayBaselines)
+            base = WayState.present(*saved);
+
+        if (state == StoreElementState.modified)
+            local = WayState.present(copyWayAt(slot));
+        else
+            local = WayState.absent(
+                id,
+                base.hasVersion ? base.version : 0);
+
+        return true;
+    }
+
+    /// Package-internal Relation base/local snapshot for M18 reconciliation.
+    package(osm) bool syncRelationStates(
+        OsmId id,
+        out OsmHandle handle,
+        out RelationState base,
+        out RelationState local) @safe
+    {
+        handle = OsmHandle.init;
+        base = RelationState.absent(id);
+        local = RelationState.absent(id);
+
+        uint slot;
+        if (!_relationIndex.find(id, slot))
+        {
+            bool foundDeleted;
+            foreach (candidate, ref ignored; _relationBaselines)
+            {
+                if (candidate < _relations.ids.length &&
+                    _relations.ids[candidate] == id &&
+                    _relations.states[candidate] ==
+                        StoreElementState.deleted)
+                {
+                    slot = candidate;
+                    foundDeleted = true;
+                    break;
+                }
+            }
+            if (!foundDeleted)
+                return false;
+        }
+
+        handle = makeHandle(
+            ElementType.relation, slot, _relations.generations[slot]);
+        const state = _relations.states[slot];
+
+        if (state == StoreElementState.created)
+        {
+            local = RelationState.present(copyRelationAt(slot));
+            return true;
+        }
+
+        if (state == StoreElementState.clean)
+        {
+            auto current = copyRelationAt(slot);
+            base = RelationState.present(current);
+            local = RelationState.present(current);
+            return true;
+        }
+
+        if (auto saved = slot in _relationBaselines)
+            base = RelationState.present(*saved);
+
+        if (state == StoreElementState.modified)
+            local = RelationState.present(copyRelationAt(slot));
+        else
+            local = RelationState.absent(
+                id,
+                base.hasVersion ? base.version : 0);
+
+        return true;
+    }
+
+    /** Validate one authoritative current Node without mutating the store. */
+    package(osm) bool preflightAuthoritative(
+        scope ref const OwnedNode value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.node;
+        status.id = value.id;
+        if (value.id <= 0)
+        {
+            status.error = StoreError.invalidId;
+            return false;
+        }
+        if (!value.metadata.hasVersion ||
+            value.metadata.versionNumber <= 0)
+        {
+            status.error = StoreError.invalidVersion;
+            return false;
+        }
+        return preflightTags(value.tags, status);
+    }
+
+    /** Validate one authoritative current Way without mutating the store. */
+    package(osm) bool preflightAuthoritative(
+        scope ref const OwnedWay value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.way;
+        status.id = value.id;
+        if (value.id <= 0)
+        {
+            status.error = StoreError.invalidId;
+            return false;
+        }
+        if (!value.metadata.hasVersion ||
+            value.metadata.versionNumber <= 0)
+        {
+            status.error = StoreError.invalidVersion;
+            return false;
+        }
+        if (!preflightTags(value.tags, status))
+            return false;
+        foreach (ref const node; value.nodes)
+        {
+            if (node.id <= 0)
+            {
+                status.error = StoreError.invalidId;
+                status.type = ElementType.node;
+                status.id = node.id;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Validate one authoritative current Relation without mutating the store. */
+    package(osm) bool preflightAuthoritative(
+        scope ref const OwnedRelation value,
+        out StoreStatus status) @safe nothrow @nogc
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.relation;
+        status.id = value.id;
+        if (value.id <= 0)
+        {
+            status.error = StoreError.invalidId;
+            return false;
+        }
+        if (!value.metadata.hasVersion ||
+            value.metadata.versionNumber <= 0)
+        {
+            status.error = StoreError.invalidVersion;
+            return false;
+        }
+        if (!preflightTags(value.tags, status))
+            return false;
+        foreach (ref const member; value.members)
+        {
+            if (member.id <= 0)
+            {
+                status.error = StoreError.invalidId;
+                status.type = member.type;
+                status.id = member.id;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Replace a live object with authoritative state while preserving its handle.
+     *
+     * M18 calls this only after complete batch preflight. The ordinary replace
+     * path performs index maintenance; the temporary edit baseline it creates
+     * is immediately discarded and the object becomes clean.
+     */
+    package(osm) bool replaceAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedNode value,
+        out StoreStatus status) @safe
+    {
+        if (!replace(handle, value, status))
+            return false;
+        _nodes.states[handle._slot] = StoreElementState.clean;
+        _nodeBaselines.remove(handle._slot);
+        return true;
+    }
+
+    package(osm) bool replaceAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedWay value,
+        out StoreStatus status) @safe
+    {
+        if (!replace(handle, value, status))
+            return false;
+        _ways.states[handle._slot] = StoreElementState.clean;
+        _wayBaselines.remove(handle._slot);
+        return true;
+    }
+
+    package(osm) bool replaceAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedRelation value,
+        out StoreStatus status) @safe
+    {
+        if (!replace(handle, value, status))
+            return false;
+        _relations.states[handle._slot] = StoreElementState.clean;
+        _relationBaselines.remove(handle._slot);
+        return true;
+    }
+
+    /**
+     * Acknowledge authoritative absence without creating a local delete.
+     *
+     * The old handle is invalidated because the authoritative object no longer
+     * exists. collectChanges has no retained baseline afterward and therefore
+     * never emits this server-side deletion as a new local delete.
+     */
+    package(osm) bool discardAuthoritative(
+        OsmHandle handle,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        if (!validateHandle(handle, status))
+            return false;
+
+        const currentState = stateAt(handle);
+        if (currentState == StoreElementState.created ||
+            currentState == StoreElementState.modified)
+        {
+            status.error = StoreError.staleUploadState;
+            status.type = handle.type;
+            status.id = idAt(handle);
+            return false;
+        }
+
+        final switch (handle.type)
+        {
+            case ElementType.node:
+                if (currentState != StoreElementState.deleted)
+                {
+                    _nodes.states[handle._slot] = StoreElementState.deleted;
+                    const removed =
+                        _nodeIndex.remove(_nodes.ids[handle._slot]);
+                    assert(removed);
+                    --_liveNodes;
+                }
+                _nodeBaselines.remove(handle._slot);
+                invalidateGeneration(_nodes, handle._slot);
+                break;
+
+            case ElementType.way:
+                if (currentState != StoreElementState.deleted)
+                {
+                    deactivateWayParents(
+                        _wayRefs[handle._slot], handle._slot);
+                    _ways.states[handle._slot] = StoreElementState.deleted;
+                    const removed =
+                        _wayIndex.remove(_ways.ids[handle._slot]);
+                    assert(removed);
+                    --_liveWays;
+                }
+                _wayBaselines.remove(handle._slot);
+                invalidateGeneration(_ways, handle._slot);
+                break;
+
+            case ElementType.relation:
+                if (currentState != StoreElementState.deleted)
+                {
+                    deactivateRelationParents(
+                        _relationMembers[handle._slot],
+                        handle._slot);
+                    _relations.states[handle._slot] =
+                        StoreElementState.deleted;
+                    const removed =
+                        _relationIndex.remove(_relations.ids[handle._slot]);
+                    assert(removed);
+                    --_liveRelations;
+                }
+                _relationBaselines.remove(handle._slot);
+                invalidateGeneration(_relations, handle._slot);
+                break;
+        }
+
+        return true;
     }
 
 private:
