@@ -1,0 +1,8 @@
+name "osm-d-m19-replication-workflow"
+description "M19 multi-sequence replication workflow qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
