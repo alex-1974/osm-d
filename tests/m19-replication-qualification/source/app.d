@@ -84,105 +84,105 @@ private void qualifyCompleteWorkflow(ref const FixtureSet fixtures)
     ReplicationIngestStatus status;
     auto options = ingestOptions();
 
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1001, checkpoint1000, feed, state1001,
         result, status, options));
-    assert(result.checkpointAdvanced);
-    assert(result.stagedTransitions == 4);
+    require(result.checkpointAdvanced);
+    require(result.stagedTransitions == 4);
     auto checkpoint1001 = result.checkpoint;
     qualifyIndexesAfter1001(store);
 
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1002, checkpoint1001, feed, state1002,
         result, status, options));
-    assert(result.checkpointAdvanced);
-    assert(result.stagedTransitions == 4);
+    require(result.checkpointAdvanced);
+    require(result.stagedTransitions == 4);
     auto checkpoint1002 = result.checkpoint;
     qualifyIndexesAfter1002(store);
 
     // Restart after store mutation but before durable checkpoint persistence:
     // replay the same resource against the old checkpoint.
     ReplicationApplyResult restartReplay;
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1002, checkpoint1001, feed, state1002,
         restartReplay, status, options));
-    assert(restartReplay.checkpointAdvanced);
-    assert(restartReplay.replayedEntries == 4);
-    assert(restartReplay.stagedTransitions == 0);
-    assert(restartReplay.checkpoint.state.sequenceNumber == 1002);
+    require(restartReplay.checkpointAdvanced);
+    require(restartReplay.replayedEntries == 4);
+    require(restartReplay.stagedTransitions == 0);
+    require(restartReplay.checkpoint.state.sequenceNumber == 1002);
     qualifyIndexesAfter1002(store);
 
     // Once checkpoint 1002 is durable, the same sequence is a direct sequence
     // replay and causes no store mutation.
     ReplicationApplyResult sequenceReplay;
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1002, checkpoint1002, feed, state1002,
         sequenceReplay, status, options));
-    assert(sequenceReplay.sequenceReplay);
-    assert(!sequenceReplay.checkpointAdvanced);
+    require(sequenceReplay.sequenceReplay);
+    require(!sequenceReplay.checkpointAdvanced);
 
     // An explicit sequence gap must fail before any semantic store update.
     auto node103VersionBeforeGap = nodeVersion(store, 103);
-    assert(!applyFixture(
+    require(!applyFixture(
         store, fixtures.s1004, checkpoint1002, feed, state1004,
         result, status, options));
-    assert(status.error == ReplicationIngestError.applyFailure);
-    assert(status.applyStatus.error == ReplicationApplyError.sequenceGap);
-    assert(result.checkpoint.state.sequenceNumber == 1002);
-    assert(nodeVersion(store, 103) == node103VersionBeforeGap);
+    require(status.error == ReplicationIngestError.applyFailure);
+    require(status.applyStatus.error == ReplicationApplyError.sequenceGap);
+    require(result.checkpoint.state.sequenceNumber == 1002);
+    require(nodeVersion(store, 103) == node103VersionBeforeGap);
 
     // Sequence 1003 overlaps the prior timestamp and carries one exact
     // already-known version plus one new version.
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1003, checkpoint1002, feed, state1003,
         result, status, options));
-    assert(result.replayedEntries == 1);
-    assert(result.stagedTransitions == 1);
+    require(result.replayedEntries == 1);
+    require(result.stagedTransitions == 1);
     auto checkpoint1003 = result.checkpoint;
 
     // Corrupt/truncated transport cannot advance the checkpoint or mutate the
     // store. Retry of the complete resource must then succeed deterministically.
     auto node103VersionBeforeTruncation = nodeVersion(store, 103);
     auto truncated = fixtures.s1004[0 .. $ - 5];
-    assert(!applyFixture(
+    require(!applyFixture(
         store, truncated, checkpoint1003, feed, state1004,
         result, status, options));
-    assert(status.error == ReplicationIngestError.compressionFailure);
-    assert(result.checkpoint.state.sequenceNumber == 1003);
-    assert(nodeVersion(store, 103) == node103VersionBeforeTruncation);
+    require(status.error == ReplicationIngestError.compressionFailure);
+    require(result.checkpoint.state.sequenceNumber == 1003);
+    require(nodeVersion(store, 103) == node103VersionBeforeTruncation);
 
-    assert(applyFixture(
+    require(applyFixture(
         store, fixtures.s1004, checkpoint1003, feed, state1004,
         result, status, options));
-    assert(result.stagedTransitions == 2);
+    require(result.stagedTransitions == 2);
     auto checkpoint1004 = result.checkpoint;
-    assert(!hasElement(store, ElementType.node, 101));
+    require(!hasElement(store, ElementType.node, 101));
 
     // Dirty local edits hand off to M18 conflict semantics. The remote step
     // must be entirely non-mutating and leave the checkpoint at 1004.
     StoreStatus storeStatus;
     StoreNodeView node102View;
-    assert(store.node(102, node102View, storeStatus));
+    require(store.node(102, node102View, storeStatus));
     auto node102Handle = node102View.handle;
     OwnedNode local102;
-    assert(store.copyNode(node102Handle, local102, storeStatus));
+    require(store.copyNode(node102Handle, local102, storeStatus));
     local102.tags[0].value =
         ownBytes(cast(const(ubyte)[])"local-dirty");
-    assert(store.replace(node102Handle, local102, storeStatus));
+    require(store.replace(node102Handle, local102, storeStatus));
 
-    assert(!applyFixture(
+    require(!applyFixture(
         store, fixtures.s1005, checkpoint1004, feed, state1005,
         result, status, options));
-    assert(status.error == ReplicationIngestError.applyFailure);
-    assert(status.applyStatus.error == ReplicationApplyError.localConflict);
-    assert(result.checkpoint.state.sequenceNumber == 1004);
-    assert(nodeVersion(store, 102) == 2);
+    require(status.error == ReplicationIngestError.applyFailure);
+    require(status.applyStatus.error == ReplicationApplyError.localConflict);
+    require(result.checkpoint.state.sequenceNumber == 1004);
+    require(nodeVersion(store, 102) == 2);
 
-    assert(store.revert(node102Handle, storeStatus));
-    assert(applyFixture(
+    require(store.revert(node102Handle, storeStatus));
+    require(applyFixture(
         store, fixtures.s1005, checkpoint1004, feed, state1005,
         result, status, options));
-    assert(result.checkpoint.state.sequenceNumber == 1005);
+    require(result.checkpoint.state.sequenceNumber == 1005);
 
     qualifyFinalSnapshot(store);
 }
@@ -329,9 +329,9 @@ private OsmStore baselineStore()
     auto n100 = node(100, 1, 48_000_000_100L, 16_000_000_100L, "n100-v1");
     auto n101 = node(101, 1, 48_000_000_101L, 16_000_000_101L, "n101-v1");
     auto n102 = node(102, 1, 48_000_000_102L, 16_000_000_102L, "n102-v1");
-    assert(store.add(n100, handle, status));
-    assert(store.add(n101, handle, status));
-    assert(store.add(n102, handle, status));
+    require(store.add(n100, handle, status));
+    require(store.add(n101, handle, status));
+    require(store.add(n102, handle, status));
 
     OwnedWay way;
     way.id = 200;
@@ -339,43 +339,43 @@ private OsmStore baselineStore()
     way.nodes ~= nodeRef(100);
     way.nodes ~= nodeRef(101);
     way.tags ~= tag("highway", "service");
-    assert(store.add(way, handle, status));
+    require(store.add(way, handle, status));
 
     OwnedRelation relation;
     relation.id = 300;
     relation.metadata = metadata(1, true);
     relation.members ~= member(ElementType.way, 200, "outer");
     relation.tags ~= tag("type", "multipolygon");
-    assert(store.add(relation, handle, status));
+    require(store.add(relation, handle, status));
 
     return store;
 }
 
 private void qualifyIndexesAfter1001(OsmStore store)
 {
-    assert(hasParentWay(store, 100, 200));
-    assert(!hasParentWay(store, 101, 200));
-    assert(hasParentWay(store, 102, 200));
-    assert(parentWayCount(store, 102) == 1);
+    require(hasParentWay(store, 100, 200));
+    require(!hasParentWay(store, 101, 200));
+    require(hasParentWay(store, 102, 200));
+    require(parentWayCount(store, 102) == 1);
 
-    assert(hasParentRelation(store, ElementType.way, 200, 300));
-    assert(hasParentRelation(store, ElementType.node, 100, 300));
+    require(hasParentRelation(store, ElementType.way, 200, 300));
+    require(hasParentRelation(store, ElementType.node, 100, 300));
 }
 
 private void qualifyIndexesAfter1002(OsmStore store)
 {
-    assert(!hasParentWay(store, 100, 200));
-    assert(parentWayCount(store, 102) == 2);
-    assert(parentWayCount(store, 103) == 2);
-    assert(hasParentWay(store, 102, 200));
-    assert(hasParentWay(store, 102, 201));
-    assert(hasParentWay(store, 103, 200));
-    assert(hasParentWay(store, 103, 201));
+    require(!hasParentWay(store, 100, 200));
+    require(parentWayCount(store, 102) == 2);
+    require(parentWayCount(store, 103) == 2);
+    require(hasParentWay(store, 102, 200));
+    require(hasParentWay(store, 102, 201));
+    require(hasParentWay(store, 103, 200));
+    require(hasParentWay(store, 103, 201));
 
-    assert(hasParentRelation(store, ElementType.way, 200, 300));
-    assert(hasParentRelation(store, ElementType.way, 201, 300));
-    assert(hasParentRelation(store, ElementType.node, 103, 300));
-    assert(!hasParentRelation(store, ElementType.node, 100, 300));
+    require(hasParentRelation(store, ElementType.way, 200, 300));
+    require(hasParentRelation(store, ElementType.way, 201, 300));
+    require(hasParentRelation(store, ElementType.node, 103, 300));
+    require(!hasParentRelation(store, ElementType.node, 100, 300));
 }
 
 private void qualifyFinalSnapshot(OsmStore store)
@@ -383,21 +383,21 @@ private void qualifyFinalSnapshot(OsmStore store)
     assertNode(store, 100, 3, 48_000_000_300L, "n100-v3");
     assertNode(store, 102, 3, 48_000_000_302L, "n102-v3");
     assertNode(store, 103, 2, 48_000_000_203L, "n103-v2");
-    assert(!hasElement(store, ElementType.node, 101));
+    require(!hasElement(store, ElementType.node, 101));
 
     StoreStatus status;
     StoreWayView way;
-    assert(store.way(200, way, status));
-    assert(way.metadata.versionNumber == 3);
+    require(store.way(200, way, status));
+    require(way.metadata.versionNumber == 3);
     assertWayNodes(way, [102L, 103L]);
 
-    assert(store.way(201, way, status));
-    assert(way.metadata.versionNumber == 1);
+    require(store.way(201, way, status));
+    require(way.metadata.versionNumber == 1);
     assertWayNodes(way, [102L, 103L]);
 
     StoreRelationView relation;
-    assert(store.relation(300, relation, status));
-    assert(relation.metadata.versionNumber == 3);
+    require(store.relation(300, relation, status));
+    require(relation.metadata.versionNumber == 3);
     size_t memberCount;
     bool way200;
     bool way201;
@@ -415,20 +415,20 @@ private void qualifyFinalSnapshot(OsmStore store)
             node103 = true;
         members.popFront();
     }
-    assert(memberCount == 3 && way200 && way201 && node103);
+    require(memberCount == 3 && way200 && way201 && node103);
 
     // Final reverse-index snapshot.
-    assert(parentWayCount(store, 100) == 0);
-    assert(parentWayCount(store, 102) == 2);
-    assert(parentWayCount(store, 103) == 2);
-    assert(hasParentRelation(store, ElementType.way, 200, 300));
-    assert(hasParentRelation(store, ElementType.way, 201, 300));
-    assert(hasParentRelation(store, ElementType.node, 103, 300));
+    require(parentWayCount(store, 100) == 0);
+    require(parentWayCount(store, 102) == 2);
+    require(parentWayCount(store, 103) == 2);
+    require(hasParentRelation(store, ElementType.way, 200, 300));
+    require(hasParentRelation(store, ElementType.way, 201, 300));
+    require(hasParentRelation(store, ElementType.node, 103, 300));
 
     const counts = store.counts;
-    assert(counts.liveNodes == 3);
-    assert(counts.liveWays == 2);
-    assert(counts.liveRelations == 1);
+    require(counts.liveNodes == 3);
+    require(counts.liveWays == 2);
+    require(counts.liveRelations == 1);
 }
 
 private void assertNode(
@@ -440,9 +440,9 @@ private void assertNode(
 {
     StoreNodeView view;
     StoreStatus status;
-    assert(store.node(id, view, status));
-    assert(view.metadata.versionNumber == versionNumber);
-    assert(view.location.latitudeNanodegrees == latitude);
+    require(store.node(id, view, status));
+    require(view.metadata.versionNumber == versionNumber);
+    require(view.location.latitudeNanodegrees == latitude);
     auto tags = view.tags;
     bool found;
     while (!tags.empty)
@@ -450,12 +450,12 @@ private void assertNode(
         auto current = tags.front;
         if (current.key == cast(const(ubyte)[])"name")
         {
-            assert(current.value == cast(const(ubyte)[])expectedName);
+            require(current.value == cast(const(ubyte)[])expectedName);
             found = true;
         }
         tags.popFront();
     }
-    assert(found);
+    require(found);
 }
 
 private void assertWayNodes(StoreWayView way, const(long)[] expected)
@@ -464,12 +464,12 @@ private void assertWayNodes(StoreWayView way, const(long)[] expected)
     size_t i;
     while (!nodes.empty)
     {
-        assert(i < expected.length);
-        assert(nodes.front.id == expected[i]);
+        require(i < expected.length);
+        require(nodes.front.id == expected[i]);
         ++i;
         nodes.popFront();
     }
-    assert(i == expected.length);
+    require(i == expected.length);
 }
 
 private bool hasElement(OsmStore store, ElementType type, OsmId id)
@@ -482,7 +482,7 @@ private int nodeVersion(OsmStore store, OsmId id)
 {
     StoreNodeView view;
     StoreStatus status;
-    assert(store.node(id, view, status));
+    require(store.node(id, view, status));
     return view.metadata.versionNumber;
 }
 
@@ -529,7 +529,7 @@ private bool hasParentRelation(
 private ReplicationFeed makeFeed()
 {
     ReplicationFeed result;
-    assert(ReplicationFeed.create(
+    require(ReplicationFeed.create(
         "m19-authored-minute",
         ReplicationGranularity.minute,
         result));
@@ -543,7 +543,7 @@ private ReplicationCheckpoint checkpoint(
     ReplicationCheckpoint result;
     result.feed = feed;
     result.state = state;
-    assert(result.valid);
+    require(result.valid);
     return result;
 }
 
@@ -557,7 +557,7 @@ private ReplicationState state(
     result.timestamp =
         ReplicationTimestamp.fromUnixSeconds(unixSeconds);
     result.timestamp.isoUtc = isoUtc;
-    assert(result.valid);
+    require(result.valid);
     return result;
 }
 
@@ -610,4 +610,12 @@ private OwnedRelationMember member(
     result.id = id;
     result.role = ownBytes(cast(const(ubyte)[])role);
     return result;
+}
+
+private void require(
+    bool condition,
+    string message = "M19 replication qualification failed")
+{
+    if (!condition)
+        throw new Exception(message);
 }
