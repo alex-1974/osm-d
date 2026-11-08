@@ -304,22 +304,6 @@ private bool applyFixture(
         status,
         options);
 
-    if (!accepted)
-    {
-        // Keep CI diagnostics useful without changing the public error model.
-        import std.stdio : stderr;
-        stderr.writefln(
-            "M19 fixture rejected seq=%s stage=%s transport=%s compression=%s xml=%s apply=%s compressed=%s decoded=%s",
-            state.sequenceNumber,
-            status.error,
-            status.transportError,
-            status.compressionError.code,
-            status.osmChangeStatus.error,
-            status.applyStatus.error,
-            status.compressedBytesRead,
-            status.decodedBytes);
-    }
-
     return accepted;
 }
 
