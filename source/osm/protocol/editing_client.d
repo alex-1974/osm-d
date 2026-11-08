@@ -366,40 +366,41 @@ public:
      * Read one historical Node version.
      *
      * OSM operation: GET /node/{id}/{version}; no authorization is required.
-     * The bounded XML response becomes an OwnedNode whose ID and version are
-     * checked against the request. status retains the exact HTTP code on a
-     * completed non-success response.
+     * The historical result preserves visible=false and permits location to be
+     * absent for a deleted version instead of inventing coordinates.
      */
     bool readNodeVersion(
         OsmId id,
         int versionNumber,
-        out OwnedNode node,
+        out HistoricalNodeVersion node,
         out EditingApiStatus status)
         @safe
     {
-        node = OwnedNode.init;
+        node = HistoricalNodeVersion.init;
         if (!prepareReadVersion(id, versionNumber, status))
             return false;
 
-        OsmXmlDocument document;
-        if (!readElementDocument(
+        HttpResponse response;
+        if (!get(
                 "/node/" ~ id.to!string ~ "/" ~
                     versionNumber.to!string,
-                document,
-                status))
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
             return false;
 
-        if (document.data.nodes.length != 1 ||
-            document.data.ways.length != 0 ||
-            document.data.relations.length != 0 ||
-            document.data.nodes[0].id != id ||
-            !matchesVersion(
-                document.data.nodes[0].metadata.hasVersion,
-                document.data.nodes[0].metadata.versionNumber,
-                versionNumber))
+        auto source = new ResponseBodySource(response.body);
+        HistoricalNodeVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readNodeHistoryXml(source, versions, codec) ||
+            versions.length != 1 ||
+            versions[0].id != id ||
+            !versions[0].metadata.hasVersion ||
+            versions[0].metadata.versionNumber != versionNumber)
             return decodeFailure(status);
 
-        node = document.data.nodes[0];
+        node = versions[0].deepCopy();
         return true;
     }
 
@@ -485,39 +486,41 @@ public:
      * Read one historical Way version.
      *
      * OSM operation: GET /way/{id}/{version}; no authorization is required.
-     * The bounded XML response becomes an OwnedWay whose ID and version are
-     * checked against the request.
+     * The result is historical rather than a live OwnedWay so visibility and
+     * deletion semantics remain explicit.
      */
     bool readWayVersion(
         OsmId id,
         int versionNumber,
-        out OwnedWay way,
+        out HistoricalWayVersion way,
         out EditingApiStatus status)
         @safe
     {
-        way = OwnedWay.init;
+        way = HistoricalWayVersion.init;
         if (!prepareReadVersion(id, versionNumber, status))
             return false;
 
-        OsmXmlDocument document;
-        if (!readElementDocument(
+        HttpResponse response;
+        if (!get(
                 "/way/" ~ id.to!string ~ "/" ~
                     versionNumber.to!string,
-                document,
-                status))
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
             return false;
 
-        if (document.data.nodes.length != 0 ||
-            document.data.ways.length != 1 ||
-            document.data.relations.length != 0 ||
-            document.data.ways[0].id != id ||
-            !matchesVersion(
-                document.data.ways[0].metadata.hasVersion,
-                document.data.ways[0].metadata.versionNumber,
-                versionNumber))
+        auto source = new ResponseBodySource(response.body);
+        HistoricalWayVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readWayHistoryXml(source, versions, codec) ||
+            versions.length != 1 ||
+            versions[0].id != id ||
+            !versions[0].metadata.hasVersion ||
+            versions[0].metadata.versionNumber != versionNumber)
             return decodeFailure(status);
 
-        way = document.data.ways[0];
+        way = versions[0].deepCopy();
         return true;
     }
 
@@ -633,39 +636,41 @@ public:
      * Read one historical Relation version.
      *
      * OSM operation: GET /relation/{id}/{version}; no authorization is required.
-     * The bounded XML response becomes an OwnedRelation whose ID and version
-     * are checked against the request.
+     * Ordered members, roles, tags and visibility are retained as historical
+     * data rather than implying a current live object.
      */
     bool readRelationVersion(
         OsmId id,
         int versionNumber,
-        out OwnedRelation relation,
+        out HistoricalRelationVersion relation,
         out EditingApiStatus status)
         @safe
     {
-        relation = OwnedRelation.init;
+        relation = HistoricalRelationVersion.init;
         if (!prepareReadVersion(id, versionNumber, status))
             return false;
 
-        OsmXmlDocument document;
-        if (!readElementDocument(
+        HttpResponse response;
+        if (!get(
                 "/relation/" ~ id.to!string ~ "/" ~
                     versionNumber.to!string,
-                document,
-                status))
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
             return false;
 
-        if (document.data.nodes.length != 0 ||
-            document.data.ways.length != 0 ||
-            document.data.relations.length != 1 ||
-            document.data.relations[0].id != id ||
-            !matchesVersion(
-                document.data.relations[0].metadata.hasVersion,
-                document.data.relations[0].metadata.versionNumber,
-                versionNumber))
+        auto source = new ResponseBodySource(response.body);
+        HistoricalRelationVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readRelationHistoryXml(source, versions, codec) ||
+            versions.length != 1 ||
+            versions[0].id != id ||
+            !versions[0].metadata.hasVersion ||
+            versions[0].metadata.versionNumber != versionNumber)
             return decodeFailure(status);
 
-        relation = document.data.relations[0];
+        relation = versions[0].deepCopy();
         return true;
     }
 
