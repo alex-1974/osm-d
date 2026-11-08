@@ -29,6 +29,8 @@ public import osm.io.capabilities.document :
     EditingApiCapabilitiesDocument;
 
 public import osm.history :
+    HistoricalVisibility,
+    HistoryCoverage,
     NodeHistory,
     RelationHistory,
     WayHistory;
