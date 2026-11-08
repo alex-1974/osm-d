@@ -3370,13 +3370,12 @@ public:
         if (!_nodeIndex.find(id, slot))
         {
             bool foundDeleted;
-            foreach (candidate, ref ignored; _nodeBaselines)
+            foreach (candidate; 0 .. _nodes.ids.length)
             {
-                if (candidate < _nodes.ids.length &&
-                    _nodes.ids[candidate] == id &&
+                if (_nodes.ids[candidate] == id &&
                     _nodes.states[candidate] == StoreElementState.deleted)
                 {
-                    slot = candidate;
+                    slot = cast(uint) candidate;
                     foundDeleted = true;
                     break;
                 }
@@ -3431,13 +3430,12 @@ public:
         if (!_wayIndex.find(id, slot))
         {
             bool foundDeleted;
-            foreach (candidate, ref ignored; _wayBaselines)
+            foreach (candidate; 0 .. _ways.ids.length)
             {
-                if (candidate < _ways.ids.length &&
-                    _ways.ids[candidate] == id &&
+                if (_ways.ids[candidate] == id &&
                     _ways.states[candidate] == StoreElementState.deleted)
                 {
-                    slot = candidate;
+                    slot = cast(uint) candidate;
                     foundDeleted = true;
                     break;
                 }
@@ -3492,14 +3490,13 @@ public:
         if (!_relationIndex.find(id, slot))
         {
             bool foundDeleted;
-            foreach (candidate, ref ignored; _relationBaselines)
+            foreach (candidate; 0 .. _relations.ids.length)
             {
-                if (candidate < _relations.ids.length &&
-                    _relations.ids[candidate] == id &&
+                if (_relations.ids[candidate] == id &&
                     _relations.states[candidate] ==
                         StoreElementState.deleted)
                 {
-                    slot = candidate;
+                    slot = cast(uint) candidate;
                     foundDeleted = true;
                     break;
                 }
@@ -3641,9 +3638,16 @@ public:
         scope ref const OwnedNode value,
         out StoreStatus status) @safe
     {
+        if (!validateHandle(handle, status))
+            return false;
+
+        if (stateAt(handle) == StoreElementState.deleted)
+            return reviveAuthoritative(handle, value, status);
+
         if (!replace(handle, value, status))
             return false;
         _nodes.states[handle._slot] = StoreElementState.clean;
+        _nodes.deletedFrom[handle._slot] = StoreElementState.clean;
         _nodeBaselines.remove(handle._slot);
         return true;
     }
@@ -3653,9 +3657,16 @@ public:
         scope ref const OwnedWay value,
         out StoreStatus status) @safe
     {
+        if (!validateHandle(handle, status))
+            return false;
+
+        if (stateAt(handle) == StoreElementState.deleted)
+            return reviveAuthoritative(handle, value, status);
+
         if (!replace(handle, value, status))
             return false;
         _ways.states[handle._slot] = StoreElementState.clean;
+        _ways.deletedFrom[handle._slot] = StoreElementState.clean;
         _wayBaselines.remove(handle._slot);
         return true;
     }
@@ -3665,10 +3676,108 @@ public:
         scope ref const OwnedRelation value,
         out StoreStatus status) @safe
     {
+        if (!validateHandle(handle, status))
+            return false;
+
+        if (stateAt(handle) == StoreElementState.deleted)
+            return reviveAuthoritative(handle, value, status);
+
         if (!replace(handle, value, status))
             return false;
         _relations.states[handle._slot] = StoreElementState.clean;
+        _relations.deletedFrom[handle._slot] = StoreElementState.clean;
         _relationBaselines.remove(handle._slot);
+        return true;
+    }
+
+
+    private bool reviveAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedNode value,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.node;
+        status.id = value.id;
+
+        if (value.id != _nodes.ids[handle._slot] ||
+            !preflightAuthoritative(value, status))
+            return false;
+
+        const tagSpan = appendTags(value.tags);
+        _nodes.tags[handle._slot] = tagSpan;
+        _nodes.metadata.set(handle._slot, value.metadata, _strings);
+        _nodeLatitudes[handle._slot] = value.location.latitudeNanodegrees;
+        _nodeLongitudes[handle._slot] = value.location.longitudeNanodegrees;
+        _nodes.states[handle._slot] = StoreElementState.clean;
+        _nodes.deletedFrom[handle._slot] = StoreElementState.clean;
+        _nodeBaselines.remove(handle._slot);
+
+        const inserted = _nodeIndex.insert(value.id, handle._slot);
+        assert(inserted);
+        ++_liveNodes;
+        return true;
+    }
+
+    private bool reviveAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedWay value,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.way;
+        status.id = value.id;
+
+        if (value.id != _ways.ids[handle._slot] ||
+            !preflightAuthoritative(value, status))
+            return false;
+
+        const tagSpan = appendTags(value.tags);
+        const refSpan = appendWayNodes(value.nodes, handle._slot);
+        const locationSpan = lastWayLocationSpan;
+
+        _ways.tags[handle._slot] = tagSpan;
+        _ways.metadata.set(handle._slot, value.metadata, _strings);
+        _wayRefs[handle._slot] = refSpan;
+        _wayLocationSpans[handle._slot] = locationSpan;
+        _ways.states[handle._slot] = StoreElementState.clean;
+        _ways.deletedFrom[handle._slot] = StoreElementState.clean;
+        _wayBaselines.remove(handle._slot);
+
+        const inserted = _wayIndex.insert(value.id, handle._slot);
+        assert(inserted);
+        ++_liveWays;
+        return true;
+    }
+
+    private bool reviveAuthoritative(
+        OsmHandle handle,
+        scope ref const OwnedRelation value,
+        out StoreStatus status) @safe
+    {
+        status = StoreStatus.init;
+        status.type = ElementType.relation;
+        status.id = value.id;
+
+        if (value.id != _relations.ids[handle._slot] ||
+            !preflightAuthoritative(value, status))
+            return false;
+
+        const tagSpan = appendTags(value.tags);
+        const memberSpan =
+            appendRelationMembers(value.members, handle._slot);
+
+        _relations.tags[handle._slot] = tagSpan;
+        _relations.metadata.set(handle._slot, value.metadata, _strings);
+        _relationMembers[handle._slot] = memberSpan;
+        _relations.states[handle._slot] = StoreElementState.clean;
+        _relations.deletedFrom[handle._slot] = StoreElementState.clean;
+        _relationBaselines.remove(handle._slot);
+
+        const inserted =
+            _relationIndex.insert(value.id, handle._slot);
+        assert(inserted);
+        ++_liveRelations;
         return true;
     }
 
