@@ -20,6 +20,12 @@ import osm.protocol.editing_permissions :
     EditingApiPermissions,
     EditingApiPermissionsReadStatus,
     readEditingApiPermissions;
+import osm.history :
+    HistoryCoverage,
+    HistoryStatus,
+    NodeHistory,
+    RelationHistory,
+    WayHistory;
 import osm.io.capabilities.document : EditingApiCapabilitiesDocument;
 import osm.io.capabilities.reader :
     ApiCapabilitiesReadStatus,
@@ -427,6 +433,35 @@ public:
     }
 
     /**
+     * Read all Node versions directly into the authoritative history model.
+     *
+     * The OSM /history endpoint is expected to return the complete version
+     * sequence from version 1 onward. Missing/duplicate/out-of-order versions
+     * are therefore treated as a response-decoding failure.
+     */
+    bool readNodeHistory(
+        OsmId id,
+        out NodeHistory history,
+        out EditingApiStatus status)
+        @safe
+    {
+        history = NodeHistory.init;
+        OwnedNode[] versions;
+        if (!readNodeHistory(id, versions, status))
+            return false;
+
+        HistoryStatus historyStatus;
+        if (!NodeHistory.create(
+                versions,
+                HistoryCoverage.complete,
+                history,
+                historyStatus))
+            return decodeFailure(status);
+
+        return true;
+    }
+
+    /**
      * Read the current version of one Way.
      *
      * OSM operation: GET /way/{id}; no authorization is required.
@@ -534,6 +569,31 @@ public:
                 return decodeFailure(status);
 
         ways = document.data.ways;
+        return true;
+    }
+
+    /**
+     * Read all Way versions directly into the authoritative history model.
+     */
+    bool readWayHistory(
+        OsmId id,
+        out WayHistory history,
+        out EditingApiStatus status)
+        @safe
+    {
+        history = WayHistory.init;
+        OwnedWay[] versions;
+        if (!readWayHistory(id, versions, status))
+            return false;
+
+        HistoryStatus historyStatus;
+        if (!WayHistory.create(
+                versions,
+                HistoryCoverage.complete,
+                history,
+                historyStatus))
+            return decodeFailure(status);
+
         return true;
     }
 
@@ -678,6 +738,31 @@ public:
                 return decodeFailure(status);
 
         relations = document.data.relations;
+        return true;
+    }
+
+    /**
+     * Read all Relation versions directly into the authoritative history model.
+     */
+    bool readRelationHistory(
+        OsmId id,
+        out RelationHistory history,
+        out EditingApiStatus status)
+        @safe
+    {
+        history = RelationHistory.init;
+        OwnedRelation[] versions;
+        if (!readRelationHistory(id, versions, status))
+            return false;
+
+        HistoryStatus historyStatus;
+        if (!RelationHistory.create(
+                versions,
+                HistoryCoverage.complete,
+                history,
+                historyStatus))
+            return decodeFailure(status);
+
         return true;
     }
 
