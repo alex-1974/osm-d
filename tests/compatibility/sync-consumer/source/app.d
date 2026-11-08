@@ -20,18 +20,23 @@ import osm.model.owned :
 
     if (false)
     {
+        auto nodeVersion = HistoricalNodeVersion.fromOwned(node);
+        auto wayVersion = HistoricalWayVersion.fromOwned(way);
+        auto relationVersion =
+            HistoricalRelationVersion.fromOwned(relation);
+
         NodeHistory.create(
-            [node],
+            [nodeVersion],
             HistoryCoverage.partial,
             nodeHistory,
             historyStatus);
         WayHistory.create(
-            [way],
+            [wayVersion],
             HistoryCoverage.partial,
             wayHistory,
             historyStatus);
         RelationHistory.create(
-            [relation],
+            [relationVersion],
             HistoryCoverage.partial,
             relationHistory,
             historyStatus);
