@@ -8,6 +8,37 @@ import osm.xml;
 import osm.compare : sameChangeSemantics, sameOsmSemantics;
 import osm.model.owned : OwnedWayNode;
 import osm.view.way_node : WayNodeView;
+import osm.api :
+    EditingApiClient,
+    EditingApiServer,
+    EditingApiStatus;
+import osm.area :
+    AreaAssemblyResult;
+import osm.changeset :
+    ChangesetTagRequest,
+    OwnedChangeset;
+import osm.complete :
+    CompleteObjectState;
+import osm.history :
+    HistoricalNodeVersion,
+    NodeHistory;
+import osm.replication :
+    ReplicationApplyResult,
+    ReplicationFeed,
+    ReplicationGranularity,
+    ReplicationIngestOptions,
+    ReplicationIngestStatus,
+    ReplicationPathStatus,
+    ReplicationResourcePaths,
+    ReplicationState,
+    ReplicationTimestamp,
+    replicationResourcePaths;
+import osm.sync :
+    AuthoritativeBatch,
+    ReconcileResult,
+    ReconcileStatus;
+import osm.topology :
+    TopologyTraversalWorkspace;
 import transport.source : MemorySink, MemorySource;
 
 @safe void compileRootAndNamedArguments()
@@ -179,9 +210,51 @@ import transport.source : MemorySink, MemorySource;
         options: readOptions));
 }
 
+@safe void compileV04Facades()
+{
+    static assert(is(EditingApiClient));
+    static assert(is(EditingApiServer));
+    static assert(is(EditingApiStatus));
+    static assert(is(ChangesetTagRequest));
+    static assert(is(OwnedChangeset));
+    static assert(is(HistoricalNodeVersion));
+    static assert(is(NodeHistory));
+    static assert(is(AuthoritativeBatch));
+    static assert(is(ReconcileResult));
+    static assert(is(ReconcileStatus));
+    static assert(is(TopologyTraversalWorkspace));
+    static assert(is(CompleteObjectState));
+    static assert(is(AreaAssemblyResult));
+    static assert(is(ReplicationApplyResult));
+    static assert(is(ReplicationIngestOptions));
+    static assert(is(ReplicationIngestStatus));
+
+    ReplicationFeed feed;
+    assert(ReplicationFeed.create(
+        id: "release-consumer",
+        granularity: ReplicationGranularity.minute,
+        result: feed));
+
+    ReplicationState state;
+    state.sequenceNumber = 123_456;
+    state.timestamp = ReplicationTimestamp.fromUnixSeconds(
+        seconds: 1_762_620_000);
+
+    ReplicationResourcePaths paths;
+    ReplicationPathStatus pathStatus;
+    assert(replicationResourcePaths(
+        sequenceNumber: state.sequenceNumber,
+        paths: paths,
+        status: pathStatus));
+    assert(pathStatus.ok);
+    assert(paths.change.length != 0);
+    assert(paths.state.length != 0);
+}
+
 @safe void main()
 {
     compileRootAndNamedArguments();
     compileXmlFacade();
     compileOsmChangeAndValidationFacade();
+    compileV04Facades();
 }
