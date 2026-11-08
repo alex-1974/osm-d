@@ -1171,7 +1171,7 @@ bool matchesVersion(bool present, int actual, int expected)
 enum size_t maximumHttpDiagnosticBytes = 4 * 1024;
 
 void captureHttpDiagnostic(
-    SegmentedByteBuffer body,
+    const(SegmentedByteBuffer) body,
     ref EditingApiStatus status)
     @safe
 {
