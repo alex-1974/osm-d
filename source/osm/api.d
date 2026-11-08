@@ -54,3 +54,6 @@ public import osm.model.owned :
 public import osm.view.element :
     ElementType,
     OsmId;
+
+public import osm.view.location :
+    LocationView;
