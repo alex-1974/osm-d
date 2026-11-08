@@ -28,10 +28,15 @@ contracts instead of creating a second state machine.
 'osm.history.ElementHistory!T' models one Node, Way or Relation identity across
 authoritative OSM versions.
 
-The public aliases are 'NodeHistory', 'WayHistory' and 'RelationHistory'.
+The public aliases are 'NodeHistory', 'WayHistory' and 'RelationHistory'. Their
+entries are 'HistoricalNodeVersion', 'HistoricalWayVersion' and
+'HistoricalRelationVersion', deliberately distinct from live 'Owned*' values.
 
-Each retained value is an owning semantic object with independently mutable
-child arrays. Immutable string bytes may be shared.
+Each retained version owns independently mutable child arrays. Immutable string
+bytes may be shared. Historical Node location has an explicit presence flag:
+current OSM API responses may represent a deleted Node as 'visible=false'
+without lat/lon, and M18 preserves that absence instead of inventing (0,0).
+Converting such a deleted/location-less version to a live 'OwnedNode' fails.
 
 A history explicitly declares either:
 
@@ -53,13 +58,21 @@ undo/redo are separate concerns.
 ### 2. M17 history reads project directly into M18 histories
 
 'EditingApiClient.readNodeHistory', 'readWayHistory' and
-'readRelationHistory' retain their owned-array overloads and additionally accept
-the corresponding typed history model.
+'readRelationHistory' return the corresponding typed history model. The
+post-v0.3 development surface no longer exposes raw 'Owned*[]' history
+overloads, because those live-object types cannot faithfully represent every
+historical response.
 
-For the OSM /history endpoints, the typed overload requires
-'HistoryCoverage.complete'. A malformed, duplicate, out-of-order or gapped
-server response is therefore a response-decoding failure rather than silently
-becoming a partial history.
+Specific-version operations likewise return the corresponding
+'Historical*Version' value. Current-element operations continue to return live
+'OwnedNode', 'OwnedWay' and 'OwnedRelation'.
+
+For OSM /history responses, a contiguous sequence beginning at version 1 is
+classified as 'HistoryCoverage.complete'. A valid strictly increasing sequence
+with version gaps is preserved as 'HistoryCoverage.partial'; gaps can occur
+when historical versions are not available to the caller. Duplicate,
+out-of-order, mixed-identity or otherwise ambiguous sequences fail rather than
+being sorted or repaired.
 
 ### 3. Conflict classification is three-way and transport-independent
 
@@ -205,7 +218,8 @@ remain outside osm-d.
 M18 qualification covers:
 
 - complete and partial history sequences, gaps and deleted visibility;
-- M17 /history response projection;
+- deleted Node history/specific-version responses without invented location;
+- M17 /history and /{id}/{version} response projection;
 - Node tag/coordinate conflicts;
 - Way ordered-reference edits;
 - Relation member/role conflicts;
