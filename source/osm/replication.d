@@ -89,7 +89,14 @@ struct ReplicationFeed
 /** Normalized UTC timestamp retained from replication state metadata. */
 struct ReplicationTimestamp
 {
-    /// Canonical unescaped UTC form, for example 2026-11-08T15:40:00Z.
+    /// Whether a semantic UTC value is present.
+    bool hasValue;
+
+    /**
+     * Canonical unescaped UTC form when it originated from state.txt.
+     *
+     * Empty is valid for timestamps created directly from Unix seconds.
+     */
     string isoUtc;
 
     /// Seconds since 1970-01-01T00:00:00Z.
@@ -97,7 +104,17 @@ struct ReplicationTimestamp
 
     @property bool valid() const @safe pure nothrow @nogc
     {
-        return isoUtc.length != 0;
+        return hasValue;
+    }
+
+    /** Construct a timestamp from PBF/application Unix-epoch metadata. */
+    static ReplicationTimestamp fromUnixSeconds(long seconds)
+        @safe pure nothrow @nogc
+    {
+        ReplicationTimestamp result;
+        result.hasValue = true;
+        result.unixSeconds = seconds;
+        return result;
     }
 }
 
@@ -251,7 +268,7 @@ struct ReplicationApplyResult
 
     size_t inputEntries;
     size_t stagedIdentities;
-    size_t appliedTransitions;
+    size_t stagedTransitions;
     size_t replayedEntries;
     size_t staleEntries;
 
@@ -615,8 +632,7 @@ bool applyReplicationStep(
 
         if (!sameNodeState(base, remote))
         {
-            if (!previewNode(base, local, remote, result, status))
-                return false;
+            previewNode(base, local, remote, result, status);
             authoritative.nodes ~= remote.deepCopy();
             ++result.stagedIdentities;
         }
@@ -642,8 +658,7 @@ bool applyReplicationStep(
 
         if (!sameWayState(base, remote))
         {
-            if (!previewWay(base, local, remote, result, status))
-                return false;
+            previewWay(base, local, remote, result, status);
             authoritative.ways ~= remote.deepCopy();
             ++result.stagedIdentities;
         }
@@ -669,8 +684,7 @@ bool applyReplicationStep(
 
         if (!sameRelationState(base, remote))
         {
-            if (!previewRelation(base, local, remote, result, status))
-                return false;
+            previewRelation(base, local, remote, result, status);
             authoritative.relations ~= remote.deepCopy();
             ++result.stagedIdentities;
         }
@@ -902,6 +916,7 @@ bool parseReplicationTimestamp(
         return false;
 
     const days = daysFromCivil(year, month, day);
+    timestamp.hasValue = true;
     timestamp.unixSeconds =
         days * 86_400L +
         cast(long)hour * 3_600L +
@@ -974,8 +989,8 @@ bool sameTimestamp(
     scope ref const ReplicationTimestamp b)
     @safe pure nothrow @nogc
 {
-    return a.unixSeconds == b.unixSeconds &&
-           a.isoUtc == b.isoUtc;
+    return a.hasValue == b.hasValue &&
+           (!a.hasValue || a.unixSeconds == b.unixSeconds);
 }
 
 ReplicationFeed copyFeed(scope ref const ReplicationFeed source) @safe
@@ -1067,7 +1082,7 @@ bool stageNodeChain(
         {
             case TransitionDecision.apply:
                 remote = candidate;
-                ++result.appliedTransitions;
+                ++result.stagedTransitions;
                 break;
             case TransitionDecision.replay:
                 if (!sameNodeState(remote, candidate))
@@ -1128,7 +1143,7 @@ bool stageWayChain(
         {
             case TransitionDecision.apply:
                 remote = candidate;
-                ++result.appliedTransitions;
+                ++result.stagedTransitions;
                 break;
             case TransitionDecision.replay:
                 if (!sameWayState(remote, candidate))
@@ -1189,7 +1204,7 @@ bool stageRelationChain(
         {
             case TransitionDecision.apply:
                 remote = candidate;
-                ++result.appliedTransitions;
+                ++result.stagedTransitions;
                 break;
             case TransitionDecision.replay:
                 if (!sameRelationState(remote, candidate))
@@ -1353,7 +1368,7 @@ bool relationStateFromEntry(
     return true;
 }
 
-bool previewNode(
+void previewNode(
     NodeState base,
     NodeState local,
     NodeState remote,
@@ -1362,16 +1377,18 @@ bool previewNode(
 {
     auto report = classifyConflict(base, local, remote);
     if (!report.requiresResolution)
-        return true;
+        return;
 
     result.conflicts ~= report;
-    status.type = ElementType.node;
-    status.id = remote.id;
-    status.error = ReplicationApplyError.localConflict;
-    return false;
+    if (status.error == ReplicationApplyError.none)
+    {
+        status.type = ElementType.node;
+        status.id = remote.id;
+        status.error = ReplicationApplyError.localConflict;
+    }
 }
 
-bool previewWay(
+void previewWay(
     WayState base,
     WayState local,
     WayState remote,
@@ -1380,16 +1397,18 @@ bool previewWay(
 {
     auto report = classifyConflict(base, local, remote);
     if (!report.requiresResolution)
-        return true;
+        return;
 
     result.conflicts ~= report;
-    status.type = ElementType.way;
-    status.id = remote.id;
-    status.error = ReplicationApplyError.localConflict;
-    return false;
+    if (status.error == ReplicationApplyError.none)
+    {
+        status.type = ElementType.way;
+        status.id = remote.id;
+        status.error = ReplicationApplyError.localConflict;
+    }
 }
 
-bool previewRelation(
+void previewRelation(
     RelationState base,
     RelationState local,
     RelationState remote,
@@ -1398,13 +1417,15 @@ bool previewRelation(
 {
     auto report = classifyConflict(base, local, remote);
     if (!report.requiresResolution)
-        return true;
+        return;
 
     result.conflicts ~= report;
-    status.type = ElementType.relation;
-    status.id = remote.id;
-    status.error = ReplicationApplyError.localConflict;
-    return false;
+    if (status.error == ReplicationApplyError.none)
+    {
+        status.type = ElementType.relation;
+        status.id = remote.id;
+        status.error = ReplicationApplyError.localConflict;
+    }
 }
 
 bool sameNodeState(NodeState a, NodeState b) @safe
