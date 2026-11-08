@@ -100,6 +100,102 @@ OSM parsing.
 `benchmark/data/`, `benchmark/results/` and `benchmark/bin/` are intentionally
 ignored. Large extracts do not belong in Git.
 
+## PBF push-filter prototype qualification
+
+`parser/push_filter.d` evaluates M14 #128 without admitting a public API
+first. The benchmark-local candidate wraps the existing
+`PbfWayIterable.opApply` push traversal and applies a compile-time predicate
+before forwarding a matching borrowed `WayView` to the final foreach body.
+
+It compares three semantically equivalent forms:
+
+1. maximum-throughput `PbfReader.read(handler)` with a statically dispatched
+   handler predicate;
+2. current public `foreach (way; pbfWays(input))` plus an inline `if`;
+3. the benchmark-local composable push-filter candidate.
+
+The candidate is **not** a Phobos InputRange, performs no element
+materialization and preserves the source iterable's completion/status
+semantics.
+
+Pinned Bremen workloads cover:
+
+- a cheap high-selectivity ID predicate;
+- a cheap low-selectivity ID predicate;
+- exact `highway` tag presence.
+
+Every form must produce identical selected counts and checksums. The benchmark
+records p10/p50/p90 and the push/inline ratio. The M14 admission target is no
+material overhead over `foreach + if`; approximately 1–2% is an investigation
+threshold rather than a release promise.
+
+Build and run:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=parser-push-filter \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-push-filter \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The targeted GitHub workflow retains hosted-runner evidence. A public
+`where!`-style API is added only after the benchmark decision.
+
+## PBF ByteSource qualification
+
+`parser/source_compare.d` qualifies the bounded M14 ByteSource path against
+the resident whole-buffer reader and direct store builder. It runs one mode per
+process so `/usr/bin/time -v` can report a useful peak RSS.
+
+Supported modes are:
+
+- `file-range-read` — one complete FileSource range read, used only as a
+  transport/file baseline;
+- `slice-decode` — resident `ubyte[]` -> `PbfReader`;
+- `memory-source-decode` — resident bytes behind `MemorySource` ->
+  `PbfReader`;
+- `file-source-decode` — bounded `FileSource` -> `PbfReader`;
+- `slice-store`, `memory-source-store`, `file-source-store` — the
+  equivalent direct editable-store builds.
+
+The benchmark-only `TrackingSource` records `readSome` calls and the largest
+BlobHeader/Blob reads. This exposes the encoded current-block scratch retained
+by the source path without adding benchmark diagnostics to the public
+`PbfReaderWorkspace` API.
+
+Build and run one mode:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=parser-source-compare \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-source-compare \
+  file-source-decode 5 \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The `PBF ByteSource Qualification` workflow runs Monaco and Bremen decode/store
+parity plus Austria country-scale decode parity. On the accepted M14
+qualification the Bremen and Austria source decoders were at whole-buffer
+performance parity after I/O isolation, steady-state decode allocated zero
+D-GC bytes, and Austria FileSource peak RSS was about 18 MiB instead of about
+788 MiB for the resident 808.8 MB input. Exact hosted-runner evidence and the
+architectural decision are recorded in `docs/BENCHMARKS.md`.
+
+This harness deliberately does not benchmark loss-aware `PbfDocument`:
+raw-source preservation is a separate whole-buffer ownership contract.
+
 ## Pinned real-data baseline
 
 The initial real-data baseline uses immutable Geofabrik snapshots dated
@@ -131,6 +227,55 @@ By default the files live under
 `benchmark/data/geofabrik-2026-09-01/`, which remains ignored by Git. Set
 `OSM_D_BENCH_DATA` to use another local storage location. Unknown explicitly
 requested dataset IDs are rejected before any dataset is processed.
+
+
+## Store range-composition qualification
+
+`store/range_composition.d` isolates the consumer-visible cost of composing
+the compact store's existing InputRanges with Phobos `filter`. PBF loading and
+store construction happen before the timed region.
+
+The benchmark compares three equivalent forms: a direct hand-written
+traversal, plain Phobos `filter`, and the Phobos-recommended
+`cache.filter` composition for an underlying range whose `front` is
+non-trivial. It covers four Way predicates:
+
+- lifecycle state;
+- a trivial ID predicate;
+- exact tag-key lookup through `hasTag`;
+- two chained `filter` adapters (ID + tag).
+
+All three forms must produce the same match count and checksum. Sample order
+rotates across direct/plain/cached positions. The benchmark also records GC
+allocation and collection deltas after warm-up; both lazy compositions are
+expected to allocate no GC memory.
+
+Plain `filter` intentionally remains in the measurement because it is the
+natural consumer form. `cache.filter` is retained as a diagnostic comparison
+for repeated `front` evaluation; the M14 Bremen qualification showed that it
+does not recover direct-loop parity for this store and is not a blanket
+recommended idiom. See `docs/BENCHMARKS.md` for the measured decision.
+
+Build and run with the controlled LDC baseline:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=store-range-composition \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-store-range-composition \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf
+```
+
+The GitHub `Store Range Qualification` workflow runs the same workload on the
+pinned Bremen snapshot. Hosted-runner timings are qualification evidence, not a
+controlled-workstation marketing baseline. A ratio materially above parity is
+an investigation trigger; no custom query engine is justified merely to reduce
+a small convenience-layer delta.
 
 ## DenseNodes microbenchmark
 
@@ -569,3 +714,41 @@ values subtract separately measured p50 medians. They are diagnostic estimates,
 not independently timed production stages. The production `full-decode` result
 remains the plausibility anchor and should stay comparable with the committed
 regular-Way baseline before an architecture change is accepted.
+
+
+## M15 dataset/topology qualification
+
+`topology/qualification.d` is the consumer-scale M15 gate for
+dataset/reference validity and OSM graph traversal.
+
+It loads one pinned PBF into `OsmStore` before timing and then exercises:
+
+- full-store complete/partial validation;
+- largest real Way and Relation resolution;
+- bounded nested-Relation child closure;
+- real parent closure;
+- complete and deliberately partial subsets derived from real Way data;
+- parent-index coherence across a supported Way edit and revert;
+- explicit adversarial depth and Relation-cycle behavior.
+
+The targeted workflow uses Monaco as a smoke workload and Bremen as the primary
+city/editor-scale workload. Timings are reported as evidence and are not
+hard-coded release thresholds.
+
+Build and run manually:
+
+```bash
+dub build \
+  --root=benchmark \
+  --config=topology-qualification \
+  --compiler=ldc2 \
+  --build=release \
+  --build-mode=allAtOnce \
+  --force
+
+benchmark/bin/osm-d-bench-topology-qualification \
+  benchmark/data/geofabrik-2026-09-01/bremen-260901.osm.pbf 5
+```
+
+The accepted M15 hosted-runner evidence is summarized in
+`docs/BENCHMARKS.md`.

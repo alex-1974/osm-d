@@ -18,14 +18,17 @@ public import osm.io.pbf.reader :
     PbfRelationIterable,
     PbfReadError,
     PbfReadStatus,
+    PbfSourceReadStatus,
     PbfReadSummary,
     PbfReadResult,
+    PbfSourceReadResult,
     PbfReaderWorkspace,
     PbfReader,
     readPbf,
     pbfNodes,
     pbfWays,
-    pbfRelations;
+    pbfRelations,
+    where;
 
 public import osm.io.pbf.parallel_reader :
     PbfParallelReadOptions,

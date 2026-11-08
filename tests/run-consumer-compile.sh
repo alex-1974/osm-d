@@ -14,19 +14,28 @@ for compiler in "${compilers[@]}"; do
         exit 2
     }
 
+    # Root imports may legitimately expose package dependencies. Ask DUB for
+    # the actual compiler import flags instead of pretending the public root is
+    # dependency-free while still keeping this as a compile-only DIP1000 probe.
+    read -r -a import_flags <<< "$(dub describe \
+        --root="$ROOT" \
+        --compiler="$compiler" \
+        --data=import-paths \
+        --vquiet)"
+
     object="$TMPDIR/consumer-$(basename "$compiler").o"
     echo "=== CONSUMER COMPILE: $compiler ==="
     "$compiler" \
         -preview=dip1000 \
         -c \
-        -I"$ROOT/source" \
+        "${import_flags[@]}" \
         "$SOURCE" \
         -of="$object"
     echo "PASS: $compiler external consumer compile"
 
     store_object="$TMPDIR/store-consumer-$(basename "$compiler").o"
     echo "=== STORE CONSUMER COMPILE: $compiler ==="
-    "$compiler" -preview=dip1000 -c -I"$ROOT/source" \
+    "$compiler" -preview=dip1000 -c "${import_flags[@]}" \
         "$ROOT/tests/compatibility/store_consumer.d" -of="$store_object"
     echo "PASS: $compiler store consumer compile"
 
@@ -54,6 +63,30 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler upload validation DUB consumer compile"
 
+    echo "=== TOPOLOGY DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/topology-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler topology DUB consumer compile"
+
+    echo "=== COMPLETE-OBJECT DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/complete-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler complete-object DUB consumer compile"
+
+    echo "=== AREA-ASSEMBLY DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/area-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler area-assembly DUB consumer compile"
+
     echo "=== UPLOAD RESULT DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/upload-consumer" \
@@ -69,6 +102,38 @@ for compiler in "${compilers[@]}"; do
         --build=debug \
         --force
     echo "PASS: $compiler Editing API capabilities consumer compile"
+
+    echo "=== CHANGESET DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/changeset-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler Changeset consumer compile"
+
+    echo "=== EDITING API DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/api-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler Editing API consumer compile"
+
+    echo "=== SYNC DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/sync-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler sync consumer compile"
+
+    echo "=== REPLICATION DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/replication-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler replication consumer compile"
 
     echo "=== RELEASE API DUB CONSUMER: $compiler ==="
     dub build \

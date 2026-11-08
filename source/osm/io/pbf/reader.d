@@ -20,7 +20,7 @@
 module osm.io.pbf.reader;
 
 import osm.io.pbf.blob : BlobView, decodeBlob;
-import osm.io.pbf.blob_header : BlobKind;
+import osm.io.pbf.blob_header : BlobHeaderView, BlobKind, decodeBlobHeader;
 import osm.io.pbf.decompress :
     BlobPayloadView,
     decodeBlobPayloadInto,
@@ -40,6 +40,7 @@ import osm.io.pbf.framing :
     FrameReadResult,
     readFileBlock;
 import osm.io.pbf.header_block : HeaderBlockView, decodeHeaderBlock;
+import osm.io.pbf.limits : maxBlobHeaderSize;
 import pbfNode = osm.io.pbf.node;
 import osm.io.pbf.node_view : NodeView;
 import osm.io.pbf.primitive_block :
@@ -63,7 +64,19 @@ import osm.io.pbf.way :
     WayView,
     decodeWaysWithWorkspace,
     decodeWaysWithWorkspaceUntilStop;
+import osm.util.endian : readBigEndianU32;
 import osm.wire.cursor : WireCursor;
+import transport.source : ByteSource, ReadError, ReadLimits;
+
+version(unittest)
+{
+    import transport.source :
+        ByteRange,
+        MemorySource,
+        ReadFailure,
+        ReadResult,
+        SourceInfo;
+}
 
 /** High-level category of a complete-file PBF read failure. */
 enum PbfReadError : ubyte
@@ -116,6 +129,32 @@ struct PbfReadStatus
 }
 
 /**
+ * Combined transport/PBF diagnostic for one ByteSource-backed PBF read.
+ *
+ * A clean source EOF is not a transport failure. When EOF occurs in the middle
+ * of a PBF frame, `transportError` remains `ReadError.none` and `pbf`
+ * reports malformed/truncated input, preserving the distinction between an
+ * incomplete encoded file and an actual byte-source failure.
+ */
+struct PbfSourceReadStatus
+{
+    /// PBF semantic/framing status. Successful when transport alone failed.
+    PbfReadStatus pbf;
+    /// Generic transport failure, or ReadError.none.
+    ReadError transportError = ReadError.none;
+    /// Absolute source offset of the failed transport request.
+    ulong transportOffset;
+    /// Bytes returned by the failed transport request, when any.
+    size_t transportBytesRead;
+
+    /** True only when both transport and PBF processing succeeded. */
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return transportError == ReadError.none && pbf.ok;
+    }
+}
+
+/**
  * Counts from one successfully completed PbfReader.read operation.
  *
  * The fields are contractually valid only after read returns true.
@@ -151,6 +190,12 @@ private:
     ubyte[] decompressionBuffer;
     StringRef[] stringRefs;
     WayDecodePlan[] wayPlans;
+
+    // ByteSource framing scratch. Lengths retain the largest observed frame
+    // pieces so subsequent source reads reuse capacity without whole-file
+    // materialization.
+    ubyte[] sourceHeaderBuffer;
+    ubyte[] sourceBlobBuffer;
 }
 
 /**
@@ -177,6 +222,176 @@ bool decodeReaderBlobPayload(
         workspace.decompressionBuffer,
         payload,
         status);
+}
+
+
+private enum SourceFrameReadResult : ubyte
+{
+    block,
+    endOfInput,
+    pbfError,
+    transportError,
+}
+
+private void growSourceBuffer(ref ubyte[] buffer, size_t required) @safe
+{
+    if (buffer.length < required)
+        buffer.length = required;
+}
+
+private SourceFrameReadResult readSourceFileBlock(
+    scope ByteSource source,
+    ref ulong sourceOffset,
+    ulong sequence,
+    ref PbfReaderWorkspace workspace,
+    out FileBlockView block,
+    out PbfStatus pbfStatus,
+    out ReadError transportError,
+    out ulong transportOffset,
+    out size_t transportBytesRead)
+    @safe
+{
+    block = FileBlockView.init;
+    pbfStatus = PbfStatus.init;
+    transportError = ReadError.none;
+    transportOffset = 0;
+    transportBytesRead = 0;
+
+    const ulong blockOffset64 = sourceOffset;
+    const size_t blockOffset = cast(size_t)blockOffset64;
+
+    ubyte[4] prefix = void;
+    auto prefixRead = source.readSome(
+        sourceOffset,
+        prefix[],
+        ReadLimits(prefix.length));
+
+    if (prefixRead.hasError &&
+        prefixRead.error.kind == ReadError.endOfSource)
+    {
+        if (prefixRead.error.bytesRead == 0)
+            return SourceFrameReadResult.endOfInput;
+
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    if (prefixRead.hasError)
+    {
+        transportError = prefixRead.error.kind;
+        transportOffset = sourceOffset;
+        transportBytesRead = prefixRead.error.bytesRead;
+        return SourceFrameReadResult.transportError;
+    }
+
+    if (prefixRead.value.bytesRead != prefix.length)
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    uint headerLength;
+    if (!readBigEndianU32(prefix[], 0, headerLength))
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.truncatedHeaderLength,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    if (headerLength >= maxBlobHeaderSize)
+    {
+        pbfStatus = PbfStatus.failure(
+            PbfError.blobHeaderTooLarge,
+            blockOffset);
+        return SourceFrameReadResult.pbfError;
+    }
+
+    const ulong headerOffset64 = sourceOffset + prefix.length;
+    const size_t headerOffset = cast(size_t)headerOffset64;
+    const size_t headerSize = cast(size_t)headerLength;
+    growSourceBuffer(workspace.sourceHeaderBuffer, headerSize);
+    auto headerBytes = workspace.sourceHeaderBuffer[0 .. headerSize];
+
+    if (headerSize != 0)
+    {
+        auto headerRead = source.readSome(
+            headerOffset64,
+            headerBytes,
+            ReadLimits(headerSize));
+
+        if ((headerRead.hasError &&
+             headerRead.error.kind == ReadError.endOfSource) ||
+            (headerRead.hasValue &&
+             headerRead.value.bytesRead != headerSize))
+        {
+            pbfStatus = PbfStatus.failure(
+                PbfError.truncatedBlobHeader,
+                headerOffset);
+            return SourceFrameReadResult.pbfError;
+        }
+
+        if (headerRead.hasError)
+        {
+            transportError = headerRead.error.kind;
+            transportOffset = headerOffset64;
+            transportBytesRead = headerRead.error.bytesRead;
+            return SourceFrameReadResult.transportError;
+        }
+    }
+
+    BlobHeaderView header;
+    if (!decodeBlobHeader(headerBytes, header, pbfStatus))
+    {
+        pbfStatus.offset += headerOffset;
+        return SourceFrameReadResult.pbfError;
+    }
+
+    const ulong blobOffset64 = headerOffset64 + headerSize;
+    const size_t blobOffset = cast(size_t)blobOffset64;
+    const size_t blobSize = cast(size_t)header.dataSize;
+    growSourceBuffer(workspace.sourceBlobBuffer, blobSize);
+    auto blobBytes = workspace.sourceBlobBuffer[0 .. blobSize];
+
+    if (blobSize != 0)
+    {
+        auto blobRead = source.readSome(
+            blobOffset64,
+            blobBytes,
+            ReadLimits(blobSize));
+
+        if ((blobRead.hasError &&
+             blobRead.error.kind == ReadError.endOfSource) ||
+            (blobRead.hasValue &&
+             blobRead.value.bytesRead != blobSize))
+        {
+            pbfStatus = PbfStatus.failure(
+                PbfError.truncatedBlobData,
+                blobOffset);
+            return SourceFrameReadResult.pbfError;
+        }
+
+        if (blobRead.hasError)
+        {
+            transportError = blobRead.error.kind;
+            transportOffset = blobOffset64;
+            transportBytesRead = blobRead.error.bytesRead;
+            return SourceFrameReadResult.transportError;
+        }
+    }
+
+    block = FileBlockView(
+        sequence,
+        blockOffset,
+        header,
+        blobBytes);
+
+    sourceOffset = blobOffset64 + blobSize;
+    return SourceFrameReadResult.block;
 }
 
 /**
@@ -450,6 +665,113 @@ private:
 }
 
 /**
+ * Push-filter adapter over one element-specific PBF foreach traversal.
+ *
+ * This is deliberately not a Phobos InputRange. It retains the synchronous
+ * opApply execution model of pbfNodes/pbfWays/pbfRelations, applies a
+ * compile-time predicate to each valid borrowed element, and forwards only
+ * matching elements to the final foreach body.
+ *
+ * The adapter owns only a copy of the source traversal value. It does not
+ * materialize OSM elements, widen borrowed lifetimes, or skip the parsing and
+ * validation work required to produce a valid element view.
+ *
+ * Consumers normally obtain this type through UFCS:
+ *
+ * ---
+ * auto highways = pbfWays(input).where!hasHighway;
+ * foreach (scope ref WayView way; highways)
+ * {
+ *     // matching borrowed Way only
+ * }
+ * ---
+ *
+ * A natural traversal preserves the source whole-file validation scope.
+ * Breaking from the final foreach body stops parsing immediately and leaves
+ * completed false, exactly like the unfiltered source traversal.
+ */
+struct PbfWhereIterable(Source, View, alias predicate)
+{
+private:
+    Source source;
+
+    this(return scope Source value)
+        @safe pure nothrow @nogc
+    {
+        source = value;
+    }
+
+public:
+    /** Status from the most recent traversal. */
+    @property PbfReadStatus status() const
+        @safe pure nothrow @nogc
+    {
+        return source.status;
+    }
+
+    /** True only when the most recent traversal reached end-of-file. */
+    @property bool completed() const
+        @safe pure nothrow @nogc
+    {
+        return source.completed;
+    }
+
+    /** Iterate matching elements from an @safe foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @safe dg)
+        @safe
+    {
+        return source.opApply((scope ref View value) @safe {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+
+    /** Iterate matching elements from an @system foreach body. */
+    int opApply(
+        scope int delegate(scope ref View) @system dg)
+        @system
+    {
+        return source.opApply((scope ref View value) @system {
+            if (!predicate(value))
+                return 0;
+            return dg(value);
+        });
+    }
+}
+
+/**
+ * Filter one PBF Node foreach traversal with a compile-time predicate.
+ *
+ * The predicate receives the same callback-scoped NodeView as ordinary
+ * pbfNodes traversal. For non-copyable NodeView predicates, accept the value by
+ * scope ref.
+ */
+PbfWhereIterable!(PbfNodeIterable, NodeView, predicate)
+where(alias predicate)(return scope PbfNodeIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Way foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfWayIterable, WayView, predicate)
+where(alias predicate)(return scope PbfWayIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/** Filter one PBF Relation foreach traversal with a compile-time predicate. */
+PbfWhereIterable!(PbfRelationIterable, RelationView, predicate)
+where(alias predicate)(return scope PbfRelationIterable source)
+    @safe pure nothrow @nogc
+{
+    return typeof(return)(source);
+}
+
+/**
  * Whole-buffer OSMPBF reader.
  *
  * The reader is stateless; reusable allocation belongs to PbfReaderWorkspace.
@@ -669,6 +991,201 @@ struct PbfReader
             return false;
         }
 
+
+        return true;
+    }
+
+    /**
+     * Decode one complete PBF from a bounded generic ByteSource.
+     *
+     * The source is consumed monotonically through `readSome`. Only the
+     * current BlobHeader, serialized Blob and existing reusable decode
+     * workspace are retained; the complete encoded resource is never
+     * materialized by this overload.
+     *
+     * A clean EOF at a block boundary completes the file. EOF inside a frame is
+     * a malformed/truncated PBF error, while generic source failures remain
+     * explicit in `PbfSourceReadStatus.transportError`.
+     */
+    bool read(Handler)(
+        scope ByteSource source,
+        ref PbfReaderWorkspace workspace,
+        ref Handler handler,
+        out PbfReadSummary summary,
+        out PbfSourceReadStatus sourceStatus)
+        @safe
+    {
+        summary = PbfReadSummary.init;
+        sourceStatus = PbfSourceReadStatus.init;
+
+        if (source is null)
+        {
+            sourceStatus.transportError = ReadError.sourceFailure;
+            return false;
+        }
+
+        SemanticSink!Handler sink = SemanticSink!Handler(handler);
+        bool sawHeader;
+        bool sawData;
+        ulong sequence;
+        ulong sourceOffset;
+
+        while (true)
+        {
+            const size_t blockOffset = cast(size_t)sourceOffset;
+            FileBlockView fileBlock;
+            PbfStatus pbfStatus;
+            ReadError transportError;
+            ulong transportOffset;
+            size_t transportBytesRead;
+
+            const frameResult = readSourceFileBlock(
+                source,
+                sourceOffset,
+                sequence,
+                workspace,
+                fileBlock,
+                pbfStatus,
+                transportError,
+                transportOffset,
+                transportBytesRead);
+
+            final switch (frameResult)
+            {
+                case SourceFrameReadResult.endOfInput:
+                    break;
+
+                case SourceFrameReadResult.transportError:
+                    sourceStatus.transportError = transportError;
+                    sourceStatus.transportOffset = transportOffset;
+                    sourceStatus.transportBytesRead = transportBytesRead;
+                    return false;
+
+                case SourceFrameReadResult.pbfError:
+                    sourceStatus.pbf = fromPbfFailure(
+                        sequence,
+                        blockOffset,
+                        pbfStatus);
+                    return false;
+
+                case SourceFrameReadResult.block:
+                    BlobView blob;
+                    if (!decodeBlob(fileBlock.blob, blob, pbfStatus))
+                    {
+                        sourceStatus.pbf = fromPbfFailure(
+                            sequence,
+                            fileBlock.offset,
+                            pbfStatus);
+                        return false;
+                    }
+
+                    BlobPayloadView payload;
+                    if (!decodeReaderBlobPayload(
+                            blob,
+                            workspace,
+                            payload,
+                            pbfStatus))
+                    {
+                        sourceStatus.pbf = fromPbfFailure(
+                            sequence,
+                            fileBlock.offset,
+                            pbfStatus);
+                        return false;
+                    }
+
+                    final switch (fileBlock.header.kind)
+                    {
+                        case BlobKind.osmHeader:
+                            if (sawHeader || sawData)
+                            {
+                                sourceStatus.pbf = readerFailure(
+                                    PbfReadError.duplicateHeader,
+                                    sequence,
+                                    fileBlock.offset);
+                                return false;
+                            }
+
+                            HeaderBlockView header;
+                            if (!decodeHeaderBlock(
+                                    payload.bytes,
+                                    header,
+                                    pbfStatus))
+                            {
+                                sourceStatus.pbf = fromPbfFailure(
+                                    sequence,
+                                    fileBlock.offset,
+                                    pbfStatus);
+                                return false;
+                            }
+
+                            HeaderFeatureAssessment assessment;
+                            if (!validateRequiredFeatures(
+                                    header,
+                                    HeaderFeatureSupport.allKnown(),
+                                    assessment,
+                                    pbfStatus))
+                            {
+                                sourceStatus.pbf = fromPbfFailure(
+                                    sequence,
+                                    fileBlock.offset,
+                                    pbfStatus);
+                                return false;
+                            }
+
+                            sawHeader = true;
+                            ++summary.headerBlocks;
+                            break;
+
+                        case BlobKind.osmData:
+                            if (!sawHeader)
+                            {
+                                sourceStatus.pbf = readerFailure(
+                                    PbfReadError.dataBeforeHeader,
+                                    sequence,
+                                    fileBlock.offset);
+                                return false;
+                            }
+
+                            sawData = true;
+                            PbfReadStatus blockStatus;
+                            if (!decodeDataBlock(
+                                    payload.bytes,
+                                    workspace,
+                                    sink,
+                                    summary,
+                                    sequence,
+                                    fileBlock.offset,
+                                    blockStatus))
+                            {
+                                sourceStatus.pbf = blockStatus;
+                                return false;
+                            }
+                            break;
+
+                        case BlobKind.unknown:
+                            sourceStatus.pbf = readerFailure(
+                                PbfReadError.unsupportedBlockType,
+                                sequence,
+                                fileBlock.offset);
+                            return false;
+                    }
+
+                    ++sequence;
+                    continue;
+            }
+
+            break;
+        }
+
+        if (!sawHeader)
+        {
+            sourceStatus.pbf = readerFailure(
+                PbfReadError.missingHeader,
+                sequence,
+                cast(size_t)sourceOffset);
+            return false;
+        }
+
         return true;
     }
 }
@@ -684,6 +1201,18 @@ struct PbfReadResult
 {
     PbfReadSummary summary;
     PbfReadStatus status;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return status.ok;
+    }
+}
+
+/** One-shot result for a ByteSource-backed PBF read. */
+struct PbfSourceReadResult
+{
+    PbfReadSummary summary;
+    PbfSourceReadStatus status;
 
     @property bool ok() const @safe pure nothrow @nogc
     {
@@ -707,6 +1236,28 @@ PbfReadResult readPbf(Handler)(
     PbfReadResult result;
     reader.read(
         input,
+        workspace,
+        handler,
+        result.summary,
+        result.status);
+    return result;
+}
+
+/**
+ * Decode one complete PBF from a generic ByteSource with temporary scratch.
+ *
+ * Repeated/high-throughput callers should retain a PbfReaderWorkspace and call
+ * PbfReader.read directly so block/decompression/index scratch is reused.
+ */
+PbfSourceReadResult readPbf(Handler)(
+    scope ByteSource source,
+    ref Handler handler) @safe
+{
+    PbfReader reader;
+    PbfReaderWorkspace workspace;
+    PbfSourceReadResult result;
+    reader.read(
+        source,
         workspace,
         handler,
         result.summary,
@@ -2011,6 +2562,69 @@ version(unittest)
     }
 }
 
+version(unittest)
+{
+    private bool testEvenNode(scope ref NodeView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenWay(scope ref WayView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testEvenRelation(scope ref RelationView value)
+        @safe pure nothrow @nogc
+    {
+        return (value.id & 1) == 0;
+    }
+
+    private bool testNoWay(scope ref WayView)
+        @safe pure nothrow @nogc
+    {
+        return false;
+    }
+}
+
+version(unittest)
+{
+    private final class FailingByteSource : ByteSource
+    {
+        @property SourceInfo sourceInfo() const @safe
+        {
+            return SourceInfo(
+                "failing-test-source",
+                "test",
+                false,
+                0,
+                true);
+        }
+
+        ReadResult read(
+            ByteRange,
+            scope ubyte[],
+            ReadLimits = ReadLimits.init)
+            @safe
+        {
+            return ReadResult.failure(
+                ReadFailure(ReadError.sourceFailure, 0));
+        }
+
+        ReadResult readSome(
+            ulong,
+            scope ubyte[],
+            ReadLimits = ReadLimits.init)
+            @safe
+        {
+            return ReadResult.failure(
+                ReadFailure(ReadError.sourceFailure, 0));
+        }
+    }
+}
+
 unittest
 {
     ubyte[] node;
@@ -2055,6 +2669,97 @@ unittest
     assert(summary.tags == 0);
     assert(handler.nodes == 1);
     assert(handler.lastId == 1);
+}
+
+// ByteSource-backed reads preserve whole-buffer semantics without materializing
+// the complete source inside the reader.
+unittest
+{
+    ubyte[] node;
+    appendVarintField(node, 1, 2); // sint64 id = 1
+    appendVarintField(node, 8, 0);
+    appendVarintField(node, 9, 0);
+
+    ubyte[] group;
+    appendLengthDelimited(group, 1, node);
+
+    ubyte[] input;
+    appendFileBlock(input, "OSMHeader", null);
+    const data = makePrimitiveBlock(group);
+    appendFileBlock(input, "OSMData", data);
+
+    struct Handler
+    {
+        size_t nodes;
+        long idSum;
+
+        void node(scope ref NodeView value) @safe nothrow @nogc
+        {
+            ++nodes;
+            idSum += value.id;
+        }
+    }
+
+    PbfReader reader;
+
+    PbfReaderWorkspace sliceWorkspace;
+    Handler sliceHandler;
+    PbfReadSummary sliceSummary;
+    PbfReadStatus sliceStatus;
+    assert(reader.read(
+        input,
+        sliceWorkspace,
+        sliceHandler,
+        sliceSummary,
+        sliceStatus));
+    assert(sliceStatus.ok);
+
+    PbfReaderWorkspace sourceWorkspace;
+    Handler sourceHandler;
+    PbfReadSummary sourceSummary;
+    PbfSourceReadStatus sourceStatus;
+    auto source = new MemorySource(input);
+    assert(reader.read(
+        source,
+        sourceWorkspace,
+        sourceHandler,
+        sourceSummary,
+        sourceStatus));
+
+    assert(sourceStatus.ok);
+    assert(sourceSummary == sliceSummary);
+    assert(sourceHandler.nodes == sliceHandler.nodes);
+    assert(sourceHandler.idSum == sliceHandler.idSum);
+
+    // A clean source EOF inside the encoded Blob is PBF truncation, not a
+    // generic transport failure.
+    auto truncated = new MemorySource(input[0 .. $ - 1]);
+    sourceSummary = PbfReadSummary.init;
+    sourceStatus = PbfSourceReadStatus.init;
+    Handler truncatedHandler;
+    assert(!reader.read(
+        truncated,
+        sourceWorkspace,
+        truncatedHandler,
+        sourceSummary,
+        sourceStatus));
+    assert(sourceStatus.transportError == ReadError.none);
+    assert(sourceStatus.pbf.error == PbfReadError.malformedInput);
+
+    // A real ByteSource failure remains distinct from malformed input.
+    auto failing = new FailingByteSource();
+    sourceSummary = PbfReadSummary.init;
+    sourceStatus = PbfSourceReadStatus.init;
+    Handler failingHandler;
+    assert(!reader.read(
+        failing,
+        sourceWorkspace,
+        failingHandler,
+        sourceSummary,
+        sourceStatus));
+    assert(sourceStatus.transportError == ReadError.sourceFailure);
+    assert(sourceStatus.transportOffset == 0);
+    assert(sourceStatus.pbf.ok);
 }
 
 unittest
@@ -2395,3 +3100,120 @@ unittest
     assert(prefix.status.ok);
     assert(!prefix.completed);
 }
+
+
+// Push filtering preserves borrowed traversal, validation and early-stop status.
+unittest
+{
+    // Nodes: use the same minimal regular-Node shape as the established
+    // PbfNodeIterable tests.
+    ubyte[] node1;
+    appendVarintField(node1, 1, 2); // sint64 id = 1
+    appendVarintField(node1, 8, 0);
+    appendVarintField(node1, 9, 0);
+
+    ubyte[] node2;
+    appendVarintField(node2, 1, 4); // sint64 id = 2
+    appendVarintField(node2, 8, 0);
+    appendVarintField(node2, 9, 0);
+
+    ubyte[] nodeGroup;
+    appendLengthDelimited(nodeGroup, 1, node1);
+    appendLengthDelimited(nodeGroup, 1, node2);
+
+    ubyte[] nodeInput;
+    appendFileBlock(nodeInput, "OSMHeader", null);
+    const nodeData = makePrimitiveBlock(nodeGroup);
+    appendFileBlock(nodeInput, "OSMData", nodeData);
+
+    auto nodes = pbfNodes(nodeInput).where!testEvenNode;
+    size_t nodeCount;
+    foreach (scope ref NodeView value; nodes)
+    {
+        ++nodeCount;
+        assert(value.id == 2);
+    }
+    assert(nodeCount == 1);
+    assert(nodes.status.ok);
+    assert(nodes.completed);
+
+    // Ways.
+    ubyte[] way7;
+    appendVarintField(way7, 1, 7);
+    ubyte[] way8;
+    appendVarintField(way8, 1, 8);
+
+    ubyte[] wayGroup;
+    appendLengthDelimited(wayGroup, 3, way7);
+    appendLengthDelimited(wayGroup, 3, way8);
+
+    ubyte[] wayInput;
+    appendFileBlock(wayInput, "OSMHeader", null);
+    const wayData = makePrimitiveBlock(wayGroup);
+    appendFileBlock(wayInput, "OSMData", wayData);
+
+    auto ways = pbfWays(wayInput).where!testEvenWay;
+    size_t wayCount;
+    foreach (scope ref WayView value; ways)
+    {
+        ++wayCount;
+        assert(value.id == 8);
+    }
+    assert(wayCount == 1);
+    assert(ways.status.ok);
+    assert(ways.completed);
+
+    // Relations.
+    ubyte[] relation9;
+    appendVarintField(relation9, 1, 9);
+    ubyte[] relation10;
+    appendVarintField(relation10, 1, 10);
+
+    ubyte[] relationGroup;
+    appendLengthDelimited(relationGroup, 4, relation9);
+    appendLengthDelimited(relationGroup, 4, relation10);
+
+    ubyte[] relationInput;
+    appendFileBlock(relationInput, "OSMHeader", null);
+    const relationData = makePrimitiveBlock(relationGroup);
+    appendFileBlock(relationInput, "OSMData", relationData);
+
+    auto relations = pbfRelations(relationInput).where!testEvenRelation;
+    size_t relationCount;
+    foreach (scope ref RelationView value; relations)
+    {
+        ++relationCount;
+        assert(value.id == 10);
+    }
+    assert(relationCount == 1);
+    assert(relations.status.ok);
+    assert(relations.completed);
+
+    // The final foreach control value still stops the source traversal.
+    auto prefix = pbfWays(wayInput).where!testEvenWay;
+    foreach (scope ref WayView value; prefix)
+    {
+        assert(value.id == 8);
+        break;
+    }
+    assert(prefix.status.ok);
+    assert(!prefix.completed);
+
+    // Filtering every valid Way out does not suppress validation of the
+    // following malformed PBF block.
+    ubyte[] malformed;
+    appendFileBlock(malformed, "OSMHeader", null);
+    appendFileBlock(malformed, "OSMData", wayData);
+    const(ubyte)[] badPrimitiveBlock = [0x80];
+    appendFileBlock(malformed, "OSMData", badPrimitiveBlock);
+
+    auto none = pbfWays(malformed).where!testNoWay;
+    wayCount = 0;
+    foreach (scope ref WayView value; none)
+        ++wayCount;
+
+    assert(wayCount == 0);
+    assert(!none.completed);
+    assert(none.status.error == PbfReadError.malformedInput);
+}
+

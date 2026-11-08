@@ -1,0 +1,8 @@
+name "osm-d-area-consumer"
+description "External consumer compile probe for osm-d area assembly API"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../../.."

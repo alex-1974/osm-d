@@ -1,0 +1,9 @@
+name "osm-d-m17-read-responses"
+description "Deterministic OSM Editing API read/version/history/full response qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+stringImportPaths "../fixtures"
+
+dependency "osm-d" path="../.."

@@ -4,10 +4,29 @@ import osm;
 import osm.pbf;
 import osm.model.owned : OwnedWayNode;
 import osm.view.way_node : WayNodeView;
+import transport : ByteSource, MemorySource, ReadError;
 
 // v0.1 compatibility aliases remain available from their old direct modules.
 static assert(is(WayNodeView == NodeRefView));
 static assert(is(OwnedWayNode == OwnedNodeRef));
+
+private bool positiveNodeId(scope ref NodeView value)
+    @safe pure nothrow @nogc
+{
+    return value.id > 0;
+}
+
+private bool highwayWay(scope ref WayView value)
+    @safe nothrow @nogc
+{
+    return value.tags.hasTag("highway");
+}
+
+private bool positiveRelationId(scope ref RelationView value)
+    @safe pure nothrow @nogc
+{
+    return value.id > 0;
+}
 
 private void inspectMetadata(T)(scope ref T value) @safe nothrow @nogc
 {
@@ -56,6 +75,20 @@ private void inspectTags(T)(scope ref T value) @safe nothrow @nogc
     static assert(!__traits(hasMember, TagView, "valueSid"));
 
     auto tags = value.tags;
+
+    // Lookup helpers consume only a copy of the borrowed range cursor.
+    const hasName = tags.hasTag("name");
+    assert(hasName || !hasName);
+
+    if (!tags.empty)
+    {
+        const expected = tags.front;
+        TagLookupResult found = tags.findTag(expected.key);
+        assert(found.found);
+        assert(found.tag.key == expected.key);
+        assert(found.tag.value == expected.value);
+        assert(tags.tagEquals(expected.key, expected.value));
+    }
 
     while (!tags.empty)
     {
@@ -194,6 +227,23 @@ void compileConsumer()
     const ok = reader.read(input, workspace, consumer, summary, status);
     assert(!ok);
 
+    ByteSource source = new MemorySource(input);
+    PbfSourceReadStatus sourceStatus;
+    const sourceOk = reader.read(
+        source,
+        workspace,
+        consumer,
+        summary,
+        sourceStatus);
+    assert(!sourceOk);
+    assert(sourceStatus.transportError == ReadError.none);
+    assert(sourceStatus.pbf.error == PbfReadError.missingHeader);
+
+    const sourceResult = readPbf(source, consumer);
+    assert(!sourceResult.ok);
+    assert(sourceResult.status.transportError == ReadError.none);
+    assert(sourceResult.status.pbf.error == PbfReadError.missingHeader);
+
     auto nodes = pbfNodes(input);
     foreach (scope ref NodeView node; nodes)
     {
@@ -206,6 +256,13 @@ void compileConsumer()
     const nodeCompleted = nodes.completed;
     assert(!nodeStatus.ok);
     assert(!nodeCompleted);
+
+    auto filteredNodes = pbfNodes(input).where!positiveNodeId;
+    foreach (scope ref NodeView node; filteredNodes)
+    {
+        assert(node.id > 0);
+    }
+    assert(filteredNodes.status.ok || !filteredNodes.completed);
 }
 
 
@@ -240,6 +297,14 @@ void compileConsumer()
     }
     assert(ways.status.ok || !ways.completed);
 
+    auto filteredWays = reader.ways(input).where!highwayWay;
+    foreach (scope ref WayView way; filteredWays)
+    {
+        assert(way.tags.hasTag("highway"));
+        break;
+    }
+    assert(filteredWays.status.ok || !filteredWays.completed);
+
     auto relations = reader.relations(input);
     foreach (scope ref RelationView relation; relations)
     {
@@ -248,6 +313,15 @@ void compileConsumer()
         break;
     }
     assert(relations.status.ok || !relations.completed);
+
+    auto filteredRelations =
+        reader.relations(input).where!positiveRelationId;
+    foreach (scope ref RelationView relation; filteredRelations)
+    {
+        assert(relation.id > 0);
+        break;
+    }
+    assert(filteredRelations.status.ok || !filteredRelations.completed);
 }
 
 

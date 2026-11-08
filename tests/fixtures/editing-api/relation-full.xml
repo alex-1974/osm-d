@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="OpenStreetMap server">
+  <node id="101" lat="48.1000000" lon="16.1000000"
+        version="3" changeset="7001" visible="true"
+        timestamp="2026-11-06T09:00:00Z"/>
+  <node id="102" lat="48.1010000" lon="16.1010000"
+        version="1" changeset="7001" visible="true"
+        timestamp="2026-11-06T09:00:30Z"/>
+  <way id="201" version="4" changeset="7001" visible="true"
+       timestamp="2026-11-06T09:01:00Z">
+    <nd ref="101"/>
+    <nd ref="102"/>
+    <tag k="highway" v="service"/>
+  </way>
+  <relation id="302" version="1" changeset="6999" visible="true"
+            timestamp="2026-11-05T20:00:00Z">
+    <member type="node" ref="999" role="label"/>
+    <tag k="type" v="site"/>
+  </relation>
+  <relation id="301" version="5" changeset="7001" visible="true"
+            timestamp="2026-11-06T09:02:00Z">
+    <member type="way" ref="201" role="outer"/>
+    <member type="relation" ref="302" role="subarea"/>
+    <tag k="type" v="multipolygon"/>
+  </relation>
+</osm>

@@ -7,6 +7,85 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-08
+
+### Fixed
+- Fix authoritative reconciliation Store mutations that were previously executed inside
+  `assert(...)`. Release builds remove assertion expressions, so authoritative
+  insert/refresh/delete operations could be skipped while reconciliation and
+  replication checkpoints still reported success. The Store operations now
+  always execute; assertions only verify the post-preflight invariant result.
+  The M19 release qualification permanently covers this path.
+
+
+### Added
+- Add connected M19 multi-sequence replication qualification with authored
+  compressed fixtures covering restart/replay, gaps, overlapping timestamps,
+  object-version continuity, create/modify/delete, reverse parent indexes,
+  truncation/retry and M18 local conflicts. A release-mode LDC workload retains
+  practical throughput, GC-allocation and RSS evidence for the full
+  GZIP -> osmChange -> Store path.
+- Add bounded compressed replication ingestion through
+  `applyGzipReplicationStep`: `transport-d.ByteSource` input is decoded by
+  the stable `compression-d 0.3.x` streaming GZIP contract, exposed to the
+  existing osmChange reader without whole decoded-XML materialization, and
+  applied only after CRC/ISIZE/truncation/trailing-data validation succeeds.
+  Transport, compression, osmChange and replication-apply failures remain
+  separately diagnosable, with explicit compressed/decompressed limits.
+- Add focused `osm.replication` M19 state/sequence application semantics:
+  bounded state.txt parsing, official-style relative sequence paths,
+  feed/checkpoint continuity classification, version-aware replay/stale/gap
+  handling, staged multi-version osmChange application, pre-mutation M18 local
+  conflict checks, and checkpoint advancement only after successful
+  reconciliation.
+- Add focused `osm.sync` M18 synchronization semantics: typed complete/partial
+  Node/Way/Relation histories with dedicated historical version values,
+  preservation of deleted Nodes whose API representation omits lat/lon, direct
+  M17 specific-version and /history projections, explicit base/local/remote
+  conflict classification, conservative ordered Way/Relation edit-span
+  detection, and preflighted authoritative `OsmStore` reconciliation that
+  preserves local edits and existing index/handle contracts.
+- Add focused `osm.api` OSM Editing API 0.6 protocol client over the generic
+  `transport-d 0.2.x` `HttpExchange`: explicit server selection,
+  capabilities/permissions, Node/Way/Relation current/version/history/full,
+  Changeset create/read/update/close, bounded osmChange upload and diffResult
+  parsing, request-scoped Authorization, exact HTTP/OSM status classification,
+  bounded error diagnostics, and deterministic fake-exchange qualification.
+- Add focused `osm.area` structural area/multipolygon assembly: exact
+  Node-ID Way joining, explicit outer/inner roles, reversible source-Way
+  traversal with provenance, multiple rings, owning path results, and
+  distinct partial/ambiguous/invalid diagnostics for missing data, dangling
+  chains and multiply-connectable junctions.
+- Add focused `osm.complete` borrowed complete-object projections for
+  `OsmStore` and indexed `OwnedDataset`, including resolved Way Nodes and
+  typed Relation members, direct complete/partial/invalid status,
+  identity-based closed-Way detection, and exact nanodegree
+  `LocationBounds`.
+- Add focused `osm.topology` resolution and bounded closure traversal:
+  ordered Way/Relation resolution, explicit `OwnedDatasetIndex`, cycle-safe
+  Relation child closure, distinct parent closure over maintained reverse
+  indexes, and caller-visible traversal workspace/limits/status.
+- Add explicit complete/partial dataset-reference validation for
+  `OwnedDataset` and `OsmStore` through `osm.validate`, including
+  deterministic missing/local/deleted-reference diagnostics.
+
+- Add exact, allocation-free `findTag`, `hasTag` and `tagEquals` helpers
+  for borrowed OSM tag ranges. The free functions are UFCS-friendly, preserve
+  duplicate ordering, compare D strings as their existing UTF-8 code units and
+  perform no normalization or transcoding.
+- Qualify compact-store element, child and parent traversal values as lazy D
+  InputRanges and document cursor-copy and structural-mutation invalidation
+  semantics for Phobos composition.
+- Add `where!` push filtering for `pbfNodes`, `pbfWays` and
+  `pbfRelations`. The compile-time predicate filters callback-scoped borrowed
+  elements without materialization while preserving foreach early-exit,
+  completion and validation semantics.
+- Add bounded `transport-d.ByteSource` overloads for `PbfReader.read`,
+  `readPbf` and direct `readPbfStore`. Incremental PBF framing retains only
+  the current BlobHeader/Blob plus reusable decoder scratch, keeps whole-buffer
+  overloads intact, and reports transport failures separately from
+  malformed/truncated PBF.
+
 ## 0.3.0 - 2026-11-04
 
 ### Added

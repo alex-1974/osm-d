@@ -90,6 +90,26 @@ configuration "parser-decode-count" {
 }
 
 
+configuration "parser-push-filter" {
+    targetType "executable"
+    targetName "osm-d-bench-push-filter"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/push_filter.d"
+}
+
+
+configuration "parser-source-compare" {
+    targetType "executable"
+    targetName "osm-d-bench-source-compare"
+    targetPath "bin"
+    sourcePaths "parser"
+    importPaths "parser"
+    mainSourceFile "parser/source_compare.d"
+}
+
+
 configuration "parser-memory-baseline" {
     targetType "executable"
     targetName "osm-d-bench-memory-baseline"
@@ -120,6 +140,16 @@ configuration "store-layout" {
 }
 
 
+configuration "store-range-composition" {
+    targetType "executable"
+    targetName "osm-d-bench-store-range-composition"
+    targetPath "bin"
+    sourcePaths "store"
+    importPaths "store"
+    mainSourceFile "store/range_composition.d"
+}
+
+
 configuration "release-io" {
     targetType "executable"
     targetName "osm-d-bench-release-io"
@@ -127,4 +157,24 @@ configuration "release-io" {
     sourcePaths "release"
     importPaths "release"
     mainSourceFile "release/io_baseline.d"
+}
+
+
+configuration "topology-qualification" {
+    targetType "executable"
+    targetName "osm-d-bench-topology-qualification"
+    targetPath "bin"
+    sourcePaths "topology"
+    importPaths "topology"
+    mainSourceFile "topology/qualification.d"
+}
+
+
+configuration "area-qualification" {
+    targetType "executable"
+    targetName "osm-d-bench-area-qualification"
+    targetPath "bin"
+    sourcePaths "area"
+    importPaths "area"
+    mainSourceFile "area/qualification.d"
 }

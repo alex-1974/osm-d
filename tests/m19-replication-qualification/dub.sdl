@@ -1,0 +1,8 @@
+name "osm-d-m19-replication-qualification"
+description "Multi-sequence correctness and pragmatic performance qualification for M19 replication"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."

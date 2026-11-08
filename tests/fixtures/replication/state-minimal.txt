@@ -1,0 +1,2 @@
+sequenceNumber=123456
+timestamp=2026-11-08T15\:40\:00Z

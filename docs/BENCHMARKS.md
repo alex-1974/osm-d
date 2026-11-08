@@ -74,15 +74,17 @@ Measure both throughput and semantic equality.
 
 ## PBF memory and thread-scaling baselines
 
-The production reader now has two durable whole-buffer measurement tools.
+The production reader retains two durable whole-buffer measurement tools.
+M14 adds a separate ByteSource qualification harness described below; the
+whole-buffer tools remain useful for the resident-input and parallel baselines.
 
 `benchmark/parser/memory_baseline.d` reuses one `PbfReaderWorkspace` across
 complete validated serial reads and reports per-pass D-GC allocation deltas and
 collection-count deltas. `benchmark/run-memory-baseline.sh` wraps the process
 with `/usr/bin/time -v` to capture peak RSS; its default pinned datasets are
-Bremen (city) and Austria (country). File loading remains part of process RSS
-because the public API is currently whole-buffer, but it is outside the
-per-decode GC-allocation deltas.
+Bremen (city) and Austria (country). That harness intentionally measures the
+resident whole-buffer path, so file loading remains part of process RSS; the
+bounded ByteSource harness measures the non-resident alternative separately.
 
 `benchmark/parser/parallel_summary.d` compares the ordered serial summary
 path with `PbfParallelReader.readSummary`. The corresponding
@@ -259,6 +261,205 @@ non-selected validation. None produced a robust improvement without changing
 the measured question. No speculative tuning from those experiments was
 retained in production code.
 
+
+## M14 Store range-composition qualification — 2026-11-05
+
+Question: can the compact store's public InputRanges be composed with ordinary
+Phobos `filter` without hidden allocation, and what whole-traversal cost does
+that convenience layer add?
+
+The qualification used:
+
+- candidate PR #155;
+- pinned `bremen-260901` dataset;
+- LDC 1.41.0 / DMD frontend 2.111.0 / LLVM 20.1.5;
+- release/all-at-once build;
+- one already-built `OsmStore`; PBF I/O, decode and store construction were
+  outside the timed region;
+- 21 samples with rotating direct/plain/cached order;
+- exact match-count/checksum parity for every form;
+- GC allocation/collection probes after warm-up.
+
+Three forms were compared:
+
+1. direct `StoreWayRange` traversal with an inline `if`;
+2. ordinary lazy Phobos `filter`;
+3. `cache.filter`, testing Phobos' explicit front-value caching adapter.
+
+The hosted runner reported:
+
+| Predicate | Direct p50 | Plain `filter` p50 | Plain/direct | `cache.filter` p50 | Cached/direct |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| all-clean lifecycle state | 4.340 ms | 10.830 ms | 2.496x | 9.295 ms | 2.142x |
+| even Way ID | 4.759 ms | 8.474 ms | 1.781x | 9.296 ms | 1.953x |
+| `highway` tag present | 13.681 ms | 14.671 ms | 1.072x | 14.909 ms | 1.090x |
+| even ID then `highway` | 9.828 ms | 12.408 ms | 1.263x | 14.569 ms | 1.482x |
+
+All direct, plain-filter and cached-filter probes measured **0 D-GC allocated
+bytes** and **0 collections**. Semantic results matched exactly.
+
+The result rejects the assumption that generic Phobos composition compiles to
+performance parity for this store representation. `StoreWayRange.front`
+constructs a semantic view from compact columns; Phobos filtering adds
+observable traversal/front machinery, especially when the predicate itself is
+cheap. Explicit `cache` does not remove enough overhead here and is therefore
+not recommended as a blanket osm-d idiom.
+
+The architectural decision is:
+
+- keep the store traversal types as ordinary D InputRanges because they are
+  correct, lazy, composable and allocation-free;
+- document Phobos composition as a convenience surface, **not** the
+  maximum-throughput store traversal;
+- use direct range/`foreach` traversal with an inline predicate in measured
+  hot loops;
+- do not add an osm-d query DSL or custom filter framework merely to eliminate
+  this convenience-layer delta;
+- reconsider specialized indexing only when a real repeated query workload
+  justifies it independently.
+
+The tag-predicate case is the representative reminder that absolute predicate
+cost matters: when exact tag scanning dominates, the measured extra cost of
+plain `filter` was about 7%. The trivial-predicate ratios look much larger
+because the direct compact traversal itself is only a few milliseconds.
+
+These hosted-runner numbers are decision evidence, not a controlled-workstation
+marketing baseline. The committed benchmark and workflow retain the comparison
+for future regressions.
+
+## M14 PBF push-filter prototype qualification — 2026-11-05
+
+Question: can the existing push-based `pbfWays` foreach surface support a
+composable compile-time predicate without adding material overhead over an
+ordinary `foreach + if`?
+
+The benchmark-local prototype deliberately did **not** modify the public API.
+It wrapped `PbfWayIterable.opApply`, applied a template predicate before
+forwarding matching borrowed `WayView` values, and preserved the underlying
+completion/status contract.
+
+The qualification used:
+
+- candidate PR #156;
+- pinned `bremen-260901` dataset;
+- LDC 1.41.0 / DMD frontend 2.111.0 / LLVM 20.1.5;
+- release/all-at-once build;
+- 21 samples with rotating direct/inline/push order;
+- full PBF validation on every timed traversal;
+- exact selected-count/checksum parity between all three forms.
+
+Results:
+
+| Predicate | Direct static sink p50 | `foreach + if` p50 | Inline/direct | Push candidate p50 | Push/inline |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| high-selectivity ID | 704.864 ms | 744.771 ms | 1.0566x | 745.469 ms | **1.0009x** |
+| low-selectivity ID | 703.240 ms | 744.666 ms | 1.0589x | 744.354 ms | **0.9996x** |
+| `highway` tag present | 724.984 ms | 764.948 ms | 1.0551x | 765.475 ms | **1.0007x** |
+
+The three forms also reported identical first-use workspace allocation for each
+workload: 4,694,192 D-GC bytes and zero collections. The push wrapper therefore
+introduced no additional measured allocation.
+
+The result accepts the push-filter concept. Its incremental cost over the
+already accepted foreach convenience surface is within measurement noise
+(about -0.04% to +0.09% in this run). It does **not** erase the existing roughly
+5-6% Way-foreach cost versus the maximum-throughput statically dispatched
+`PbfReader.read(handler)` path.
+
+Architectural decision:
+
+- retain `PbfReader.read(handler)` as the maximum-throughput API;
+- retain `pbfNodes/pbfWays/pbfRelations` as push/foreach adapters rather than
+  Phobos InputRanges;
+- admit an optional `where!`-style compile-time push predicate if the
+  production implementation preserves this status/control/lifetime behavior;
+- do not claim protobuf predicate pushdown: framing, decompression and semantic
+  validation still occur as required to produce each valid borrowed element.
+
+The hosted-runner numbers are decision evidence rather than a
+controlled-workstation marketing baseline.
+
+## M14 bounded ByteSource PBF qualification — 2026-11-05
+
+Question: can ordinary PBF decoding consume `transport-d.ByteSource` without
+materializing the complete encoded resource, while preserving semantic parity,
+steady-state allocation discipline and the existing whole-buffer performance
+baseline?
+
+The production source path was introduced by PR #158 and merged as
+`1a4ca2c7f011e85bf26bf4658317ef8bb9906c7b`. Qualification PR #159
+used LDC 1.41.0 release/allAtOnce builds and the pinned Monaco, Bremen and
+Austria snapshots. The benchmark runs each mode in its own process so peak RSS
+is attributable to that mode.
+
+The decode comparison separates three questions:
+
+1. resident slice -> `PbfReader`: existing reference path;
+2. resident `MemorySource` -> `PbfReader`: source/framing-copy overhead with
+   I/O removed;
+3. `FileSource` -> `PbfReader`: bounded local-resource path including the
+   current transport-d file backend.
+
+All three paths produced identical summaries and semantic checksums on every
+dataset. Median hosted-runner results were:
+
+| Dataset | Input class | Slice p50 / RSS | MemorySource p50 / RSS | FileSource p50 / RSS | Memory/slice | File/slice | Max retained encoded source bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | small | 18.197 ms / 5,964 KiB | 18.842 ms / 6,232 KiB | 18.527 ms / 5,384 KiB | 1.035x | 1.018x | 226,076 |
+| Bremen | city | 616.502 ms / 28,988 KiB | 613.418 ms / 30,768 KiB | 622.978 ms / 10,236 KiB | 0.995x | 1.011x | 1,083,202 |
+| Austria | country | 31.021 s / 807,064 KiB | 30.698 s / 812,308 KiB | 31.011 s / **17,616 KiB** | 0.990x | **1.000x** | 2,122,182 |
+
+After workspace warm-up, all measured decode modes reported **0 D-GC allocated
+bytes** and **0 collections**. The Austria result is the decisive scaling
+evidence: the 808,820,532-byte input decoded at performance parity while the
+FileSource process retained only current-block encoded scratch and had roughly
+18 MiB peak RSS instead of roughly 788 MiB.
+
+Austria semantic parity covered 87,627,541 Nodes, 9,359,891 Ways, 180,296
+Relations, 43,979,849 tags and 12,147 data blocks. The source wrapper observed
+a largest 14-byte BlobHeader and 2,122,168-byte serialized Blob, for 2,122,182
+bytes of retained encoded source scratch. Across three complete source passes
+it read exactly 2,426,461,596 encoded bytes, three times the pinned input size.
+
+The city-scale direct-store comparison also passed semantic/store-count parity:
+
+| Dataset | Slice store p50 / RSS | MemorySource store p50 / RSS | FileSource store p50 / RSS |
+| --- | ---: | ---: | ---: |
+| Monaco | 43.413 ms / 15,852 KiB | 44.674 ms / 16,252 KiB | 43.510 ms / 15,052 KiB |
+| Bremen | 1.712 s / 400,808 KiB | 1.832 s / 401,672 KiB | 1.742 s / 387,012 KiB |
+
+The one-shot direct-store source path creates its decode workspace inside the
+call, so source-buffer growth appears in each build's D-GC allocation rather
+than being amortized across calls. Bremen measured 4,696,240 D-GC bytes for the
+slice build and 6,633,920 bytes for both source builds. This is accepted for the
+one-shot convenience API; repeated pure decoding retains caller-owned
+`PbfReaderWorkspace` and reaches the zero-allocation steady state above.
+
+Architectural decision:
+
+- accept `ByteSource` as the bounded ordinary PBF input boundary;
+- keep the resident slice overload because it is already optimal when bytes are
+  owned by the caller;
+- keep `PbfDocument` whole-buffer because loss-aware raw preservation
+  intentionally owns the original encoded bytes;
+- keep filesystem/HTTP behavior in transport-d; the current FileSource backend
+  already meets osm-d's measured city/country performance need, while
+  transport-d #5 may still improve generic sequential-file efficiency;
+- **do not add `pbfNodes(ByteSource)`, `pbfWays(ByteSource)` or
+  `pbfRelations(ByteSource)` in M14**.
+
+The last decision is an ownership/lifetime choice rather than a missing parser
+capability. `PbfReader.read(ByteSource, workspace, handler, ...)` makes the
+bounded source, reusable scratch and source/PBF diagnostics explicit.
+A source-backed opApply helper would either hide a fresh workspace inside each
+traversal or require a new stateful borrowing API merely for syntax. The
+existing slice-backed foreach/`where!` helpers remain appropriate when encoded
+bytes are already resident. A future real consumer may justify a distinct
+stateful source-iteration abstraction, but M14 does not invent one without that
+need.
+
+These hosted-runner measurements are architecture evidence, not portable
+hardware throughput claims.
 
 ## First executable microbenchmark: varint
 
@@ -3221,3 +3422,351 @@ median difference is not a material regression. The run used a shared GitHub
 runner rather than the controlled local benchmark host, so these absolute
 times are retained only as an orchestration-overhead qualification and do not
 replace the controlled libosmium throughput baseline.
+
+
+## M15 real-workload dataset/topology qualification
+
+M15 #132 qualifies the public dataset/reference and topology APIs on the pinned
+Geofabrik 2026-09-01 baseline. The qualification is intentionally a
+consumer-workload gate rather than a synthetic graph benchmark.
+
+### Method
+
+The committed `benchmark/topology/qualification.d` harness:
+
+1. loads the PBF into `OsmStore` before timing;
+2. warms each measured operation once;
+3. records the median of 3 Monaco or 5 Bremen timed passes;
+4. requires stable semantic summaries/checksums between passes;
+5. derives complete and deliberately partial datasets from real Way data;
+6. performs a real Way edit/revert and checks parent-closure index coherence;
+7. separately verifies adversarial depth bounds and a cyclic Relation fixture.
+
+The targeted workflow uses LDC 1.41.0 in release/allAtOnce mode. Timings are
+decision evidence only; no arbitrary wall-clock release threshold is imposed.
+
+### Extract completeness result
+
+Both pinned Geofabrik files are valid **partial** OSM datasets under the M15
+contract:
+
+| Dataset | Nodes | Ways | Relations | partial mode | complete mode | first missing target |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| Monaco | 41,703 | 6,249 | 348 | PASS | `missingReference` | Node 1,701,090,139 |
+| Bremen | 1,662,874 | 328,626 | 5,985 | PASS | `missingReference` | Node 9,044,256,560 |
+
+This is an important consumer result rather than a benchmark failure:
+extract-boundary references remain observable and are accepted only when the
+caller explicitly chooses `DatasetValidationMode.partial`.
+
+Complete subsets derived from a real Way plus all referenced Nodes passed
+`complete` validation on both datasets. The corresponding Way-only subsets
+passed `partial` and were rejected by `complete` with
+`missingReference`.
+
+### Direct resolution and closure evidence
+
+Hosted-runner p50 values:
+
+| Operation | Monaco | Bremen |
+| --- | ---: | ---: |
+| full-store partial validation | 2.239 ms | 178.689 ms |
+| complete validation until first missing reference | 1.392 ms | 168.925 ms |
+| largest-Way Node resolution | 32.0 µs / 1,302 refs | 33.5 µs / 1,338 refs |
+| largest-Relation member resolution | 152.3 µs / 6,819 members | 185.9 µs / 4,820 members |
+| selected nested-Relation closure | 297.4 µs / 7,353 visits | 572.2 µs / 10,436 visits |
+| selected Node parent closure | 0.4 µs / 1 visit | 1.0 µs / 2 visits |
+
+The complete-validation timing is fail-fast and therefore is **not** a
+full-dataset throughput comparison with partial validation.
+
+The largest selected Ways resolved every Node reference:
+
+- Monaco: 1,302 / 1,302;
+- Bremen: 1,338 / 1,338.
+
+Large Relations demonstrated the partial-dataset behavior directly:
+
+- Monaco largest Relation: 6,819 members, 14 resolved, 6,805 unresolved;
+- Bremen largest Relation: 4,820 members, 97 resolved, 4,723 unresolved.
+
+The selected nested closures completed under the default qualification bounds:
+
+- Monaco: 7,353 visits, 5 Relations expanded, depth 6, 4,764 unresolved
+  occurrences;
+- Bremen: 10,436 visits, 3 Relations expanded, depth 3, 2,398 unresolved
+  occurrences.
+
+All repeated runs retained identical checksums.
+
+### Edit/index and adversarial gates
+
+On both real datasets a supported Way reference edit changed parent closure
+immediately, the replacement Node acquired the Way parent, and
+`OsmStore.revert` restored the original parent result. No stale reverse-index
+result was observed.
+
+The synthetic-but-focused safety gates also passed in the same executable:
+
+- a 24-Relation chain with `maxDepth = 8` failed explicitly with
+  `TopologyTraversalError.depthLimit`;
+- a two-Relation mutual cycle completed, emitted the cyclic occurrence, and
+  expanded each Relation identity only once.
+
+### M15 decision
+
+The current architecture is **KEEP**.
+
+The city-scale evidence does not justify another global precomputed structure:
+
+- store validation is practical on Bremen;
+- direct resolution remains microsecond-scale for large real objects;
+- recursive closure remains sub-millisecond for the selected nested real
+  relation;
+- existing maintained store parent indexes stay coherent across supported
+  edits/revert;
+- explicit partial-dataset semantics match real extract behavior;
+- explicit work bounds terminate adversarial depth and cycles.
+
+M15 therefore closes without adding a second graph store, generic geometry
+layer, or hidden network completion mechanism.
+
+
+## M16 real-workload complete-object and area qualification
+
+M16 #137 qualifies the focused \`osm.complete\` and \`osm.area\` surfaces on
+the same pinned Geofabrik 2026-09-01 baseline used by M15.
+
+### Method
+
+The committed \`benchmark/area/qualification.d\` harness:
+
+1. loads one PBF into \`OsmStore\` before timing;
+2. selects the largest fully resolved Way and largest fully resolved closed Way;
+3. scans every \`type=multipolygon\` Relation twice and requires deterministic
+   summaries/checksums;
+4. requires every structurally complete Relation to preserve every Relation
+   member exactly once in \`AreaRingSegment\` provenance;
+5. records complete/partial/ambiguous/invalid outcomes and ring/path counts;
+6. repeatedly assembles a large real complete/fragmented multipolygon;
+7. records thread-local GC allocation volume separately from visible owning
+   result payload;
+8. derives a real complete multipolygon subset and then removes one Node and one
+   Way to verify explicit partial-area behavior;
+9. independently builds polygon geometry with osmium-tool 1.16.0 /
+   libosmium 2.20.0.
+
+The hosted gate uses LDC 1.41.0, release/allAtOnce. PBF input and independent
+osmium processing are outside the timed regions. Timings are decision evidence,
+not release SLAs.
+
+### Complete-Way evidence
+
+| Dataset | selected Way | Nodes | complete projection + exact bounds p50 | selected closed Way area p50 |
+| --- | ---: | ---: | ---: | ---: |
+| Monaco | 1,172,678,032 | 1,302 | 153.9 µs | 28.9 µs / 212 Nodes |
+| Bremen | 294,068,542 | 1,338 | 154.4 µs | 174.7 µs / 1,338 Nodes |
+
+All repeated summaries/checksums were stable. Closed-Way area assembly produced
+one closed outer ring with complete locations.
+
+### Full multipolygon scan
+
+| Dataset | type=multipolygon | complete | partial | ambiguous | invalid | fragmented complete | multiple-outer complete | complete with inner |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 49 | 48 | 1 | 0 | 0 | 8 | 0 | 41 |
+| Bremen | 1,201 | 1,197 | 4 | 0 | 0 | 261 | 126 | 882 |
+
+Aggregate assembled output:
+
+| Dataset | rings | outer | inner | vertices | source segments | open chains | issues |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 107 | 49 | 58 | 2,060 | 123 | 0 | 1 |
+| Bremen | 3,258 | 1,523 | 1,735 | 111,292 | 4,604 | 1 | 58 |
+
+For every \`complete\` Relation, the qualification requires the number of
+assembled provenance segments to equal the Relation member count. This passed
+for both datasets. The repeated full scan was deterministic.
+
+The real partial-subset gate also passed on both datasets: removing one
+referenced Node preserves ring identity but produces unresolved location state;
+removing one referenced Way produces a partial assembly rather than a fabricated
+or silently repaired ring.
+
+### Independent osmium comparison
+
+The oracle is built independently with:
+
+1. \`osmium tags-filter --omit-referenced r/type=multipolygon\`;
+2. \`osmium getid --add-referenced\` against the original pinned snapshot;
+3. \`osmium export --geometry-types=polygon --attributes=type,id\`.
+
+This makes extract-boundary omissions visible while allowing libosmium to
+perform its own geometry assembly.
+
+Raw OSM ring counts are **not** forced to equal exported polygon-ring counts.
+OSM permits touching rings, while an OGC-oriented geometry exporter may merge
+rings sharing Nodes into one polygon component. For the geometry comparison,
+the qualification therefore also counts connected outer/inner ring components
+under exact shared OSM Node identity. The raw \`osm.area\` rings remain
+unchanged and separately reported.
+
+| Dataset | osmium relation areas | complete overlap | raw ring-count differences | touching outer normalizations | touching inner normalizations | residual geometry-count differences | osm-d under-assembly |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 48 | 48 | 1 | 0 | 1 | 0 | **0** |
+| Bremen | 1,196 | 1,196 | 12 | 1 | 10 | 1 | **0** |
+
+The Monaco raw difference is Relation 11,384,697: \`osm.area\` retains one
+outer plus two touching inner OSM rings; the geometry oracle exports one outer
+plus one hole component.
+
+Bremen retains one residual geometry-domain difference after touching-ring
+normalization (Relation 20,429,426: one outer plus one inner structurally,
+versus one outer and no hole in exported geometry). One additional
+structurally complete Bremen Relation is omitted entirely by osmium geometry.
+These are retained as evidence rather than coerced into \`osm.area\`: M16 does
+not own containment, ring simplicity, intersection, or OGC polygon validity.
+
+The decisive independent gate is therefore **no structural under-assembly**:
+for every Relation accepted by both implementations, osm-d must expose at least
+the independently exported outer/inner component count after the documented
+touching-ring normalization. Monaco and Bremen both pass with zero
+under-assembly cases.
+
+### Representative repeated assembly and allocation
+
+The timing target is the largest selected complete fragmented Relation when one
+is available.
+
+| Dataset | Relation | members / segments | rings | p50 | allocated bytes | visible result payload |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Monaco | 19,851,153 | 6 / 6 | 3 | 7.3 µs | 7,920 B | 1,616 B |
+| Bremen | 2,088,648 | 85 / 85 | 2 | 473.3 µs | 613,664 B | 93,456 B |
+
+The allocation probe runs after warm repeated assembly. It measures bytes
+allocated in the current GC thread for one owning result construction; visible
+payload counts the public ring/open-chain/issue arrays and their vertex/segment
+storage. It is not a retained-heap measurement.
+
+The Bremen case shows substantial transient allocation overhead relative to
+visible payload, but the measured representative assembly remains below one
+millisecond on the hosted runner. This evidence does **not** justify a hidden
+persistent geometry cache. A reusable explicit assembly workspace may be
+reconsidered only if a real repeated editor/renderer workload demonstrates
+allocation pressure.
+
+### M16 decision
+
+The current architecture is **KEEP**.
+
+- complete-object projection is practical for large real Ways;
+- structural area assembly is deterministic across complete and partial
+  extracts;
+- provenance covers every member of every structurally complete real
+  multipolygon;
+- independent osmium geometry shows no structural under-assembly on Monaco or
+  Bremen;
+- observed geometry-domain differences align with the documented M16 boundary
+  rather than requiring generic polygon algorithms inside osm-d;
+- no persistent area cache or generic geometry dependency is justified by the
+  measured workload.
+
+M16 therefore closes with \`osm.complete\` and \`osm.area\` as the OSM semantic
+layers and leaves generic polygon validity/containment/metrics in the geometry
+libraries.
+
+
+## M19 replication continuity and incremental synchronization qualification
+
+M19 #152 qualifies the complete compressed replication path across connected
+sequences, restart/replay cases and editable-store index maintenance.
+
+### Correctness workload
+
+The committed `tests/m19-replication-qualification` harness uses five authored,
+deterministic GZIP osmChange fixtures. Their decoded SHA-256 identities are
+recorded beside the fixtures. The chain exercises:
+
+- consecutive sequence application with an overlapping timestamp;
+- create, modify and delete for Nodes, Ways and Relations;
+- repeated versions that must be classified as exact replay rather than
+  reapplied;
+- restart after store mutation but before durable checkpoint persistence;
+- same-sequence replay after checkpoint persistence;
+- an explicit sequence gap;
+- truncated compressed input followed by a successful retry;
+- an M18 local-dirty conflict followed by revert and deterministic retry;
+- Way and Relation reference changes with reverse parent-index assertions;
+- final object versions, membership, live counts and checkpoint state.
+
+The qualification runs through the real composition:
+
+```text
+transport-d MemorySource
+  -> compression-d streaming GZIP
+  -> osmChange reader
+  -> osm.replication
+  -> OsmStore authoritative reconciliation
+```
+
+The connected correctness workload passes under DMD 2.111.0 and LDC 1.41.0.
+
+### Release-build defect exposed by the qualification
+
+The first LDC release measurement found a real correctness defect in
+`osm.reconcile.authoritative`: the three `applyPlan` overloads placed
+`OsmStore.add`, `replaceAuthoritative` and `discardAuthoritative` calls
+inside `assert(...)`.
+
+D release builds remove assertion expressions. The reconciliation result and
+replication checkpoint could therefore report successful progress while the
+authoritative Store mutation had never executed. The following sequence then
+failed with a version gap.
+
+The fix executes each Store mutation unconditionally and uses `assert` only
+to verify its result after the fully validated/preflighted operation. A focused
+audit of `osm.reconcile.authoritative`, `osm.replication` and the compact
+Store found no second production mutation hidden inside an assertion. The M19
+release workload is retained in CI as the regression gate.
+
+### Pragmatic incremental workload
+
+The LDC 1.41.0 release-mode hosted gate runs 200 independent five-sequence
+chains, for 1,000 complete compressed replication resources. It includes the
+same GZIP -> osmChange -> replication -> Store path rather than timing an
+isolated transition helper.
+
+| Metric | Result |
+| --- | ---: |
+| chains | 200 |
+| compressed sequences | 1,000 |
+| staged Store transitions | 2,400 |
+| replayed object entries | 200 |
+| elapsed | 951,282 µs |
+| throughput | 1,051.21 sequences/s |
+| D-GC allocated bytes | 131,987,200 B |
+| D-GC allocation / sequence | ~131,987 B |
+| D-GC collections | 28 |
+| peak RSS | 10,016 KiB |
+
+The figures are decision evidence from a GitHub-hosted Ubuntu 24.04 runner, not
+release SLAs. The workload intentionally includes XML parsing, owning semantic
+documents, GZIP state and Store reconciliation, so its allocation figure is not
+a codec-only hot-path number.
+
+### M19 decision
+
+The current architecture is **KEEP**.
+
+- sequence/replay/restart behavior is deterministic across a connected chain;
+- failed transport/compression/semantic steps do not advance the checkpoint;
+- reverse Way/Relation indexes remain coherent after incremental updates;
+- the M18 local-conflict boundary composes correctly with replication;
+- the full compressed path exceeds 1,000 small replication sequences/s in the
+  hosted qualification while remaining near 10 MiB peak RSS;
+- the observed allocation volume does not justify another persistent patch
+  cache, shadow graph or bespoke replication store.
+
+M19 therefore closes with the existing `OsmStore` plus explicit replication
+checkpoint semantics. Scheduling, retry policy and durable checkpoint
+persistence remain application responsibilities.

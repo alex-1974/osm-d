@@ -31,6 +31,10 @@ The current library scope includes:
 - osmChange;
 - OSM Editing API diff-upload response parsing;
 - Editing API capability discovery for target-aware upload validation;
+- a synchronous OSM Editing API 0.6 protocol client over injected
+  transport-d HTTP exchange;
+- authoritative OSM history, refresh and three-way conflict semantics;
+- OSM replication state/sequence and incremental store-apply semantics;
 - structural and semantic validation;
 - loss-aware read/write round trips;
 - compact stores for larger editable datasets;
@@ -64,9 +68,11 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
 - `docs/RELEASE_BASELINE.md` — release qualification baseline/evidence
-- `docs/API_STABILITY.md` — supported v0.3.x API and compatibility policy
+- `docs/API_STABILITY.md` — supported v0.4.x API and compatibility policy
 - `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
 - `docs/API_V0_3.md` — v0.2 → v0.3 API migration guide
+- `docs/API_V0_4.md` — v0.3 → v0.4 API migration guide
+- `docs/RELEASE_PROCESS.md` — freeze, release-gate and tag-signing workflow
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -85,7 +91,7 @@ only `.workspace/`.
 Add the current standalone release line to a DUB package:
 
 ```sdl
-dependency "osm-d" version="~>0.3.0"
+dependency "osm-d" version="~>0.4.0"
 ```
 
 Then build normally:
@@ -110,16 +116,19 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package remains pre-1.0. v0.3.x preserves the supported high-level
-consumer surface for the v0.3 patch line: `import osm;` stays focused on
+The package remains pre-1.0. v0.4.x preserves the supported high-level
+consumer surface for the v0.4 patch line: `import osm;` stays focused on
 common semantic/PBF-traversal/store workflows, while specialized format and
 Editing API families use focused facades.
 
-v0.3 adds `osm.upload` for successful diff-upload responses and
-`osm.capabilities` for dynamic target-server upload limits. It deliberately
-does not add HTTP/OAuth, changeset lifecycle or retry policy. The exact v0.3.x
-promise is in `docs/API_STABILITY.md`; migration from v0.2 is in
-`docs/API_V0_3.md`.
+v0.4 keeps the v0.3 `osm.upload` and `osm.capabilities` contracts and
+promotes the post-v0.3 work into stable focused facades: topology and complete
+objects, area assembly, Changesets and `osm.api`, authoritative history and
+`osm.sync`, plus `osm.replication`. Generic HTTP execution remains in
+transport-d and GZIP in compression-d; OAuth/account/retry/editor-resolution
+and checkpoint-persistence policy stay outside the core. The exact v0.4.x
+promise is in `docs/API_STABILITY.md`; migration from v0.3 is in
+`docs/API_V0_4.md`.
 
 ## Reading an in-memory PBF
 
@@ -158,6 +167,40 @@ For repeated/high-throughput reads, retain `PbfReaderWorkspace` and call
 `PbfReader.read` directly; this reuses grown scratch capacity. Borrowed views
 remain callback-scoped in both forms.
 
+For a bounded file, memory or remote resource, pass the transport abstraction
+instead of materializing the complete encoded PBF:
+
+```d
+import osm;
+import transport : ByteSource, FileSource, ReadError;
+
+ByteSource source = new FileSource("region.osm.pbf");
+
+PbfReader reader;
+PbfReaderWorkspace workspace;
+PbfReadSummary summary;
+PbfSourceReadStatus status;
+Handler handler;
+
+if (!reader.read(source, workspace, handler, summary, status))
+{
+    if (status.transportError != ReadError.none)
+    {
+        // byte-resource access failed
+    }
+    else
+    {
+        // status.pbf reports malformed/unsupported PBF semantics
+    }
+}
+```
+
+This source overload retains only the current PBF header/blob and reusable
+decode scratch. Clean EOF inside an incomplete frame is reported as malformed
+PBF; a real ByteSource failure remains a transport error. The existing
+whole-buffer overload remains the fastest path when the bytes are already
+resident.
+
 A Way exposes ordered references through `way.nodes`; each value is a
 `NodeRefView` with an OSM ID and an optional `LocationView` when
 `LocationsOnWays` was present.
@@ -185,14 +228,77 @@ if (readPbfStore(pbfBytes, store, summary, readStatus))
 }
 ```
 
+The same direct build accepts a `ByteSource` with
+`PbfSourceStoreReadStatus`. This gives a bounded
+`ByteSource -> PBF decode -> OsmStore` path: the durable store grows normally,
+but the complete encoded PBF is never retained merely because of the parser
+API.
+
 The store returns the common semantic leaf types `MetadataView`, `TagView`,
 `NodeRefView` and `RelationMemberView`; only the borrowing ranges are
 store-specific. Stable `OsmHandle` lookup remains available for generic/editor
 workflows, but a simple typed read no longer needs the two-step
 `find(type,id) -> handle -> node/way/relation` sequence.
 
-The PBF input needs to remain alive only for `readPbfStore`; the resulting
-store owns its durable semantics and indexes.
+Tag ranges support exact, allocation-free lookup through UFCS-friendly helpers:
+
+```d
+if (node.tags.hasTag("name"))
+{
+    auto name = node.tags.findTag("name");
+    if (name.found)
+    {
+        // name.tag.value borrows the same backing storage as the tag range.
+    }
+}
+
+if (node.tags.tagEquals("place", "city"))
+{
+}
+```
+
+String arguments are compared as their existing UTF-8 code units. No
+normalization, case folding or transcoding occurs. `findTag` returns the first
+matching duplicate key; `tagEquals` succeeds when any duplicate occurrence
+matches both key and value.
+
+The store's element, child and parent traversal values are ordinary lazy D
+InputRanges. They can therefore compose with Phobos without materializing an
+intermediate result:
+
+```d
+import std.algorithm : filter;
+
+auto namedWays =
+    store.ways
+         .filter!(way => way.tags.hasTag("name"));
+
+foreach (way; namedWays)
+{
+    // StoreWayView still borrows the store.
+}
+```
+
+Phobos composition is lazy and allocation-free, but it is a convenience
+surface rather than the maximum-throughput traversal. On the pinned Bremen
+qualification, plain `filter` added about 7% for a realistic tag-presence
+predicate and substantially more for very cheap predicates. Use a direct
+range/`foreach` loop with an inline `if` when traversal is a measured hot
+path; see `docs/BENCHMARKS.md` for the evidence.
+
+Copying one of these ranges copies only its cursor state. Every copy still
+borrows the same store, and structural store mutation invalidates outstanding
+ranges and views.
+
+For the slice overload, PBF input bytes need to remain alive only during
+`readPbfStore`. For the ByteSource overload, even that complete encoded buffer
+is unnecessary. In both cases the resulting store owns its durable semantics
+and indexes.
+
+Loss-aware `PbfDocument` reading remains a separate whole-buffer contract
+because raw-source preservation intentionally retains original encoded bytes.
+The bounded ByteSource reader does not silently weaken or emulate that
+preservation contract.
 
 ### Materializing and acknowledging edits
 
@@ -281,9 +387,34 @@ foreach (scope ref RelationView relation; pbfRelations(pbfBytes))
 }
 ```
 
+When a streaming consumer wants only matching elements, use the push-filter
+adapter rather than materializing an intermediate result:
+
+```d
+bool hasHighway(scope ref WayView way) @safe nothrow @nogc
+{
+    return way.tags.hasTag("highway");
+}
+
+auto highways = pbfWays(pbfBytes).where!hasHighway;
+foreach (scope ref WayView way; highways)
+{
+    // matching borrowed Way only
+}
+assert(highways.status.ok);
+assert(highways.completed);
+```
+
+`where!` remains an `opApply`/foreach adapter, not a Phobos InputRange. It
+does not materialize elements or widen borrowed lifetimes. The predicate is
+applied after enough PBF work has been performed to produce a valid semantic
+element, so filtering does not promise protobuf-field predicate pushdown or
+avoid required framing/decompression/validation.
+
 The existing `PbfReader.nodes/ways/relations` methods remain equivalent
 advanced entry points. Natural completion validates the complete file; an
-early foreach exit is explicitly a partial traversal.
+early foreach exit, including from a filtered traversal, is explicitly a
+partial traversal.
 
 Loss-aware PBF documents, raw preservation, writing and PBF-specific semantic
 comparison are grouped under `import osm.pbf;` rather than expanding the
@@ -383,6 +514,443 @@ invent a missing version or changeset on deletes. Whether an otherwise
 representable change is valid for an OSM API upload is a stronger validation
 contract handled separately by the modification-validation layer.
 
+## Dataset/reference validation
+
+Dataset integrity is weaker than uploadability and stronger than merely parsing
+individual elements. Use `osm.validate` to state whether the loaded data is
+expected to be complete or intentionally partial:
+
+```d
+import osm.validate;
+
+DatasetValidationIssue issue;
+
+if (!validateDataset(
+        dataset,
+        DatasetValidationMode.complete,
+        issue))
+{
+    // issue identifies the first invalid identity/reference.
+}
+```
+
+`DatasetValidationMode.complete` requires every Way node reference and
+Relation member to resolve to a correctly typed local object.
+`DatasetValidationMode.partial` permits unresolved **positive** IDs from an
+extract/API subset, but still rejects unresolved negative/local IDs and zero
+references.
+
+Relation cycles are not rejected merely for being cycles; recursive topology
+traversal is a separate concern. For `OsmStore`, a reference to a target known
+to be tombstoned locally is an explicit `deletedReference`, not an allowed
+partial-extract omission.
+
+The same API accepts `OwnedDataset` and `OsmStore`. It does not apply
+changeset/version metadata, server capability limits, tag upload rules,
+canonical upload coordinate precision, geometry validity or editor policy.
+
+## OSM topology resolution
+
+Use the focused `osm.topology` facade when a consumer needs to navigate OSM
+identity/reference graphs rather than merely inspect stored IDs:
+
+```d
+import osm.topology;
+
+auto resolved = store.resolveMembers(relation);
+while (!resolved.empty)
+{
+    auto member = resolved.front;
+
+    if (member.resolved)
+    {
+        // member.target is a stable OsmHandle.
+    }
+    else
+    {
+        // unresolvedPositive / unresolvedLocal / zero / invalid type remain
+        // explicit; topology traversal never fetches or repairs them.
+    }
+
+    resolved.popFront();
+}
+```
+
+Direct Way/Relation resolution is lazy, preserves source order and duplicates,
+and materializes no complete objects. `OsmStore` reuses its existing primary
+indexes. For `OwnedDataset`, build an explicit reusable `OwnedDatasetIndex`;
+rebuild it after identity/order/insert-remove changes or after Way-node or
+Relation-member topology changes.
+
+For recursive graph work, `walkRelationClosure` and `walkParentClosure`
+take a reusable `TopologyTraversalWorkspace`, explicit
+`TopologyTraversalLimits`, and a visitor callback. Relation child closure is
+depth-first and preserves member/Way-node occurrences; Relation identities are
+expanded only once so self-reference and longer cycles terminate. Parent
+closure returns distinct parent elements and reuses the store's maintained
+reverse indexes.
+
+Limit exhaustion is explicit. A visitor-requested early stop is a non-error
+partial traversal with `status.completed == false`.
+
+This layer owns OSM graph semantics only. Complete-object materialization,
+multipolygon/area assembly, generic geometry, projections, spatial indexing,
+rendering and network retrieval of missing objects remain separate concerns.
+
+## Complete OSM objects
+
+Use the focused `osm.complete` facade when ID/reference resolution is not
+enough and the consumer needs the resolved semantic child objects themselves:
+
+```d
+import osm.complete;
+
+auto full = completeWay(store, way);
+
+auto nodes = full.nodes;
+while (!nodes.empty)
+{
+    auto node = nodes.front;
+
+    if (node.resolved)
+    {
+        LocationView location = node.location;
+        // Exact latitude/longitude nanodegrees; no implicit double conversion.
+    }
+    else
+    {
+        // Partial/invalid reference remains explicit.
+    }
+
+    nodes.popFront();
+}
+```
+
+`completeWay` and `completeRelation` are available for `OsmStore` and for
+`OwnedDataset` with its explicit `OwnedDatasetIndex`. They are lazy,
+preserve source order and duplicates, and do not materialize a second deep
+object graph.
+
+`completeStatus` reduces direct child resolution to
+`CompleteObjectState.complete`, `.partial` or `.invalid`.
+`isClosedWay` performs only the OSM identity test (first and last Node ID are
+equal); it does not imply polygon validity.
+
+`locationBounds` computes exact latitude/longitude bounds in signed
+nanodegrees from resolved Way Nodes. Resolved locations still contribute when
+another child is partial, and the returned completeness status makes that
+partial result explicit.
+
+Structural `OsmStore` mutation invalidates outstanding borrowed complete
+projections just like ordinary store views. Re-borrow after mutation.
+`OwnedDatasetIndex` must be rebuilt after identity/order/insert-remove,
+Way-node or Relation-member topology changes.
+
+The complete-object layer does not depend on `geo-d`. A consumer that chooses
+Euclidean geometry maps longitude to x and latitude to y explicitly. Generic
+polygon/segment algorithms remain outside osm-d.
+
+## OSM area and multipolygon assembly
+
+Use `osm.area` when OSM Way/Relation topology must be assembled into
+geometry-ready rings without importing generic polygon algorithms:
+
+```d
+import osm.area;
+
+auto area = assembleMultipolygon(store, relation);
+
+if (area.complete)
+{
+    foreach (ref const ring; area.rings)
+    {
+        // ring.role is outer or inner.
+        // ring.vertices preserve exact Node IDs and LocationView nanodegrees.
+        // ring.segments preserve source Way/member provenance and reversal.
+    }
+}
+```
+
+`assembleClosedWayArea` structurally assembles a caller-selected closed Way
+as one outer ring. It deliberately does **not** infer from arbitrary tags
+whether every closed Way represents an area.
+
+`assembleMultipolygon` requires `type=multipolygon`, Way members and exact
+`outer` / `inner` roles. Member order need not match ring order and source
+Way direction may be reversed in the owning result without mutating source
+data. Connectivity is exact OSM Node identity; coordinates are never used as a
+tolerance-based join key.
+
+The result distinguishes:
+
+- `complete` — all requested rings and Node locations are available;
+- `partial` — positive/server references are missing from the available
+  dataset;
+- `ambiguous` — more than one same-role Way can continue an endpoint;
+- `invalid` — the available graph violates the supported structural contract.
+
+Failed or incomplete chains remain available as `AreaOpenChain` diagnostics.
+`AreaAssemblyIssue` identifies invalid roles/member types, unresolved Ways or
+Nodes, duplicates, unclosed chains and ambiguous junctions.
+
+Assembly owns the new ring/path/provenance arrays. Exact `LocationView`
+nanodegrees are copied; no implicit floating-point conversion occurs.
+
+This layer does not test polygon simplicity, intersections, containment,
+orientation, area, clipping or projection. Those remain explicit downstream
+geometry/geodesy operations.
+
+
+## Changesets
+
+v0.4 provides a focused Changeset semantic/XML facade:
+
+```d
+import osm.changeset;
+import osm : OwnedTag, ownBytes;
+import transport.source : MemorySink, MemorySource;
+
+ChangesetTagRequest request;
+request.tags ~= OwnedTag(
+    ownBytes(cast(const(ubyte)[]) "created_by"),
+    ownBytes(cast(const(ubyte)[]) "osm-d"));
+request.tags ~= OwnedTag(
+    ownBytes(cast(const(ubyte)[]) "comment"),
+    ownBytes(cast(const(ubyte)[]) "Improve footpaths"));
+
+auto sink = new MemorySink();
+ChangesetWriteStatus writeStatus;
+if (!writeChangesetTagRequest(request, sink, writeStatus))
+{
+    // transport/XML output failure
+}
+
+// A GET/query response is parsed separately into server-owned semantics.
+const(ubyte)[] responseBytes = /* bytes from the protocol/transport layer */ null;
+OwnedChangeset changeset;
+ChangesetReadStatus readStatus;
+auto source = new MemorySource(responseBytes);
+if (!readChangeset(source, changeset, readStatus))
+{
+    // transport/XML/semantic response failure
+}
+```
+
+`OwnedChangeset` keeps ID, open state, creation/closure timestamps, owner,
+optional exact bounds, current change counters, tags and optional discussion
+data with explicit presence. An absent discussion is distinct from an
+explicitly present empty discussion.
+
+Create/update XML deliberately uses the separate `ChangesetTagRequest` type.
+The server owns identity, timestamps, bounds, owner and counters; update tags
+are a complete replacement set. The codec performs no HTTP, authentication or
+policy decision about when an editor opens, reuses or closes a Changeset.
+
+## Editing API protocol client
+
+v0.4 adds the focused `osm.api` facade for consumers that want OSM
+operations rather than raw endpoint construction:
+
+```d
+import osm.api;
+import transport.exchange : CurlHttpExchange;
+
+auto api = new EditingApiClient(
+    EditingApiServer("https://api.openstreetmap.org/api/0.6"),
+    new CurlHttpExchange());
+
+OwnedNode node;
+EditingApiStatus status;
+if (!api.readNode(123, node, status))
+{
+    // status separates transport failure, completed HTTP/OSM status,
+    // response decoding, and local validation.
+}
+```
+
+The caller always selects the API server. There is no implicit production write
+target. Capabilities, permissions, current/version/history reads, Way/Relation
+`full`, Changeset create/read/update/close and osmChange diff upload all reuse
+the existing semantic/XML codecs.
+
+Authenticated operations accept the complete Authorization header only for the
+duration of that call. `EditingApiClient` does not retain tokens, perform OAuth,
+select accounts, refresh credentials, retry requests or own background
+execution. Those remain application/credentials-d concerns.
+
+The generic HTTP seam is `transport.exchange.HttpExchange`, so protocol tests
+and applications may inject a deterministic exchange without a network. The
+native transport-d `CurlHttpExchange` is only one implementation.
+
+Typed M18 histories are also available directly from the existing history
+operations:
+
+```d
+NodeHistory history;
+EditingApiStatus status;
+
+if (api.readNodeHistory(123, history, status))
+{
+    auto v2 = history.findVersion(2);
+}
+```
+
+Historical API reads use dedicated historical values rather than pretending
+every old version is a current live object. In particular, a deleted Node may
+carry `visible=false` without `lat`/`lon`; `HistoricalNodeVersion` preserves
+that missing location explicitly and `toOwned` refuses to invent coordinates.
+
+A /history response is classified as `HistoryCoverage.complete` when versions
+are contiguous from version 1. A valid strictly increasing sequence with gaps
+is retained as `HistoryCoverage.partial`; duplicates, reversed versions or
+ambiguous identity still fail instead of being sorted or repaired. Specific
+version reads likewise return `HistoricalNodeVersion`,
+`HistoricalWayVersion` or `HistoricalRelationVersion`, while current-element
+reads continue to return ordinary live `Owned*` values.
+
+## Authoritative refresh and conflicts
+
+Use the focused `osm.sync` facade when current server state must be compared
+with an editable store:
+
+```d
+import osm.store;
+import osm.sync;
+
+AuthoritativeBatch remote;
+remote.nodes ~= NodeState.present(freshNode);
+
+// An explicit authoritative absence can be represented as:
+// remote.nodes ~= NodeState.absent(nodeId, knownVersion);
+
+ReconcileResult result;
+ReconcileStatus status;
+
+if (!reconcileAuthoritative(store, remote, result, status))
+{
+    // The batch failed semantic/preflight validation; the store is unchanged.
+}
+
+foreach (entry; result.entries)
+{
+    if (entry.requiresResolution)
+    {
+        // entry.conflict contains base/local/remote facts for application UI
+        // or policy. osm-d does not silently choose a winner.
+    }
+}
+```
+
+M18 deliberately separates three concepts:
+
+- `NodeHistory`, `WayHistory` and `RelationHistory` represent authoritative
+  OSM server versions; they are not editor undo/redo history.
+- `classifyConflict` compares explicit base/local/remote states and reports
+  tag, Node-coordinate and ordered Way/Relation sequence facts without
+  producing a merged object.
+- `reconcileAuthoritative` applies only safe remote-only or identical
+  concurrent state, leaves local-only/conflicting objects untouched and reports
+  independent concurrent changes for application resolution.
+
+Clean refresh reuses the store's existing mutation machinery, so stable handles
+remain stable and primary/parent indexes update coherently. An authoritative
+deletion follows the established confirmed-delete lifecycle and invalidates the
+old handle; it is not emitted later as a new local deletion.
+
+All semantic/store-representation preflight completes before the first visible
+batch mutation. Resource exhaustion follows normal D allocation semantics; the
+library does not clone a city-scale store merely to promise rollback after an
+out-of-memory condition. See
+`docs/adr/0033-history-refresh-conflict-boundary.md`.
+
+## Replication state and incremental apply
+
+v0.4 provides `osm.replication` for consumers that maintain their own
+replication checkpoint and retrieval policy:
+
+```d
+import osm.osmchange;
+import osm.replication;
+import osm.store;
+import transport.source : ByteSource;
+
+ReplicationFeed feed;
+assert(ReplicationFeed.create(
+    "official-minute",
+    ReplicationGranularity.minute,
+    feed));
+
+ReplicationState remoteState;
+ReplicationStateReadStatus stateStatus;
+ByteSource stateSource = /* caller-selected local/remote source */ null;
+
+if (!readReplicationState(stateSource, remoteState, stateStatus))
+{
+    // bounded state.txt transport/parse failure
+}
+
+ReplicationResourcePaths paths;
+ReplicationPathStatus pathStatus;
+if (!replicationResourcePaths(
+        remoteState.sequenceNumber,
+        paths,
+        pathStatus))
+{
+    // unsupported sequence for the current official-style path layout
+}
+
+// The caller obtains/decompresses the .osc.gz resource separately and parses
+// it through the existing osmChange codec.
+OsmChangeDocument diff;
+
+ReplicationApplyResult applied;
+ReplicationApplyStatus applyStatus;
+if (applyReplicationStep(
+        store,
+        checkpoint,
+        feed,
+        remoteState,
+        diff,
+        applied,
+        applyStatus))
+{
+    if (applied.checkpointAdvanced)
+    {
+        // Persist applied.checkpoint only after the caller's durable store
+        // update is committed.
+    }
+}
+```
+
+The replication contract deliberately separates sequence and object continuity:
+
+- feed sequence numbers decide next/replay/stale/gap; timestamps are metadata,
+  not wall-clock sequence arithmetic;
+- OSM object versions decide replay/stale/gap for each identity;
+- several versions of one identity in an osmChange document are staged in
+  version order before the store changes;
+- same-version/equivalent payload is harmless replay; same-version/different
+  payload is an integrity failure;
+- older object versions are tolerated as stale feed overlap and never roll the
+  store back;
+- local M18 conflicts are collected before the first store mutation, so the
+  caller can resolve local work and replay the same sequence;
+- the returned checkpoint advances only after a successful final M18
+  reconciliation.
+
+`ReplicationTimestamp.fromUnixSeconds` lets a consumer construct checkpoint
+metadata from a PBF replication timestamp without round-tripping through
+`state.txt`.
+
+`replicationResourcePaths` returns only relative
+`AAA/BBB/CCC.osc.gz` / `AAA/BBB/CCC.state.txt` paths. URL joining, HTTP/file
+access, scheduling, retry and durable checkpoint storage remain caller concerns.
+`applyGzipReplicationStep` composes the caller-selected bounded
+`ByteSource` with compression-d's streaming GZIP decoder and osm-d's
+osmChange/replication semantics. Retrieval, scheduling, retry and checkpoint
+persistence remain caller concerns. See
+`docs/adr/0034-replication-sequence-replay-contract.md`.
+
 ## Upload validation
 
 Parsing and upload readiness are separate contracts. Use `osm.validate` when
@@ -434,8 +1002,8 @@ trip.
 
 ## Release status
 
-v0.3.0 extends the qualified v0.2.1 base with two focused Editing API
-response/policy facades. Its high-level capabilities include:
+v0.4.0 extends the qualified v0.3.0 base with the M15-M19 consumer surfaces.
+Its high-level capabilities include:
 
 - validated borrowed and parallel-summary PBF reading;
 - durable/loss-aware PBF document read and write through `osm.pbf`;
@@ -447,17 +1015,22 @@ response/policy facades. Its high-level capabilities include:
 - deterministic store-edit materialization and authoritative diff-upload result
   reconciliation;
 - bounded OSM API diffResult parsing through `osm.upload`;
-- bounded Editing API capability discovery through `osm.capabilities`.
+- bounded Editing API capability discovery through `osm.capabilities`;
+- OSM topology resolution, complete-object projection and area assembly;
+- Changeset semantics and Editing API protocol operations over injected
+  transport-d HTTP;
+- authoritative histories, refresh and structured conflict facts;
+- bounded GZIP replication ingestion with sequence/replay/checkpoint semantics.
 
-The v0.3.x patch line freezes the supported high-level facade/import surface,
+The v0.4.x patch line freezes the supported high-level facade/import surface,
 parameter names, ownership/lifetime and failure contracts described in
 `docs/API_STABILITY.md`. It does not freeze low-level wire/codec/store
 implementation modules, a persistent store format, concurrent store mutation,
-rendering, spatial indexing, network/OAuth policy or changeset lifecycle.
+rendering, spatial indexing, OAuth/account policy, scheduling or retry policy.
 `docs/RELEASE_BASELINE.md` records the evidence behind release claims.
 
 Literal JOSM-export provenance remains tracked separately in #85 as evidence
-hardening; it is not a semantic/API blocker for v0.3.x.
+hardening; it is not a semantic/API blocker for v0.4.x.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package use the

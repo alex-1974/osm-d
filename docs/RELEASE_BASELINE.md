@@ -4,7 +4,7 @@ Absolute timings are environment-specific. Durable claims are semantic parity,
 bounded-memory behavior, the supported compiler matrix, source/lifetime
 contracts and the measured performance class on the recorded runners.
 
-## v0.3.0 release candidate
+## v0.3.0 release and publication record
 
 **Feature-freeze date:** 2026-11-04  
 **Feature-freeze commit:** `77c98eaca6ba2cd8f50eb50adc4d4e352d6e719c`
@@ -71,14 +71,49 @@ These cross-run timing differences are observations on GitHub-hosted runners,
 not causal performance claims. M11/M12 do not modify the measured PBF/XML hot
 paths.
 
-After this evidence is committed, the final promotion candidate is rerun
-through the same Release Gate, pinned PBF and M6/Bremen qualifications so that
-release promotion still uses one exact fully-green head.
+The final promotion candidate was
+`db8b3fc9df5a61ec85ebbca4f56607d5af7710d4`. On that exact head:
+
+- Release Gate 41915533901 — PASS across all six release compilers, metadata
+  and Monaco I/O;
+- PBF Round-trip Qualification 41915532742 — PASS;
+- M6 Store Qualification 41915532416 — PASS;
+- release PR #122 repeated the full main-target Release Gate as run
+  41916134443 — PASS before merge.
 
 The API freeze removes the v0.2-only ambiguous
 `UploadResultEntry.action` shape guess and freezes request-aware `effectFor`
-as the supported semantic classifier. No further public API change is admitted
+as the supported semantic classifier. No further public API change was admitted
 after that checkpoint.
+
+### v0.3.0 publication
+
+Release PR #122 promoted the qualified candidate with a merge commit:
+
+- `main` release commit:
+  `99c5ffcb5e77f3ec48f296e9e690849190e57c40`;
+- annotated tag object:
+  `f593443c39843a559578f259fe49de3909c0b791`;
+- tag `v0.3.0` resolves exactly to the release commit above;
+- Publish release run 41917670146 — PASS;
+- post-promotion Main Release Gate 41917670239 — PASS across all six compiler
+  jobs, metadata and Monaco I/O;
+- release archive: `osm-d-0.3.0.tar.gz`, 352,599 bytes;
+- published archive digest:
+  `sha256:6219cd21d5b0109a4f3c3a1716c3524b152697577272da2d7f8d460f58b80288`;
+- checksum asset: `osm-d-0.3.0.tar.gz.sha256`, 85 bytes, asset digest
+  `sha256:aa9feaa001199b13d56ae91004fba08c3e03e249544a47a34dbe85b613d1c160`.
+
+The release state was forward-integrated by PR #123:
+
+- `develop` merge commit:
+  `8a0ea3eb6d9b6f21b927b02ad380ac3fd62494f2`;
+- PR Fast CI 41918531765 — DMD 2.111.0 PASS, LDC 1.41.0 PASS;
+- PR M6 Store Qualification 41918531517 — PASS.
+
+The automated final release tag is annotated but unsigned. Signed-tag
+automation remains separately tracked by #105 rather than being silently
+claimed here.
 
 ## Historical v0.2 baseline
 

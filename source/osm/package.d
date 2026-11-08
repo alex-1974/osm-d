@@ -4,11 +4,11 @@
  * `import osm;` exposes the common semantic model, borrowed PBF traversal and
  * editable store workflows. Format-specialized loss-aware PBF document/write
  * facilities live in `osm.pbf`; XML, osmChange, upload validation, Editing
- * API response codecs and capability discovery use their corresponding
- * focused facades.
+ * API response codecs, Changesets and capability discovery use their
+ * corresponding focused facades.
  *
- * Editing API response/policy facades remain opt-in: `osm.upload` and
- * `osm.capabilities` are intentionally not re-exported from this root.
+ * Editing API facades remain opt-in: `osm.upload`, `osm.capabilities` and
+ * post-v0.3 `osm.changeset` are intentionally not re-exported from this root.
  * Raw upload-result values remain available here for store reconciliation.
  * Result effects require exact request context through
  * `UploadResultEntry.effectFor`; the root exposes no context-free action
@@ -28,7 +28,12 @@ public import osm.view.location : LocationView;
 public import osm.view.metadata : MetadataView;
 public import osm.view.node_ref : NodeRefView;
 public import osm.view.relation_member : RelationMemberView;
-public import osm.view.tag : TagView;
+public import osm.view.tag :
+    TagView,
+    TagLookupResult,
+    findTag,
+    hasTag,
+    tagEquals;
 
 public import osm.model.owned :
     OwnedBytes,
@@ -71,6 +76,7 @@ public import osm.store :
     StoreWayRange,
     StoreRelationRange,
     PbfStoreReadStatus,
+    PbfSourceStoreReadStatus,
     readPbfStore;
 
 public import osm.io.pbf.node_view : NodeView;
@@ -83,11 +89,14 @@ public import osm.io.pbf.reader :
     PbfRelationIterable,
     PbfReadError,
     PbfReadStatus,
+    PbfSourceReadStatus,
     PbfReadSummary,
     PbfReadResult,
+    PbfSourceReadResult,
     PbfReaderWorkspace,
     PbfReader,
     readPbf,
     pbfNodes,
     pbfWays,
-    pbfRelations;
+    pbfRelations,
+    where;

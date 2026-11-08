@@ -77,6 +77,89 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M17 semantic editing pipeline
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-semantic-pipeline \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Run M17 Editing API read-response fixtures
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-read-responses \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Run M17 Editing API protocol qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-editing-api \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Run M18 history, refresh and conflict qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m18-sync \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Measure M18 editor-scale synchronization workloads
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m18-sync-performance \
+            --compiler="$DC" \
+            --build=release \
+            --force
+
+      - name: Run M19 replication state and apply qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m19-replication \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Run M19 multi-sequence replication qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m19-replication-qualification \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Measure M19 incremental replication workload
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          dub build \
+            --root=tests/m19-replication-qualification \
+            --compiler="$DC" \
+            --build=release \
+            --force
+          set +e
+          /usr/bin/time -v \
+            tests/m19-replication-qualification/osm-d-m19-replication-qualification \
+            --measure \
+            2> /tmp/m19-replication-time.txt
+          status=$?
+          set -e
+          cat /tmp/m19-replication-time.txt
+          exit "$status"
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
@@ -121,6 +204,17 @@ jobs:
           dub build \
             --root=benchmark \
             --config=parser-parallel-summary \
+            --compiler="$DC" \
+            --build=release \
+            --build-mode=allAtOnce \
+            --force
+
+      - name: Build M16 area qualification
+        shell: bash
+        run: |
+          dub build \
+            --root=benchmark \
+            --config=area-qualification \
             --compiler="$DC" \
             --build=release \
             --build-mode=allAtOnce \

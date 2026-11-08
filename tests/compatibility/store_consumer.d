@@ -1,6 +1,19 @@
 module store_consumer;
 
 import osm;
+import std.algorithm.iteration : filter, map;
+import std.range : take;
+import std.range.primitives : isInputRange;
+import transport : ByteSource, MemorySource;
+
+static assert(isInputRange!StoreTagRange);
+static assert(isInputRange!StoreNodeRefRange);
+static assert(isInputRange!StoreRelationMemberRange);
+static assert(isInputRange!StoreParentWayRange);
+static assert(isInputRange!StoreParentRelationRange);
+static assert(isInputRange!StoreNodeRange);
+static assert(isInputRange!StoreWayRange);
+static assert(isInputRange!StoreRelationRange);
 
 // Preferred v0.2 root stays focused on common semantic/store/traversal APIs.
 static assert(!__traits(compiles, PbfDocument.init),
@@ -19,6 +32,12 @@ void compileStoreSurface()
     OwnedNode node;
     node.id = 1;
     node.location = LocationView(48_208_174_300L, 16_373_818_900L);
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"Wien"));
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"place"),
+        ownBytes(cast(const(ubyte)[])"city"));
 
     OsmHandle handle;
     StoreStatus status;
@@ -30,6 +49,14 @@ void compileStoreSurface()
     assert(view.id == 1);
     assert(view.handle == handle);
 
+    assert(view.tags.hasTag("name"));
+    assert(view.tags.tagEquals("place", "city"));
+    assert(!view.tags.hasTag("highway"));
+
+    TagLookupResult nameTag = view.tags.findTag("name");
+    assert(nameTag.found);
+    assert(nameTag.tag.value == cast(const(ubyte)[])"Wien");
+
     OsmHandle found;
     assert(store.find(ElementType.node, 1, found));
     assert(found == handle);
@@ -40,6 +67,29 @@ void compileStoreSurface()
         auto current = nodes.front;
         assert(current.handle == handle);
     }
+
+    // Store traversal is a real lazy D InputRange. Phobos adapters retain the
+    // borrowed store-view semantics and do not materialize result arrays.
+    auto namedNodes = store.nodes.filter!(value => value.tags.hasTag("name"));
+    assert(!namedNodes.empty);
+    assert(namedNodes.front.id == 1);
+
+    auto nodeIds = store.nodes.map!(value => value.id);
+    assert(!nodeIds.empty);
+    assert(nodeIds.front == 1);
+
+    auto firstNode = store.nodes.take(1);
+    assert(!firstNode.empty);
+    assert(firstNode.front.id == 1);
+
+    // Copying a range copies cursor state only; both cursors still borrow the
+    // same store and remain independently traversable until structural mutation.
+    auto cursorA = store.nodes;
+    auto cursorB = cursorA;
+    cursorA.popFront();
+    assert(cursorA.empty);
+    assert(!cursorB.empty);
+    assert(cursorB.front.id == 1);
 
     OwnedNode copy;
     assert(store.copyNode(handle, copy, status));
@@ -126,6 +176,17 @@ void compileStoreSurface()
     assert(!directOk);
     assert(directStore is null);
     assert(!directStatus.pbf.ok);
+
+    ByteSource pbfSource = new MemorySource(pbfBytes);
+    PbfSourceStoreReadStatus sourceStoreStatus;
+    bool sourceStoreOk = readPbfStore(
+        pbfSource,
+        directStore,
+        directSummary,
+        sourceStoreStatus);
+    assert(!sourceStoreOk);
+    assert(directStore is null);
+    assert(!sourceStoreStatus.source.pbf.ok);
 }
 
 void main()
