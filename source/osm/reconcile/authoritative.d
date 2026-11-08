@@ -328,7 +328,7 @@ bool validateRemoteState(
 
     if (state.value.id != state.id ||
         state.value.metadata.hasVersion != state.hasVersion ||
-        state.value.metadata.versionNumber != state.version)
+        state.value.metadata.versionNumber != state.versionNumber)
     {
         status.error = ReconcileError.invalidAuthoritativeState;
         return false;
@@ -352,7 +352,7 @@ bool validateRemoteState(
 
     if (state.value.id != state.id ||
         state.value.metadata.hasVersion != state.hasVersion ||
-        state.value.metadata.versionNumber != state.version)
+        state.value.metadata.versionNumber != state.versionNumber)
     {
         status.error = ReconcileError.invalidAuthoritativeState;
         return false;
@@ -376,7 +376,7 @@ bool validateRemoteState(
 
     if (state.value.id != state.id ||
         state.value.metadata.hasVersion != state.hasVersion ||
-        state.value.metadata.versionNumber != state.version)
+        state.value.metadata.versionNumber != state.versionNumber)
     {
         status.error = ReconcileError.invalidAuthoritativeState;
         return false;
@@ -392,9 +392,9 @@ bool basicStateValid(T)(
         return false;
 
     if (state.exists)
-        return state.hasVersion && state.version > 0;
+        return state.hasVersion && state.versionNumber > 0;
 
-    return !state.hasVersion || state.version > 0;
+    return !state.hasVersion || state.versionNumber > 0;
 }
 
 bool claimIdentity(
