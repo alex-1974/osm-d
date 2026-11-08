@@ -3826,6 +3826,10 @@ public:
         final switch (handle.type)
         {
             case ElementType.node:
+                markAuthoritativeAbsent(
+                    _nodes,
+                    handle._slot,
+                    authoritativeVersion);
                 if (currentState != StoreElementState.deleted)
                 {
                     _nodes.states[handle._slot] = StoreElementState.deleted;
