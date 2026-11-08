@@ -62,6 +62,12 @@ The PBF hot path is push-based and allocation-controlled. D ranges are used at
 public pipeline boundaries, not forced through the innermost varint/delta
 loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 
+## API documentation
+
+The generated DDox reference for the current released `main` branch is
+published at <https://alex-1974.github.io/osm-d/>. The Pages site deliberately
+documents the stable release surface rather than in-progress `develop` APIs.
+
 ## Project documents
 
 - `ARCHITECTURE.md` — module boundaries and data flow
