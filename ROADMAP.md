@@ -375,7 +375,17 @@ Tracked by M19: #153.
     failures before any store mutation.
   - [x] `applyGzipReplicationStep` retains the #150 complete-document staging
     boundary and advances the checkpoint only after successful semantic apply.
-- [ ] Qualify continuity, replay, restart and incremental store updates. #152
+- [x] Qualify continuity, replay, restart and incremental store updates. #152
+  - [x] authored multi-sequence fixtures cover equal timestamps, continuity,
+    replay/restart after a lost checkpoint write, gaps, mixed changes,
+    multi-version objects, local conflicts and reverse-index coherence.
+  - [x] corrupt/truncated compressed input, semantic gaps and local conflicts
+    leave both store and caller checkpoint unchanged.
+  - [x] DMD/LDC runtime and external-consumer gates pass; the LDC release
+    workload applies 256 consecutive compressed sequences at ~2.8k seq/s with
+    7,848 KiB measured runtime peak RSS.
+  - [x] release-mode qualification exposed and fixed authoritative store
+    mutations that had incorrectly been placed inside `assert(...)`.
 
 Generic resource retrieval stays in `transport-d`; GZIP belongs in
 `compression-d`; scheduling, retry policy and checkpoint persistence remain
