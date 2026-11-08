@@ -121,17 +121,14 @@ consumer surface for the v0.4 patch line: `import osm;` stays focused on
 common semantic/PBF-traversal/store workflows, while specialized format and
 Editing API families use focused facades.
 
-v0.3 adds `osm.upload` for successful diff-upload responses and
-`osm.capabilities` for dynamic target-server upload limits. The released
-v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
-v0.4 implements that OSM protocol boundary through `osm.api` over
-transport-d 0.2.x `HttpExchange`. M18 adds the transport-independent
-`osm.sync` history/refresh/conflict foundation. M19 adds the focused
-`osm.replication` state/sequence/replay and decoded-osmChange apply layer.
-Generic HTTP remains in transport-d; GZIP remains a compression-d concern; and
-OAuth/account/retry/editor-resolution/checkpoint-persistence policy stays
-outside the core. The exact v0.3.x promise is in `docs/API_STABILITY.md`; migration from
-v0.2 is in `docs/API_V0_3.md`.
+v0.4 keeps the v0.3 `osm.upload` and `osm.capabilities` contracts and
+promotes the post-v0.3 work into stable focused facades: topology and complete
+objects, area assembly, Changesets and `osm.api`, authoritative history and
+`osm.sync`, plus `osm.replication`. Generic HTTP execution remains in
+transport-d and GZIP in compression-d; OAuth/account/retry/editor-resolution
+and checkpoint-persistence policy stay outside the core. The exact v0.4.x
+promise is in `docs/API_STABILITY.md`; migration from v0.3 is in
+`docs/API_V0_4.md`.
 
 ## Reading an in-memory PBF
 
@@ -948,9 +945,10 @@ metadata from a PBF replication timestamp without round-tripping through
 `replicationResourcePaths` returns only relative
 `AAA/BBB/CCC.osc.gz` / `AAA/BBB/CCC.state.txt` paths. URL joining, HTTP/file
 access, scheduling, retry and durable checkpoint storage remain caller concerns.
-Compressed ingestion is intentionally separate: M19 #151 will compose
-transport-d with a consumer-qualified compression-d GZIP stream rather than
-embedding DEFLATE/GZIP in osm-d. See
+`applyGzipReplicationStep` composes the caller-selected bounded
+`ByteSource` with compression-d's streaming GZIP decoder and osm-d's
+osmChange/replication semantics. Retrieval, scheduling, retry and checkpoint
+persistence remain caller concerns. See
 `docs/adr/0034-replication-sequence-replay-contract.md`.
 
 ## Upload validation
@@ -1004,8 +1002,8 @@ trip.
 
 ## Release status
 
-v0.3.0 extends the qualified v0.2.1 base with two focused Editing API
-response/policy facades. Its high-level capabilities include:
+v0.4.0 extends the qualified v0.3.0 base with the M15-M19 consumer surfaces.
+Its high-level capabilities include:
 
 - validated borrowed and parallel-summary PBF reading;
 - durable/loss-aware PBF document read and write through `osm.pbf`;
@@ -1017,17 +1015,22 @@ response/policy facades. Its high-level capabilities include:
 - deterministic store-edit materialization and authoritative diff-upload result
   reconciliation;
 - bounded OSM API diffResult parsing through `osm.upload`;
-- bounded Editing API capability discovery through `osm.capabilities`.
+- bounded Editing API capability discovery through `osm.capabilities`;
+- OSM topology resolution, complete-object projection and area assembly;
+- Changeset semantics and Editing API protocol operations over injected
+  transport-d HTTP;
+- authoritative histories, refresh and structured conflict facts;
+- bounded GZIP replication ingestion with sequence/replay/checkpoint semantics.
 
-The v0.3.x patch line freezes the supported high-level facade/import surface,
+The v0.4.x patch line freezes the supported high-level facade/import surface,
 parameter names, ownership/lifetime and failure contracts described in
 `docs/API_STABILITY.md`. It does not freeze low-level wire/codec/store
 implementation modules, a persistent store format, concurrent store mutation,
-rendering, spatial indexing, network/OAuth policy or changeset lifecycle.
+rendering, spatial indexing, OAuth/account policy, scheduling or retry policy.
 `docs/RELEASE_BASELINE.md` records the evidence behind release claims.
 
 Literal JOSM-export provenance remains tracked separately in #85 as evidence
-hardening; it is not a semantic/API blocker for v0.3.x.
+hardening; it is not a semantic/API blocker for v0.4.x.
 
 The repository was renamed from `d-osm` to `osm-d` during the coordinated
 workspace reorganization on 2026-09-18. The repository and DUB package use the
