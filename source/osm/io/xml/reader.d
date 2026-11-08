@@ -488,17 +488,18 @@ bool prepareEncoding(
         probe[],
         ReadLimits(probe.length));
 
-    if (result.error == ReadError.endOfSource)
+    if (result.hasError &&
+        result.error.kind == ReadError.endOfSource)
         return true;
 
-    if (!result.ok)
+    if (result.hasError)
     {
         status.error = OsmXmlReadError.transportFailure;
-        status.transportError = result.error;
+        status.transportError = result.error.kind;
         return false;
     }
 
-    const data = probe[0 .. result.bytesRead];
+    const data = probe[0 .. result.value.bytesRead];
 
     if (data.length >= 4 &&
         ((data[0] == 0x00 && data[1] == 0x00 &&
@@ -534,7 +535,7 @@ bool prepareEncoding(
     const end = indexOf(text, "?>");
     if (end < 0)
     {
-        status.error = result.bytesRead == probe.length
+        status.error = result.value.bytesRead == probe.length
             ? OsmXmlReadError.resourceLimit
             : OsmXmlReadError.malformedXml;
         return false;
