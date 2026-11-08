@@ -3411,7 +3411,7 @@ public:
         else
             local = NodeState.absent(
                 id,
-                base.hasVersion ? base.version : 0);
+                base.hasVersion ? base.versionNumber : 0);
 
         return true;
     }
@@ -3472,7 +3472,7 @@ public:
         else
             local = WayState.absent(
                 id,
-                base.hasVersion ? base.version : 0);
+                base.hasVersion ? base.versionNumber : 0);
 
         return true;
     }
@@ -3534,7 +3534,7 @@ public:
         else
             local = RelationState.absent(
                 id,
-                base.hasVersion ? base.version : 0);
+                base.hasVersion ? base.versionNumber : 0);
 
         return true;
     }
