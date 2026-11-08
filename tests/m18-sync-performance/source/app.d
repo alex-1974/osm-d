@@ -17,8 +17,8 @@ import osm.view.location : LocationView;
 import std.datetime.stopwatch : StopWatch;
 import std.stdio : writefln;
 
-enum size_t classificationCount = 20_000;
-enum size_t refreshCount = 2_000;
+enum size_t classificationCount = 200_000;
+enum size_t refreshCount = 10_000;
 
 @safe void main()
 {
@@ -64,9 +64,9 @@ private void measureClassification() @safe
     assert(independent == classificationCount);
 
     writefln(
-        "M18_CONFLICT_CLASSIFICATION count=%s elapsed_ms=%s",
+        "M18_CONFLICT_CLASSIFICATION count=%s elapsed_us=%s",
         classificationCount,
-        watch.peek.total!"msecs");
+        watch.peek.total!"usecs");
 }
 
 private void measureRefresh() @safe
@@ -115,7 +115,7 @@ private void measureRefresh() @safe
     assert(result.deferred == 0);
 
     writefln(
-        "M18_AUTHORITATIVE_REFRESH count=%s elapsed_ms=%s",
+        "M18_AUTHORITATIVE_REFRESH count=%s elapsed_us=%s",
         refreshCount,
-        watch.peek.total!"msecs");
+        watch.peek.total!"usecs");
 }
