@@ -7,6 +7,8 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-08
+
 ### Fixed
 - Fix authoritative reconciliation Store mutations that were previously executed inside
   `assert(...)`. Release builds remove assertion expressions, so authoritative
