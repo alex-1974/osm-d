@@ -113,6 +113,16 @@ jobs:
             --build=debug \
             --force
 
+      - name: Measure M18 editor-scale synchronization workloads
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m18-sync-performance \
+            --compiler="$DC" \
+            --build=release \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
