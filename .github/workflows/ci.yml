@@ -145,12 +145,13 @@ jobs:
         if: matrix.compiler == 'ldc-1.41.0'
         shell: bash
         run: |
+          dub build \
+            --root=tests/m19-replication-performance \
+            --compiler="$DC" \
+            --build=release \
+            --force
           /usr/bin/time -v -o /tmp/m19-replication-time.txt \
-            dub run \
-              --root=tests/m19-replication-performance \
-              --compiler="$DC" \
-              --build=release \
-              --force \
+            tests/m19-replication-performance/osm-d-m19-replication-performance \
             | tee /tmp/m19-replication-workload.txt
           cat /tmp/m19-replication-time.txt
 
