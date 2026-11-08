@@ -21,6 +21,7 @@ import osm.view.location : LocationView;
     qualifyReconciliation();
     qualifyConcurrentReconciliation();
     qualifyParentIndexRefresh();
+    qualifyLocalCreateIsolation();
     qualifyAuthoritativeRevival();
     qualifyTransactionalPreflight();
 }
@@ -453,6 +454,45 @@ private void qualifyParentIndexRefresh() @safe
     StoreElementState state;
     assert(store.state(relationHandle, state, storeStatus));
     assert(state == StoreElementState.clean);
+}
+
+private void qualifyLocalCreateIsolation() @safe
+{
+    // Authoritative batches address positive server identities only. A local
+    // negative-ID create is therefore independent working state and must
+    // survive an unrelated remote refresh unchanged.
+    OwnedNode localCreate;
+    localCreate.id = -1;
+    localCreate.location = LocationView(100, 100);
+
+    auto store = new OsmStore();
+    OsmHandle localHandle;
+    StoreStatus storeStatus;
+    assert(store.add(localCreate, localHandle, storeStatus));
+
+    OwnedNode remote;
+    remote.id = 101;
+    remote.metadata.hasVersion = true;
+    remote.metadata.versionNumber = 1;
+    remote.location = LocationView(200, 200);
+
+    AuthoritativeBatch batch;
+    batch.nodes ~= NodeState.present(remote);
+
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(reconcileAuthoritative(store, batch, result, status));
+    assert(result.inserted == 1);
+
+    StoreElementState state;
+    assert(store.state(localHandle, state, storeStatus));
+    assert(state == StoreElementState.created);
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, storeStatus));
+    assert(changes.entries.length == 1);
+    assert(changes.entries[0].id == -1);
+    assert(changes.entries[0].action == ChangeAction.create);
 }
 
 private void qualifyTransactionalPreflight() @safe
