@@ -104,6 +104,15 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M18 history, refresh and conflict qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m18-sync \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
