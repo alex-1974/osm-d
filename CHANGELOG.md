@@ -69,6 +69,13 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
   overloads intact, and reports transport failures separately from
   malformed/truncated PBF.
 
+### Fixed
+- Ensure M18 authoritative reconciliation mutations execute in release builds.
+  `add`, `replaceAuthoritative` and `discardAuthoritative` are now called
+  before asserting their post-preflight success; previously placing the calls
+  inside `assert(...)` allowed release builds to remove the store mutation.
+  The M19 multi-sequence release workload provides the regression gate.
+
 ## 0.3.0 - 2026-11-04
 
 ### Added
