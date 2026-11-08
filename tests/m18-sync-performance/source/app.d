@@ -48,7 +48,7 @@ private void measureClassification() @safe
     StopWatch watch;
     watch.start();
 
-    size_t independent;
+    size_t conflicts;
     foreach (ignored; 0 .. classificationCount)
     {
         auto report = classifyConflict(
@@ -56,18 +56,18 @@ private void measureClassification() @safe
             localState,
             remoteState);
         if (report.disposition ==
-            ConflictDisposition.concurrentIndependent)
-            ++independent;
+            ConflictDisposition.conflict)
+            ++conflicts;
     }
 
     watch.stop();
-    if (independent != classificationCount)
+    if (conflicts != classificationCount)
         throw new Exception("unexpected conflict-classification result");
 
     writefln(
-        "M18_CONFLICT_CLASSIFICATION count=%s independent=%s elapsed_us=%s",
+        "M18_CONFLICT_CLASSIFICATION count=%s conflicts=%s elapsed_us=%s",
         classificationCount,
-        independent,
+        conflicts,
         watch.peek.total!"usecs");
 }
 
