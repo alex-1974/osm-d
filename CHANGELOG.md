@@ -7,7 +7,22 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 
 ## Unreleased
 
+### Fixed
+- Fix authoritative reconciliation Store mutations that were previously executed inside
+  `assert(...)`. Release builds remove assertion expressions, so authoritative
+  insert/refresh/delete operations could be skipped while reconciliation and
+  replication checkpoints still reported success. The Store operations now
+  always execute; assertions only verify the post-preflight invariant result.
+  The M19 release qualification permanently covers this path.
+
+
 ### Added
+- Add connected M19 multi-sequence replication qualification with authored
+  compressed fixtures covering restart/replay, gaps, overlapping timestamps,
+  object-version continuity, create/modify/delete, reverse parent indexes,
+  truncation/retry and M18 local conflicts. A release-mode LDC workload retains
+  practical throughput, GC-allocation and RSS evidence for the full
+  GZIP -> osmChange -> Store path.
 - Add bounded compressed replication ingestion through
   `applyGzipReplicationStep`: `transport-d.ByteSource` input is decoded by
   the stable `compression-d 0.3.x` streaming GZIP contract, exposed to the
