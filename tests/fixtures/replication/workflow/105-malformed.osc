@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="osm-d-m19-fixture">
+  <modify>
+    <node id="1" version="6" visible="true" lat="48.1006000" lon="16.1000000">
+      <tag k="name" v="alpha-6"/>
+  </modify>
+</osmChange>
