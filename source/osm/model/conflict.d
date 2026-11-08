@@ -30,7 +30,7 @@ if (is(T == OwnedNode) || is(T == OwnedWay) || is(T == OwnedRelation))
     bool exists;
     OsmId id;
     bool hasVersion;
-    int version;
+    int versionNumber;
     T value;
 
     /** Construct a present state from one owned element. */
@@ -40,7 +40,7 @@ if (is(T == OwnedNode) || is(T == OwnedWay) || is(T == OwnedRelation))
         result.exists = true;
         result.id = source.id;
         result.hasVersion = source.metadata.hasVersion;
-        result.version = source.metadata.versionNumber;
+        result.versionNumber = source.metadata.versionNumber;
         result.value = source.deepCopy();
         return result;
     }
@@ -53,12 +53,12 @@ if (is(T == OwnedNode) || is(T == OwnedWay) || is(T == OwnedRelation))
      */
     static ElementState absent(
         OsmId id,
-        int version = 0) @safe pure nothrow @nogc
+        int versionNumber = 0) @safe pure nothrow @nogc
     {
         ElementState result;
         result.id = id;
-        result.hasVersion = version > 0;
-        result.version = version;
+        result.hasVersion = versionNumber > 0;
+        result.versionNumber = versionNumber;
         return result;
     }
 
@@ -367,11 +367,11 @@ ConflictReport initializeReport(T)(
     result.localExists = local.exists;
     result.remoteExists = remote.exists;
     result.baseHasVersion = base.hasVersion;
-    result.baseVersion = base.version;
+    result.baseVersion = base.versionNumber;
     result.localHasVersion = local.hasVersion;
-    result.localVersion = local.version;
+    result.localVersion = local.versionNumber;
     result.remoteHasVersion = remote.hasVersion;
-    result.remoteVersion = remote.version;
+    result.remoteVersion = remote.versionNumber;
     return result;
 }
 
@@ -393,14 +393,14 @@ bool classifyExistenceAndVersions(T)(
 
     if (base.exists)
     {
-        if (!base.hasVersion || base.version <= 0)
+        if (!base.hasVersion || base.versionNumber <= 0)
         {
             result.disposition = ConflictDisposition.baselineMismatch;
             return false;
         }
 
         if (local.exists &&
-            (!local.hasVersion || local.version != base.version))
+            (!local.hasVersion || local.versionNumber != base.versionNumber))
         {
             result.disposition = ConflictDisposition.baselineMismatch;
             return false;
@@ -409,13 +409,13 @@ bool classifyExistenceAndVersions(T)(
         if (remote.exists)
         {
             if (!remote.hasVersion ||
-                remote.version < base.version)
+                remote.versionNumber < base.versionNumber)
             {
                 result.disposition = ConflictDisposition.baselineMismatch;
                 return false;
             }
 
-            if (remote.version == base.version &&
+            if (remote.versionNumber == base.versionNumber &&
                 !sameContent(base.value, remote.value))
             {
                 result.disposition = ConflictDisposition.baselineMismatch;
@@ -553,7 +553,7 @@ bool newerRemoteVersion(T)(
 {
     return base.hasVersion &&
            remote.hasVersion &&
-           remote.version > base.version;
+           remote.versionNumber > base.versionNumber;
 }
 
 FieldChange classifyExistence(
