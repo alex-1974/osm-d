@@ -170,7 +170,8 @@ bool readHistory(T)(
             return false;
         }
 
-        if (!validateRoot(xml.front, status))
+        auto root = xml.front;
+        if (!validateRoot(root, status))
             return false;
 
         xml.popFront();
