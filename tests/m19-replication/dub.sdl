@@ -1,0 +1,8 @@
+name "osm-d-m19-replication"
+description "M19 replication state/path/application qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
