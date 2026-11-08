@@ -557,6 +557,22 @@ private void qualifyAuthoritativeRevival() @safe
     StoreElementState state;
     assert(!store.state(originalHandle, state, storeStatus));
 
+    // The retained authoritative deletion version rejects a stale
+    // same-version resurrection.
+    auto stale = node.deepCopy();
+    stale.metadata.versionNumber = 2;
+    AuthoritativeBatch staleBatch;
+    staleBatch.nodes ~= NodeState.present(stale);
+    assert(reconcileAuthoritative(
+        store,
+        staleBatch,
+        result,
+        status));
+    assert(result.conflicts == 1);
+
+    OsmHandle notRevived;
+    assert(!store.find(ElementType.node, 90, notRevived));
+
     auto revived = node.deepCopy();
     revived.metadata.versionNumber = 3;
     revived.location = LocationView(11, 10);
