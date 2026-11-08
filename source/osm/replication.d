@@ -12,8 +12,19 @@
  */
 module osm.replication;
 
+import compression.core :
+    DecodeError,
+    DecodeLimits;
+import osm.io.gzip_source :
+    GzipDecodedSource,
+    GzipSourceFailure;
 import osm.io.osmchange.document :
     OsmChangeDocument;
+import osm.io.osmchange.reader :
+    OsmChangeReadError,
+    OsmChangeReadOptions,
+    OsmChangeReadStatus,
+    readOsmChangeDocument;
 import osm.model.change :
     ChangeAction,
     ChangeObjectState,
@@ -723,6 +734,218 @@ bool applyReplicationStep(
     status = ReplicationApplyStatus.init;
     return true;
 }
+
+
+/**
+ * Resource and parser limits for one compressed replication change resource.
+ *
+ * Zero compressedBufferSize selects 64 KiB. Zero maximumCompressedBytes and
+ * maximumDecodedBytes disable those explicit absolute limits. A zero expansion
+ * ratio disables the ratio bound.
+ */
+struct ReplicationIngestOptions
+{
+    size_t compressedBufferSize;
+    ulong maximumCompressedBytes;
+    ulong maximumDecodedBytes;
+    ulong maximumExpansionRatio;
+    OsmChangeReadOptions osmChange;
+}
+
+/** Stable failure stage for compressed replication ingestion. */
+enum ReplicationIngestError : ubyte
+{
+    none,
+    nullSource,
+    resourceLimit,
+    transportFailure,
+    compressionFailure,
+    osmChangeFailure,
+    applyFailure,
+}
+
+/**
+ * Diagnostic for one compressed replication ingestion attempt.
+ *
+ * Provider-specific diagnostics are retained so callers can distinguish a
+ * transport read failure from a GZIP integrity/limit failure, XML/osmChange
+ * rejection, or semantic replication-apply failure.
+ */
+struct ReplicationIngestStatus
+{
+    ReplicationIngestError error = ReplicationIngestError.none;
+    ReadError transportError = ReadError.none;
+    DecodeError compressionError;
+    OsmChangeReadStatus osmChangeStatus;
+    ReplicationApplyStatus applyStatus;
+    ulong compressedBytesRead;
+    ulong decodedBytes;
+
+    @property bool ok() const @safe pure nothrow @nogc
+    {
+        return error == ReplicationIngestError.none;
+    }
+}
+
+/**
+ * Decode, parse and transactionally apply one GZIP-compressed replication step.
+ *
+ * The compressed resource is read through transport-d in bounded chunks and
+ * decoded with compression-d's stable streaming GZIP contract. Decoded XML
+ * bytes are never materialized as a complete buffer: the existing osmChange
+ * reader consumes them through an internal absolute-offset ByteSource adapter.
+ *
+ * The osmChange semantic document is still materialized before store mutation,
+ * matching applyReplicationStep's M19 transaction boundary. GZIP CRC-32/ISIZE,
+ * concatenated-member completion and trailing-garbage checks must all succeed
+ * before the document can reach applyReplicationStep.
+ *
+ * The compressed ByteSource must describe a stable resource for the duration
+ * of this call. Generic retrieval, retries, scheduling and durable checkpoint
+ * persistence remain caller responsibilities.
+ */
+bool applyGzipReplicationStep(
+    OsmStore store,
+    ByteSource compressedChange,
+    scope ref const ReplicationCheckpoint checkpoint,
+    scope ref const ReplicationFeed feed,
+    scope ref const ReplicationState candidate,
+    out ReplicationApplyResult result,
+    out ReplicationIngestStatus status,
+    ReplicationIngestOptions options = ReplicationIngestOptions.init) @safe
+{
+    result = ReplicationApplyResult.init;
+    result.checkpoint = checkpoint;
+    status = ReplicationIngestStatus.init;
+
+    if (compressedChange is null)
+    {
+        status.error = ReplicationIngestError.nullSource;
+        return false;
+    }
+
+    DecodeLimits limits;
+    limits.maxOutputBytes = options.maximumDecodedBytes == 0
+        ? ulong.max
+        : options.maximumDecodedBytes;
+    limits.maxExpansionRatio = options.maximumExpansionRatio;
+
+    auto decoded = new GzipDecodedSource(
+        compressedChange,
+        options.compressedBufferSize,
+        options.maximumCompressedBytes,
+        limits);
+
+    OsmChangeDocument document;
+    OsmChangeReadStatus readStatus;
+    if (!readOsmChangeDocument(
+            decoded,
+            document,
+            readStatus,
+            options.osmChange))
+    {
+        status.osmChangeStatus = readStatus;
+        captureIngestProgress(decoded, status);
+
+        const provider = decoded.status;
+        if (!provider.ok)
+        {
+            mapGzipSourceFailure(provider, status);
+            return false;
+        }
+
+        if (readStatus.error == OsmChangeReadError.transportFailure)
+        {
+            status.error = ReplicationIngestError.transportFailure;
+            status.transportError = readStatus.transportError;
+            return false;
+        }
+
+        status.error = ReplicationIngestError.osmChangeFailure;
+        return false;
+    }
+
+    // Defensive completion check: semantic success may never bypass trailer
+    // validation. In normal dxml operation its final empty probe has already
+    // forced this state.
+    if (!decoded.finishValidation())
+    {
+        captureIngestProgress(decoded, status);
+
+        const provider = decoded.status;
+        if (!provider.ok)
+        {
+            mapGzipSourceFailure(provider, status);
+            return false;
+        }
+
+        status.error = ReplicationIngestError.osmChangeFailure;
+        status.osmChangeStatus.error =
+            OsmChangeReadError.invalidStructure;
+        return false;
+    }
+
+    captureIngestProgress(decoded, status);
+
+    ReplicationApplyStatus applyStatus;
+    if (!applyReplicationStep(
+            store,
+            checkpoint,
+            feed,
+            candidate,
+            document,
+            result,
+            applyStatus))
+    {
+        status.error = ReplicationIngestError.applyFailure;
+        status.applyStatus = applyStatus;
+        return false;
+    }
+
+    return true;
+}
+
+private void captureIngestProgress(
+    GzipDecodedSource decoded,
+    ref ReplicationIngestStatus status) @safe
+{
+    status.compressedBytesRead = decoded.compressedBytesRead;
+    status.decodedBytes = decoded.decodedBytes;
+}
+
+private void mapGzipSourceFailure(
+    GzipSourceStatus provider,
+    ref ReplicationIngestStatus status)
+    @safe pure nothrow @nogc
+{
+    final switch (provider.failure)
+    {
+        case GzipSourceFailure.none:
+            status.error = ReplicationIngestError.compressionFailure;
+            break;
+
+        case GzipSourceFailure.transport:
+            status.error = ReplicationIngestError.transportFailure;
+            status.transportError = provider.transportError;
+            break;
+
+        case GzipSourceFailure.compression:
+            status.error = ReplicationIngestError.compressionFailure;
+            status.compressionError = provider.compressionError;
+            break;
+
+        case GzipSourceFailure.compressedLimit:
+            status.error = ReplicationIngestError.resourceLimit;
+            break;
+
+        case GzipSourceFailure.invalidOffset:
+            status.error = ReplicationIngestError.osmChangeFailure;
+            status.osmChangeStatus.error =
+                OsmChangeReadError.invalidStructure;
+            break;
+    }
+}
+
 
 private:
 
