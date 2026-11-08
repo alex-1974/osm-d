@@ -215,3 +215,65 @@ cuts the measured materialized load time by more than half while remaining far
 inside the peak-memory budget. Parallel construction may be reconsidered only
 with a measured consumer bottleneck and an explicit bounded ownership/ordering
 contract.
+
+
+## M19 incremental replication qualification — 2026-11-08
+
+Issue #152 closes M19 with a bounded multi-sequence workload over the complete
+replication ingestion path:
+
+```text
+transport-d ByteSource
+  -> compression-d GZIP
+  -> osmChange
+  -> staged replication apply
+  -> OsmStore
+```
+
+The measurement is deliberately small and decision-oriented. It is not intended
+as a synthetic maximum-throughput benchmark or a substitute for real network
+latency measurements. The workload runs **256 consecutive local replication
+sequences** against one authoritative Node. Each compressed osmChange resource
+contains one exact already-known version followed by the next version, so every
+sequence exercises both replay filtering and one real authoritative update.
+
+Environment:
+
+- GitHub Actions `ubuntu-24.04` hosted runner;
+- LDC **1.41.0**, based on DMD **2.111.0** and LLVM **20.1.5**;
+- release build;
+- `compression-d 0.3.0`;
+- `transport-d 0.2.1` selected by the admitted `0.2.x` dependency;
+- runtime RSS measured with `/usr/bin/time -v` **after** compilation, so
+  compiler memory is excluded.
+
+Observed run:
+
+- sequences: **256**;
+- staged authoritative transitions: **256**;
+- exact replayed entries: **256**;
+- stale entries: **0**;
+- final sequence: **20,256**;
+- compressed input: **53,220 bytes**;
+- decoded osmChange: **87,380 bytes**;
+- measured workload time: **90,027 us**;
+- throughput: **2,843.59 sequences/s**;
+- cumulative GC allocation in the workload thread: **30,814,432 bytes**;
+- logical store-owned bytes: **1,514 -> 8,512 bytes**;
+- runtime peak RSS: **7,848 KiB**;
+- major page faults: **0**.
+
+The GC figure is cumulative allocation traffic, not retained memory. The low
+final logical-store growth and 7.7 MiB process peak show that repeated
+replication updates do not require retaining previous compressed or decoded
+resources. The allocation traffic primarily reflects the current XML semantic
+materialization/staging path and remains an optimization opportunity only if a
+representative long-running consumer later shows it to be material.
+
+The qualification also exposed a release-only correctness defect in the
+existing M18 reconciliation implementation: authoritative `add`,
+`replaceAuthoritative` and `discardAuthoritative` calls were embedded inside
+`assert(...)`, so release builds could compile the mutations away. #152 moves
+those calls outside the assertion and asserts only their post-preflight success.
+The multi-sequence release workload is retained in Fast CI as the regression
+gate for that failure mode.
