@@ -22,6 +22,7 @@ import osm.view.element :
     ElementType;
 import osm.view.location :
     LocationView;
+import std.format : format;
 import transport.source :
     MemorySource;
 
@@ -165,7 +166,7 @@ private void qualifyGzipIngestion() @safe
     ReplicationApplyResult result;
     ReplicationIngestStatus status;
     auto source = new MemorySource(gzipChange);
-    assert(applyGzipReplicationStep(
+    const accepted = applyGzipReplicationStep(
         store,
         source,
         checkpoint,
@@ -173,7 +174,16 @@ private void qualifyGzipIngestion() @safe
         state51,
         result,
         status,
-        options));
+        options);
+    assert(accepted, format(
+        "gzip ingest failed: stage=%s transport=%s compression=%s osmChange=%s apply=%s compressed=%s decoded=%s",
+        status.error,
+        status.transportError,
+        status.compressionError.code,
+        status.osmChangeStatus.error,
+        status.applyStatus.error,
+        status.compressedBytesRead,
+        status.decodedBytes));
     assert(status.ok);
     assert(result.checkpointAdvanced);
     assert(result.checkpoint.state.sequenceNumber == 51);
