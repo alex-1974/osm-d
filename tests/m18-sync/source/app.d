@@ -34,14 +34,18 @@ private void qualifyHistory() @safe
     v1.metadata.visible = true;
     v1.location = LocationView(48_200_000_000L, 16_300_000_000L);
 
-    auto v2 = v1.deepCopy();
-    v2.metadata.versionNumber = 2;
-    v2.metadata.visible = false;
+    auto hv1 = HistoricalNodeVersion.fromOwned(v1);
+
+    HistoricalNodeVersion hv2;
+    hv2.id = v1.id;
+    hv2.metadata = v1.metadata;
+    hv2.metadata.versionNumber = 2;
+    hv2.metadata.visible = false;
 
     NodeHistory history;
     HistoryStatus status;
     assert(NodeHistory.create(
-        [v1, v2],
+        [hv1, hv2],
         HistoryCoverage.complete,
         history,
         status));
@@ -53,12 +57,13 @@ private void qualifyHistory() @safe
     w2.id = 200;
     w2.metadata.hasVersion = true;
     w2.metadata.versionNumber = 2;
-    auto w4 = w2.deepCopy();
-    w4.metadata.versionNumber = 4;
+    auto hw2 = HistoricalWayVersion.fromOwned(w2);
+    auto hw4 = hw2.deepCopy();
+    hw4.metadata.versionNumber = 4;
 
     WayHistory partial;
     assert(WayHistory.create(
-        [w2, w4],
+        [hw2, hw4],
         HistoryCoverage.partial,
         partial,
         status));
