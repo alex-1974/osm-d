@@ -538,23 +538,27 @@ void applyPlan(
             break;
 
         case ReconcileAction.inserted:
-            assert(store.add(plan.remote.value, handle, storeStatus));
+            const inserted =
+                store.add(plan.remote.value, handle, storeStatus);
+            assert(inserted);
             ++result.inserted;
             break;
 
         case ReconcileAction.refreshed:
-            assert(store.replaceAuthoritative(
-                plan.handle, plan.remote.value, storeStatus));
+            const refreshed = store.replaceAuthoritative(
+                plan.handle, plan.remote.value, storeStatus);
+            assert(refreshed);
             ++result.refreshed;
             break;
 
         case ReconcileAction.removed:
-            assert(store.discardAuthoritative(
+            const removed = store.discardAuthoritative(
                 plan.handle,
                 plan.remote.hasVersion
                     ? plan.remote.versionNumber
                     : 0,
-                storeStatus));
+                storeStatus);
+            assert(removed);
             ++result.removed;
             break;
 
@@ -593,23 +597,27 @@ void applyPlan(
             break;
 
         case ReconcileAction.inserted:
-            assert(store.add(plan.remote.value, handle, storeStatus));
+            const inserted =
+                store.add(plan.remote.value, handle, storeStatus);
+            assert(inserted);
             ++result.inserted;
             break;
 
         case ReconcileAction.refreshed:
-            assert(store.replaceAuthoritative(
-                plan.handle, plan.remote.value, storeStatus));
+            const refreshed = store.replaceAuthoritative(
+                plan.handle, plan.remote.value, storeStatus);
+            assert(refreshed);
             ++result.refreshed;
             break;
 
         case ReconcileAction.removed:
-            assert(store.discardAuthoritative(
+            const removed = store.discardAuthoritative(
                 plan.handle,
                 plan.remote.hasVersion
                     ? plan.remote.versionNumber
                     : 0,
-                storeStatus));
+                storeStatus);
+            assert(removed);
             ++result.removed;
             break;
 
@@ -648,23 +656,27 @@ void applyPlan(
             break;
 
         case ReconcileAction.inserted:
-            assert(store.add(plan.remote.value, handle, storeStatus));
+            const inserted =
+                store.add(plan.remote.value, handle, storeStatus);
+            assert(inserted);
             ++result.inserted;
             break;
 
         case ReconcileAction.refreshed:
-            assert(store.replaceAuthoritative(
-                plan.handle, plan.remote.value, storeStatus));
+            const refreshed = store.replaceAuthoritative(
+                plan.handle, plan.remote.value, storeStatus);
+            assert(refreshed);
             ++result.refreshed;
             break;
 
         case ReconcileAction.removed:
-            assert(store.discardAuthoritative(
+            const removed = store.discardAuthoritative(
                 plan.handle,
                 plan.remote.hasVersion
                     ? plan.remote.versionNumber
                     : 0,
-                storeStatus));
+                storeStatus);
+            assert(removed);
             ++result.removed;
             break;
 

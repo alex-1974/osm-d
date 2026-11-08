@@ -1,0 +1,25 @@
+module fixtures;
+
+// Authored deterministic GZIP fixtures generated from the documented osmChange
+// payloads with gzip mtime=0 and compression level 9. The decoded SHA-256
+// values are recorded to make fixture identity reviewable independently.
+//
+// sequence 1001: decoded 612 B
+// SHA-256 ecd8cdff1fbe99742b61a67fc01fa3c2faf3ece87223781a88294dafb8edefb6
+enum gzip1001Base64 = "H4sIAAAAAAAC/4WS226DMAyG7/cUke9bDp2qTUq42ZMEMBAthy4EKt6+iUsH26Q1V7b1x9+f2NyN5mOQtkc2ox+VswLy4xlYjxa9DM4LMMX74WuSWnWqkSFKoHphjDceZcAUxsS6FplqBRT5CbZWRYzVqGqNAoKfEJiWQcDr2zGnQ2pNyvOulBEg2wjcuFZ1y19YvoOVT2BlUv+G5VDxIHv2KcBKE+/MMYjlw1xGGzxLrBV7lQtRy/+pFbct89jd7WX7lFqutEH1Q+xIwBH9rBokYKytPI+avpugp2dQg6ZGz8JyiTVqTFAy610SuimgT4wf0vRA2PyuWi1r1Du3SUtWzaSDuji99HEPkt+Hy/vIHnPi2fdiVTch1U1qZAIAAA==";
+
+// sequence 1002: decoded 681 B
+// SHA-256 27928c0ea5e246763b2b429f60b44b9abfbdf6d78871752c9326e5056c812867
+enum gzip1002Base64 = "H4sIAAAAAAAC/61Sy26DMBC89yusvSeYUEWthLn0SwwsYNWPxBgq/r5elwTUqumlPu1jvDPjdelG8zZI2yOb0Y/KWQH8eAbWo0Uvg/MCTP56uE5Sq041MkQIVE+MlY1HGZDCmHzIhalWwInnsE2iWI2q1igg+AmhKm3LPHaxxU+Q7dOC0iB79i5gUP0QJ8bbAkb0s2qQulmsJeps4y6Na1W3rDKsazHpyDnf6Si+62BaBgHPL0eeTkFonRSf1xINuOux0mASY2P5MCepGXH9cP+Q9X/cRz6POi0ikRZ/kRo0NXoWlkuspcGJNIn1joBuCuiJ41do/hhKbwGblxWrZY16Z4ywyZWZdFAXp5c+fiaydjP0td3bSsvs/jurT43DXTipAgAA";
+
+// sequence 1003: decoded 329 B
+// SHA-256 9ce1a5f11d1a7c1d901d973f4dcbcf74b70b3bd9bc6b087f12e3467bb5c13d72
+enum gzip1003Base64 = "H4sIAAAAAAAC/4WQyw7CIBBF934FmX0LpabRBNj4JWhpJfJIKSXx7wXjWxNndefmzpzMMD/b3VG6UaGkwqy940DqDtConAoy+sDBNttqWqTRgz7ImCMgVggx63s9nIvMjfO9Qrrn0BACz1Vt1nrWe6M4xLAoQEZGDutNTa7VlrQpyaa7WWWBYFGO6MTBSZtnUhbZrlILWDBcWN9Y+oKlf7C0pD+x9DeWVom+YRm+X87w43viAlccvvJJAQAA";
+
+// sequence 1004: decoded 320 B
+// SHA-256 e24838cc3aa8d5916b72285c5099ecf2cb981315f8565636c66d640bc0b49486
+enum gzip1004Base64 = "H4sIAAAAAAAC/3WQ3QrCMAyF732Kkvv9dMpQaHvjk0SbzWLX4toNfHvboQ4c5uoknOR8RPgwnG/oemIzjcF4J6EuW2A9ORox+lHCwE/FY0JrOnPFmCygdoyJwWvTPbNMjfOamNESeL2H9VSTtAnmYklCHCcCZjFKOBzLeqkmu2128vY9ygeUiNizuwSHQ9qZk0jjYm6gUqLKWQtBtSIITZYibWn4H5oObdjgLPZfHJ5Cl7RPhKi+T1Mv2yuwfUABAAA=";
+
+// sequence 1005: decoded 210 B
+// SHA-256 ed2866980d96027f9420d6f527813beefb9e18cf156895f3bd2206e52be05506
+enum gzip1005Base64 = "H4sIAAAAAAAC/0VPyw6DMAy77yui3KEwJrRJbS/7kmwEVq0PUQrS/n4t2iMnx3JsR4bFXR/kJ4aN42KCV9jUPcLEniOlEBW69lLNK1kzmjulLEF9AJAuDGZ8FZgXHwYGMyhsmyP+rbqMzWJulhWmuDKCpaTwdK6bfbqitkXZ9h+qGGiZaIKnQk8u32wZZLraOhRaipK1NxDfClL83tBvavqw/dIAAAA=";

@@ -375,7 +375,17 @@ Tracked by M19: #153.
     failures before any store mutation.
   - [x] `applyGzipReplicationStep` retains the #150 complete-document staging
     boundary and advances the checkpoint only after successful semantic apply.
-- [ ] Qualify continuity, replay, restart and incremental store updates. #152
+- [x] Qualify continuity, replay, restart and incremental store updates. #152
+  - [x] five authored compressed sequences cover connected create/modify/delete,
+    exact replay, sequence gaps, overlapping timestamps, restart before
+    checkpoint persistence, truncation/retry and M18 local-conflict handoff.
+  - [x] final object state plus Way/Relation reverse parent indexes are asserted
+    after the complete chain under DMD 2.111.0 and LDC 1.41.0.
+  - [x] an LDC release workload runs 1,000 full GZIP -> osmChange -> Store
+    sequences at 1,051.21 sequences/s with 10,016 KiB peak RSS; no additional
+    replication cache/store architecture is justified.
+  - [x] the release qualification exposed and fixed authoritative Store
+    mutations hidden inside `assert`, which release builds had removed.
 
 Generic resource retrieval stays in `transport-d`; GZIP belongs in
 `compression-d`; scheduling, retry policy and checkpoint persistence remain
