@@ -312,14 +312,33 @@ selection, retry/backoff and editor workflow remain outside the osm-d core.
 
 Tracked by M18: #148.
 
-- [ ] Define an OSM element history/version-sequence model distinct from editor
+- [x] Define an OSM element history/version-sequence model distinct from editor
   undo history. #144
-- [ ] Add authoritative server refresh and coherent store reconciliation. #145
-- [ ] Implement structured three-way base/local/remote conflict classification. #146
-- [ ] Qualify refresh, history and conflict workflows. #147
+  - [x] typed Node/Way/Relation histories preserve ordered versions, explicit
+    complete/partial coverage and deleted visibility without inventing missing
+    deleted-Node coordinates.
+  - [x] M17 specific-version and /history reads project directly into historical
+    values; gaps remain explicit rather than being sorted/repaired.
+- [x] Add authoritative server refresh and coherent store reconciliation. #145
+  - [x] supplied authoritative batches preflight before mutation, preserve
+    local-only/conflicting edits, support remote insert/delete/revival and reuse
+    existing stable-handle/primary/parent-index machinery.
+  - [x] local negative-ID creates remain isolated from positive server identity
+    refresh; authoritative deletions are not re-uploaded as local deletes.
+- [x] Implement structured three-way base/local/remote conflict classification. #146
+  - [x] deterministic tag, Node coordinate, ordered Way-ref and Relation-member
+    facts distinguish local/remote/identical/independent/overlapping changes.
+  - [x] conservative classification never claims an automatic merge when
+    independence cannot be proved.
+- [x] Qualify refresh, history and conflict workflows. #147
+  - [x] DMD 2.111.0 / LDC 1.41.0 runtime and external-consumer gates cover
+    history, deletion, clean/dirty reconciliation, index coherence, batch
+    preflight and M17 integration.
+  - [x] LDC release-mode editor-scale timing evidence records conflict
+    classification and authoritative refresh without adding speculative caches.
 
 osm-d reports OSM synchronization facts and conflicts; the application decides
-how to present or resolve them.
+how to present or resolve them. See ADR 0033 for the synchronization boundary.
 
 
 ## Phase 19 — OSM replication and incremental synchronization
