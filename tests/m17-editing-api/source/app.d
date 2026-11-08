@@ -289,6 +289,9 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
     assert(status.hasHttpStatus && status.httpStatus == 409);
     assert(status.serverError == EditingApiServerError.conflict);
     assert(!status.hasTransportError);
+    assert(status.diagnosticBody.length ==
+        "The changeset was closed.".length);
+    assert(!status.diagnosticBodyTruncated);
 
     fake.succeed(412, "Precondition failed.", "text/plain");
     assert(!client.closeChangeset(
@@ -320,6 +323,18 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
         status));
     assert(status.failure == EditingApiFailure.http);
     assert(status.serverError == EditingApiServerError.rateLimited);
+
+    auto oversizedDiagnostic = new char[5_000];
+    oversizedDiagnostic[] = 'x';
+    fake.succeed(503, oversizedDiagnostic.idup, "text/plain");
+    assert(!client.closeChangeset(
+        1001,
+        "Bearer qualification-token",
+        status));
+    assert(status.serverError ==
+        EditingApiServerError.serviceUnavailable);
+    assert(status.diagnosticBody.length == 4 * 1024);
+    assert(status.diagnosticBodyTruncated);
 
     fake.succeed(200, "");
     assert(!client.closeChangeset(
