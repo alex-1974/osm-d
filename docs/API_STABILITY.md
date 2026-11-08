@@ -1,16 +1,19 @@
 # Public API and compatibility policy
 
-> **v0.3.x contract.** This document defines the supported source-level
-> compatibility surface for the osm-d v0.3 release line. Earlier release tags
+> **v0.4.x contract.** This document defines the supported source-level
+> compatibility surface for the osm-d v0.4 release line. Earlier release tags
 > keep the immutable contracts that applied to those published states.
 
 ## Release line
 
-The current supported release line is **v0.3.x**.
+The current supported release line is **v0.4.x**.
 
-osm-d remains pre-1.0. v0.3.0 adds focused Editing API response/capability
-facades and deliberately removes one misleading v0.2 compatibility property.
-Patch releases within v0.3.x preserve this supported source contract unless a
+osm-d remains pre-1.0. v0.4.0 promotes the M15-M19 consumer surfaces developed
+after v0.3.0: dataset/topology resolution, complete objects and area assembly,
+Changesets and the Editing API protocol client, authoritative history/refresh/
+conflict semantics, and replication/incremental synchronization. v0.4.0 makes
+no deliberate source break from the supported v0.3.x surface.
+Patch releases within v0.4.x preserve this supported source contract unless a
 security or correctness defect makes preservation impossible.
 
 The release compiler floor is D frontend **2.111** with DUB **1.40.0**.
@@ -20,12 +23,12 @@ The qualified release matrix is:
 - LDC 1.41.0, 1.42.0 and 1.43.0;
 - Ubuntu 24.04 x86_64.
 
-Other operating systems and architectures may work, but v0.3.0 makes no
+Other operating systems and architectures may work, but v0.4.0 makes no
 release-qualified portability claim for them.
 
 ## Compatibility promise
 
-Within v0.3.x, patch releases do not deliberately remove or rename supported
+Within v0.4.x, patch releases do not deliberately remove or rename supported
 symbols, change parameter order or supported parameter names, weaken
 ownership/lifetime contracts, change documented failure semantics, or narrow
 legal input solely for convenience.
@@ -37,7 +40,7 @@ For supported ordinary functions and methods, parameter names are part of the
 source contract because D named arguments can depend on them. Representative
 named-argument calls are compiled by the release consumer probe.
 
-A future v0.4.0 may contain deliberate pre-1.0 breaking changes. Such changes
+A future v0.5.0 may contain deliberate pre-1.0 breaking changes. Such changes
 must be documented and accompanied by migration guidance where practical.
 
 ## Preferred entry points
@@ -61,17 +64,22 @@ The supported high-level facades are:
   with explicit roles, provenance and partial/ambiguous/invalid diagnostics;
 - `import osm.upload;` — bounded OSM API diffResult response parsing;
 - `import osm.capabilities;` — Editing API capability discovery projected
-  into upload-validation policy.
+  into upload-validation policy;
+- `import osm.changeset;` — Changeset semantic values and XML codecs;
+- `import osm.api;` — synchronous Editing API 0.6 protocol operations over an
+  injected `transport-d` HTTP exchange;
+- `import osm.history;` — ordered authoritative historical versions;
+- `import osm.sync;` — authoritative refresh and structured conflict facts;
+- `import osm.replication;` — replication state, sequence/replay semantics and
+  bounded compressed incremental application.
 
 Low-level protobuf/wire, XML parser internals, validation implementation
 modules and compact-store representation modules are not part of this
 compatibility surface.
 
-### Post-v0.3 development surface
+### Editing API, history, synchronization and replication
 
-The `develop` line after the v0.3.x freeze adds `import osm.api;` as the
-focused OSM Editing API 0.6 protocol facade. It is not retroactively part of the
-published v0.3.x compatibility promise.
+`import osm.api;` is the focused OSM Editing API 0.6 protocol facade.
 
 The facade exposes `EditingApiClient`, explicit `EditingApiServer`,
 `EditingApiStatus`, permission values and the owned OSM/Changeset/change values
@@ -85,9 +93,7 @@ Successful returned OSM values are owning semantic values. Non-success HTTP
 responses preserve the exact status, an OSM-oriented classification where
 known, and a bounded owned diagnostic prefix.
 
-M18 additionally adds the focused `import osm.sync;` development facade. It
-is likewise not retroactively part of the published v0.3.x compatibility
-promise. The facade exposes:
+`import osm.sync;` exposes:
 
 - typed owning Node/Way/Relation authoritative histories with explicit complete
   versus partial coverage;
@@ -110,9 +116,7 @@ values. Historical Node location remains explicitly optional so a deleted
 coordinates. Contiguous histories from version 1 are marked complete; valid
 gapped sequences are retained as partial.
 
-M19 adds the focused `import osm.replication;` development facade. It is also
-outside the frozen v0.3.x compatibility promise. The initial #150 surface
-exposes:
+`import osm.replication;` exposes:
 
 - `ReplicationFeed`, `ReplicationState`, `ReplicationTimestamp` and
   caller-owned `ReplicationCheckpoint`;
@@ -122,9 +126,12 @@ exposes:
 - `applyReplicationStep` for one already-decoded `OsmChangeDocument`.
 
 The apply path stages complete per-identity version chains and previews M18
-conflicts before store mutation. It does not perform HTTP/filesystem access,
-GZIP decompression, scheduling, retry/backoff or checkpoint persistence.
-Successful apply returns the only checkpoint the caller may newly persist.
+conflicts before store mutation. `applyGzipReplicationStep` composes a
+caller-supplied `ByteSource` with compression-d's bounded streaming GZIP
+decoder and the existing osmChange reader before transactional application.
+osm-d still does not own HTTP/filesystem selection, scheduling, retry/backoff
+or checkpoint persistence. Successful apply returns the only checkpoint the
+caller may newly persist.
 
 ## Curated package root
 
@@ -158,7 +165,7 @@ PBF framing/interpretation while transport-d owns filesystem, memory and HTTP
 access. Loss-aware `PbfDocument` reading remains whole-buffer because its raw
 preservation contract intentionally retains original encoded bytes.
 
-The v0.3 Editing API codecs deliberately remain focused imports:
+Editing API/server-specific families deliberately remain focused imports:
 `osm.upload` parses successful diff-upload responses and `osm.capabilities`
 projects current server validation policy. Neither is re-exported from
 `import osm;`.
@@ -179,7 +186,7 @@ belong to `osm.compare`.
 
 ## Supported direct-import modules
 
-The following direct imports are supported on v0.3.x:
+The following direct imports are supported on v0.4.x:
 
 - `osm`;
 - `osm.pbf`;
@@ -190,6 +197,14 @@ The following direct imports are supported on v0.3.x:
 - `osm.validate`;
 - `osm.upload`;
 - `osm.capabilities`;
+- `osm.changeset`;
+- `osm.api`;
+- `osm.history`;
+- `osm.sync`;
+- `osm.replication`;
+- `osm.topology`;
+- `osm.complete`;
+- `osm.area`;
 - `osm.model.owned`;
 - `osm.model.change`;
 - `osm.model.compare`;
@@ -228,7 +243,7 @@ not embedded Node objects:
 - store Way-node leaf values -> `NodeRefView`.
 
 The direct module `osm.view.way_node`, alias `WayNodeView`, and alias
-`OwnedWayNode` remain available during v0.3.x migration. They are not
+`OwnedWayNode` remain available during v0.4.x migration. They are not
 re-exported from the preferred package root.
 
 PBF-specialized document/writer/parallel facilities that were root exports in
@@ -280,20 +295,15 @@ shape is not sufficient request context.
 The diff result does not carry complete server timestamp/user metadata; osm-d
 does not fabricate those fields.
 
-Network upload transport, OAuth/account state and changeset creation/closing
-remain outside osm-d.
+Raw upload transport remains available through the format codecs. v0.4 also
+provides `osm.api`, which owns OSM method/path/media/status and Changeset
+protocol semantics over an injected generic `transport-d` `HttpExchange`.
+The client never persists credentials, chooses accounts, performs OAuth token
+flows or owns retry/background policy.
 
-That sentence describes the released v0.3.x contract. For post-v0.3 development,
-ADR 0032 accepts a broader OSM protocol boundary: osm-d will own OSM
-method/path/media/status semantics and changeset protocol operations over an
-injected generic transport. This does not retroactively add that client to the
-frozen v0.3.x API; concrete public protocol-client symbols remain unfrozen until
-M17 #141 is implemented and qualified.
-
-M17 #140 adds the post-v0.3 focused `osm.changeset` facade. Its semantic model
-separates server-returned `OwnedChangeset` state from the tag-only
-`ChangesetTagRequest` create/update body. These symbols are post-v0.3
-development API and do not alter the frozen v0.3.x surface.
+The focused `osm.changeset` facade separates server-returned
+`OwnedChangeset` state from the tag-only `ChangesetTagRequest` create/update
+body. The application still decides when to open, reuse or close a Changeset.
 
 ## Ownership and lifetime
 
@@ -480,7 +490,7 @@ compatibility surface.
 
 ## Exact bytes and codec boundaries
 
-Tag keys/values, usernames and relation roles preserve exact bytes. v0.3 does
+Tag keys/values, usernames and relation roles preserve exact bytes. v0.4 does
 not invent an osm-specific text wrapper, normalization, repair or transcoding
 policy.
 
@@ -491,15 +501,15 @@ The loss-aware PBF document/raw-preservation family is an explicit advanced
 exception because callers may need to distinguish semantic rewriting from
 source preservation.
 
-## What is not promised in v0.3.x
+## What is not promised in v0.4.x
 
-v0.3.x does not promise:
+v0.4.x does not promise:
 
 - binary ABI stability;
 - persistent/mmap store format compatibility;
 - thread-safe concurrent store mutation;
-- filesystem, HTTP, cache, OAuth or scheduler policy;
-- changeset lifecycle management;
+- filesystem selection, cache, OAuth/account or scheduler policy;
+- application policy for Changeset reuse/lifetime;
 - spatial indexing or rendering;
 - generic ordered parallel borrowed callbacks;
 - compatibility of low-level wire/codec/store implementation modules;
@@ -507,7 +517,7 @@ v0.3.x does not promise:
 
 ## Change review
 
-A change is breaking for the supported v0.3.x surface when it can require a
+A change is breaking for the supported v0.4.x surface when it can require a
 conforming consumer to change source or when it weakens a documented
 ownership, failure, data-integrity or lifetime guarantee.
 

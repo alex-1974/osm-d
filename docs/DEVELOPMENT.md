@@ -66,11 +66,11 @@ release line; normal development targets `develop`.
 
 ## Public module surface
 
-The supported v0.3.x source contract is frozen in
-`docs/API_STABILITY.md`. The deliberate v0.1 -> v0.2 and v0.2 -> v0.3
-migrations are documented in `docs/API_V0_2.md` and `docs/API_V0_3.md`.
+The supported v0.4.x source contract is frozen in
+`docs/API_STABILITY.md`. The deliberate migrations are documented in
+`docs/API_V0_2.md`, `docs/API_V0_3.md` and `docs/API_V0_4.md`.
 
-Preferred v0.3 facades:
+Preferred v0.4 facades:
 
 - `osm`: common OSM identity/semantic values, owned model, borrowed
   Node/Way/Relation views, one-shot/reusable PBF traversal and editable store;
@@ -82,7 +82,14 @@ Preferred v0.3 facades:
 - `osm.osmchange`: osmChange;
 - `osm.validate`: upload-readiness validation.
 - `osm.upload`: OSM API diffResult response parsing;
-- `osm.capabilities`: Editing API capability discovery for validation policy.
+- `osm.capabilities`: Editing API capability discovery for validation policy;
+- `osm.changeset`: Changeset semantics and XML request/response codecs;
+- `osm.api`: Editing API 0.6 protocol client over injected transport-d HTTP;
+- `osm.history`: authoritative historical versions;
+- `osm.sync`: authoritative refresh and structured conflict facts;
+- `osm.replication`: state/sequence/replay and bounded compressed incremental apply;
+- `osm.topology`, `osm.complete`, `osm.area`: OSM reference topology,
+  complete-object projection and structural area assembly.
 
 Shared semantic leaves are `LocationView`, `MetadataView`, `TagView`,
 `NodeRefView` and `RelationMemberView`. Store ranges keep their own
