@@ -8,6 +8,13 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add bounded compressed replication ingestion through
+  `applyGzipReplicationStep`: `transport-d.ByteSource` input is decoded by
+  the stable `compression-d 0.3.x` streaming GZIP contract, exposed to the
+  existing osmChange reader without whole decoded-XML materialization, and
+  applied only after CRC/ISIZE/truncation/trailing-data validation succeeds.
+  Transport, compression, osmChange and replication-apply failures remain
+  separately diagnosable, with explicit compressed/decompressed limits.
 - Add focused `osm.replication` M19 state/sequence application semantics:
   bounded state.txt parsing, official-style relative sequence paths,
   feed/checkpoint continuity classification, version-aware replay/stale/gap
