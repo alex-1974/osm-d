@@ -204,14 +204,14 @@ private void qualifyChangesets(EditingApiClient client, FakeExchange fake) @safe
         ownBytes(cast(const(ubyte)[])"comment"),
         ownBytes(cast(const(ubyte)[])"protocol client qualification"));
 
-    fake.succeed(200, "7001\n", "text/plain");
+    fake.succeed(200, "1001\n", "text/plain");
     ChangesetId changesetId;
     assert(client.createChangeset(
         request,
         "Bearer qualification-token",
         changesetId,
         status));
-    assert(changesetId == 7001);
+    assert(changesetId == 1001);
     assert(fake.lastMethod == HttpMethod.put);
     assert(fake.lastUrl ==
         "https://example.test/api/0.6/changeset/create");
@@ -221,29 +221,29 @@ private void qualifyChangesets(EditingApiClient client, FakeExchange fake) @safe
 
     fake.succeed(200, import("changeset/current-open.xml"));
     OwnedChangeset changeset;
-    assert(client.readChangeset(7001, changeset, status));
-    assert(changeset.hasId && changeset.id == 7001);
+    assert(client.readChangeset(1001, changeset, status));
+    assert(changeset.hasId && changeset.id == 1001);
 
     fake.succeed(200, import("changeset/current-open.xml"));
     assert(client.updateChangeset(
-        7001,
+        1001,
         request,
         "Bearer qualification-token",
         changeset,
         status));
     assert(fake.lastMethod == HttpMethod.put);
     assert(fake.lastUrl ==
-        "https://example.test/api/0.6/changeset/7001");
+        "https://example.test/api/0.6/changeset/1001");
     assert(fake.lastBodyLength > 0);
 
     fake.succeed(200, "");
     assert(client.closeChangeset(
-        7001,
+        1001,
         "Bearer qualification-token",
         status));
     assert(fake.lastMethod == HttpMethod.put);
     assert(fake.lastUrl ==
-        "https://example.test/api/0.6/changeset/7001/close");
+        "https://example.test/api/0.6/changeset/1001/close");
 
     OwnedNode created;
     created.id = -1;
@@ -254,7 +254,7 @@ private void qualifyChangesets(EditingApiClient client, FakeExchange fake) @safe
     OwnedChangeSequence changes;
     changes.entries ~=
         OwnedChangeEntry.fromNode(ChangeAction.create, created);
-    assert(changes.setChangeset(7001));
+    assert(changes.setChangeset(1001));
 
     enum diffResultXml =
         "<diffResult version=\"0.6\" generator=\"OpenStreetMap Server\">" ~
@@ -264,7 +264,7 @@ private void qualifyChangesets(EditingApiClient client, FakeExchange fake) @safe
     fake.succeed(200, diffResultXml);
     UploadResult result;
     assert(client.uploadChanges(
-        7001,
+        1001,
         changes,
         "Bearer qualification-token",
         result,
@@ -272,7 +272,7 @@ private void qualifyChangesets(EditingApiClient client, FakeExchange fake) @safe
     assert(result.entries.length == 1);
     assert(fake.lastMethod == HttpMethod.post);
     assert(fake.lastUrl ==
-        "https://example.test/api/0.6/changeset/7001/upload");
+        "https://example.test/api/0.6/changeset/1001/upload");
     assert(fake.lastBodyLength > 0);
 }
 
@@ -282,7 +282,7 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
 
     fake.succeed(409, "The changeset was closed.", "text/plain");
     assert(!client.closeChangeset(
-        7001,
+        1001,
         "Bearer qualification-token",
         status));
     assert(status.failure == EditingApiFailure.http);
@@ -292,7 +292,7 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
 
     fake.succeed(412, "Precondition failed.", "text/plain");
     assert(!client.closeChangeset(
-        7001,
+        1001,
         "Bearer qualification-token",
         status));
     assert(status.failure == EditingApiFailure.http);
@@ -315,7 +315,7 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
 
     fake.succeed(429, "Rate limited.", "text/plain");
     assert(!client.closeChangeset(
-        7001,
+        1001,
         "Bearer qualification-token",
         status));
     assert(status.failure == EditingApiFailure.http);
@@ -329,7 +329,7 @@ private void qualifyStatusSeparation(EditingApiClient client, FakeExchange fake)
     assert(status.failure == EditingApiFailure.localValidation);
 
     assert(!client.closeChangeset(
-        7001,
+        1001,
         "",
         status));
     assert(status.failure == EditingApiFailure.localValidation);
