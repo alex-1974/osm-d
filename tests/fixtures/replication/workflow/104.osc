@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="osm-d-m19-fixture">
+  <modify>
+    <node id="3" version="1" visible="true" lat="48.1003000" lon="16.1003000">
+      <tag k="name" v="gamma"/>
+    </node>
+    <node id="1" version="5" visible="true" lat="48.1005000" lon="16.1000000">
+      <tag k="name" v="alpha-5"/>
+    </node>
+    <relation id="20" version="5" visible="true">
+      <member type="way" ref="10" role="outer"/>
+      <member type="node" ref="1" role="label"/>
+      <tag k="type" v="multipolygon"/>
+    </relation>
+  </modify>
+</osmChange>
