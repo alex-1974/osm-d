@@ -92,7 +92,8 @@ private final class XmlSourceCache
             buffer[],
             ReadLimits(buffer.length));
 
-        if (result.error == ReadError.endOfSource)
+        if (result.hasError &&
+            result.error.kind == ReadError.endOfSource)
         {
             eofKnown = true;
             eofOffset = alignedOffset;
@@ -101,14 +102,14 @@ private final class XmlSourceCache
             return false;
         }
 
-        if (!result.ok)
-            throw new XmlSourceException(result.error, alignedOffset);
+        if (result.hasError)
+            throw new XmlSourceException(result.error.kind, alignedOffset);
 
-        if (result.bytesRead == 0)
+        if (result.value.bytesRead == 0)
             throw new XmlSourceException(ReadError.sourceFailure, alignedOffset);
 
         blockOffset = alignedOffset;
-        blockLength = result.bytesRead;
+        blockLength = result.value.bytesRead;
         blockLoaded = true;
 
         if (blockLength < buffer.length)
@@ -210,11 +211,11 @@ public:
             buffer[0 .. used],
             WriteLimits(used));
 
-        if (!result.ok || result.bytesWritten != used)
+        if (result.hasError || result.value.bytesWritten != used)
         {
-            const error = result.ok
-                ? WriteError.destinationFailure
-                : result.error;
+            const error = result.hasError
+                ? result.error.kind
+                : WriteError.destinationFailure;
             throw new XmlSinkException(error);
         }
 
