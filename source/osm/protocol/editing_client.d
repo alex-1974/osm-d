@@ -247,7 +247,15 @@ public:
         return server_;
     }
 
-    /** Read server capability/upload limits. */
+    /**
+     * Read dynamic server capabilities and upload limits.
+     *
+     * OSM operation: GET /capabilities; authorization is not required.
+     * The XML response is bounded by the configured transport limits and
+     * materialized into an owning EditingApiCapabilitiesDocument.
+     * Returns true only for HTTP 200 plus a valid capability document;
+     * status separates exchange, HTTP and response-decoding failures.
+     */
     bool readCapabilities(
         out EditingApiCapabilitiesDocument document,
         out EditingApiStatus status)
@@ -272,8 +280,12 @@ public:
     /**
      * Read permissions granted to the current connection.
      *
-     * An empty authorizationHeader intentionally performs an anonymous request,
-     * for which the OSM API returns an empty permission list.
+     * OSM operation: GET /permissions. Authorization is optional; an empty
+     * authorizationHeader performs an anonymous request and the supplied value
+     * is never retained by the client.
+     * The XML response is bounded and materialized into owning permission
+     * names, preserving unknown future names.
+     * Returns true only for HTTP 200 plus a valid permissions document.
      */
     bool readPermissions(
         out EditingApiPermissions permissions,
@@ -301,7 +313,14 @@ public:
         return true;
     }
 
-    /** Read the current version of one Node. */
+    /**
+     * Read the current version of one Node.
+     *
+     * OSM operation: GET /node/{id}; no authorization is required.
+     * The application/xml response is bounded and materialized as an OwnedNode.
+     * Returns false for an invalid ID, exchange failure, non-200 HTTP response,
+     * malformed/unsupported XML, or a response that is not exactly that Node.
+     */
     bool readNode(
         OsmId id,
         out OwnedNode node,
@@ -329,7 +348,14 @@ public:
         return true;
     }
 
-    /** Read one historical Node version. */
+    /**
+     * Read one historical Node version.
+     *
+     * OSM operation: GET /node/{id}/{version}; no authorization is required.
+     * The bounded XML response becomes an OwnedNode whose ID and version are
+     * checked against the request. status retains the exact HTTP code on a
+     * completed non-success response.
+     */
     bool readNodeVersion(
         OsmId id,
         int versionNumber,
@@ -363,7 +389,13 @@ public:
         return true;
     }
 
-    /** Read all available versions of one Node. */
+    /**
+     * Read all available versions of one Node.
+     *
+     * OSM operation: GET /node/{id}/history; no authorization is required.
+     * The bounded XML response is materialized into an owning array in server
+     * order. Every returned object is checked to have the requested Node ID.
+     */
     bool readNodeHistory(
         OsmId id,
         out OwnedNode[] nodes,
@@ -394,7 +426,13 @@ public:
         return true;
     }
 
-    /** Read the current version of one Way. */
+    /**
+     * Read the current version of one Way.
+     *
+     * OSM operation: GET /way/{id}; no authorization is required.
+     * The bounded XML response is materialized into an OwnedWay and checked
+     * against the requested identity. Failure details are returned in status.
+     */
     bool readWay(
         OsmId id,
         out OwnedWay way,
@@ -422,7 +460,13 @@ public:
         return true;
     }
 
-    /** Read one historical Way version. */
+    /**
+     * Read one historical Way version.
+     *
+     * OSM operation: GET /way/{id}/{version}; no authorization is required.
+     * The bounded XML response becomes an OwnedWay whose ID and version are
+     * checked against the request.
+     */
     bool readWayVersion(
         OsmId id,
         int versionNumber,
@@ -456,7 +500,13 @@ public:
         return true;
     }
 
-    /** Read all available versions of one Way. */
+    /**
+     * Read all available versions of one Way.
+     *
+     * OSM operation: GET /way/{id}/history; no authorization is required.
+     * The bounded XML response is materialized into an owning array in server
+     * order and every returned Way is checked against the requested ID.
+     */
     bool readWayHistory(
         OsmId id,
         out OwnedWay[] ways,
@@ -488,7 +538,11 @@ public:
     }
 
     /**
-     * Read one Way plus all referenced Nodes returned by the /full endpoint.
+     * Read one Way plus the Nodes returned by the full expansion endpoint.
+     *
+     * OSM operation: GET /way/{id}/full; no authorization is required.
+     * The bounded XML response is returned as an owning OwnedDataset; the
+     * requested Way must occur exactly once and Relation content is rejected.
      */
     bool readWayFull(
         OsmId id,
@@ -516,7 +570,13 @@ public:
         return true;
     }
 
-    /** Read the current version of one Relation. */
+    /**
+     * Read the current version of one Relation.
+     *
+     * OSM operation: GET /relation/{id}; no authorization is required.
+     * The bounded XML response becomes an OwnedRelation checked against the
+     * requested identity.
+     */
     bool readRelation(
         OsmId id,
         out OwnedRelation relation,
@@ -544,7 +604,13 @@ public:
         return true;
     }
 
-    /** Read one historical Relation version. */
+    /**
+     * Read one historical Relation version.
+     *
+     * OSM operation: GET /relation/{id}/{version}; no authorization is required.
+     * The bounded XML response becomes an OwnedRelation whose ID and version
+     * are checked against the request.
+     */
     bool readRelationVersion(
         OsmId id,
         int versionNumber,
@@ -578,7 +644,13 @@ public:
         return true;
     }
 
-    /** Read all available versions of one Relation. */
+    /**
+     * Read all available versions of one Relation.
+     *
+     * OSM operation: GET /relation/{id}/history; no authorization is required.
+     * The bounded XML response is materialized into an owning array in server
+     * order and every returned Relation is checked against the requested ID.
+     */
     bool readRelationHistory(
         OsmId id,
         out OwnedRelation[] relations,
@@ -610,7 +682,11 @@ public:
     }
 
     /**
-     * Read one Relation plus the one-level member expansion returned by /full.
+     * Read one Relation plus the server's full member expansion.
+     *
+     * OSM operation: GET /relation/{id}/full; no authorization is required.
+     * The bounded XML response is returned as an owning OwnedDataset and must
+     * contain the requested Relation. Expansion depth follows server semantics.
      */
     bool readRelationFull(
         OsmId id,
@@ -648,6 +724,13 @@ public:
 
     /**
      * Create a Changeset and return the server-assigned positive ID.
+     *
+     * OSM operation: PUT /changeset/create with text/xml request content and a
+     * text/plain response. Authorization is required and request-scoped; the
+     * supplied header is placed only in transport-d sensitiveHeaders and is not
+     * retained by this client.
+     * The tag request is encoded directly into bounded segmented storage.
+     * Returns true only for HTTP 200 plus a valid positive Changeset ID.
      */
     bool createChangeset(
         ref const ChangesetTagRequest request,
@@ -685,7 +768,13 @@ public:
         return true;
     }
 
-    /** Read one Changeset and its current tags/metadata. */
+    /**
+     * Read one Changeset and its current server-managed state.
+     *
+     * OSM operation: GET /changeset/{id}; no authorization is required.
+     * The bounded XML response is materialized as an OwnedChangeset and its
+     * server ID is checked against the request.
+     */
     bool readChangeset(
         ChangesetId id,
         out OwnedChangeset changeset,
@@ -718,7 +807,13 @@ public:
     }
 
     /**
-     * Replace the Changeset tags and return the updated server representation.
+     * Replace all Changeset tags and return the updated representation.
+     *
+     * OSM operation: PUT /changeset/{id} with text/xml request content and an
+     * XML Changeset response. Authorization is required and not retained.
+     * The request contains only ChangesetTagRequest fields; server-managed
+     * identity/timestamps/bounds/counters are never serialized as writable
+     * state. HTTP conflict remains an HTTP/OSM status, not a transport failure.
      */
     bool updateChangeset(
         ChangesetId id,
@@ -763,7 +858,14 @@ public:
         return true;
     }
 
-    /** Close one Changeset. Successful status is HTTP 200 with no payload. */
+    /**
+     * Close one Changeset.
+     *
+     * OSM operation: PUT /changeset/{id}/close. Authorization is required and
+     * not retained. HTTP 200 is success and no response body is required.
+     * A completed 409/404/etc. remains a classified HTTP response with bounded
+     * diagnostic data in status.
+     */
     bool closeChangeset(
         ChangesetId id,
         string authorizationHeader,
@@ -795,6 +897,12 @@ public:
 
     /**
      * Upload one atomic osmChange diff and parse the returned diffResult.
+     *
+     * OSM operation: POST /changeset/{id}/upload with text/xml osmChange
+     * content and an XML diffResult response. Authorization is required and is
+     * not retained. Every entry must already carry the same Changeset ID.
+     * Request and response bodies remain bounded and segmented; the successful
+     * response is materialized as an owning UploadResult.
      */
     bool uploadChanges(
         ChangesetId id,
