@@ -61,11 +61,13 @@ private void measureClassification() @safe
     }
 
     watch.stop();
-    assert(independent == classificationCount);
+    if (independent != classificationCount)
+        throw new Exception("unexpected conflict-classification result");
 
     writefln(
-        "M18_CONFLICT_CLASSIFICATION count=%s elapsed_us=%s",
+        "M18_CONFLICT_CLASSIFICATION count=%s independent=%s elapsed_us=%s",
         classificationCount,
+        independent,
         watch.peek.total!"usecs");
 }
 
@@ -110,12 +112,19 @@ private void measureRefresh() @safe
 
     watch.stop();
 
-    assert(result.refreshed == refreshCount);
-    assert(result.conflicts == 0);
-    assert(result.deferred == 0);
+    if (result.refreshed != refreshCount ||
+        result.conflicts != 0 ||
+        result.deferred != 0)
+        throw new Exception("unexpected authoritative-refresh result");
+
+    const counts = store.counts;
+    if (counts.liveNodes != refreshCount)
+        throw new Exception("unexpected refreshed store size");
 
     writefln(
-        "M18_AUTHORITATIVE_REFRESH count=%s elapsed_us=%s",
+        "M18_AUTHORITATIVE_REFRESH count=%s refreshed=%s live_nodes=%s elapsed_us=%s",
         refreshCount,
+        result.refreshed,
+        counts.liveNodes,
         watch.peek.total!"usecs");
 }
