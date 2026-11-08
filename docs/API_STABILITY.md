@@ -67,6 +67,24 @@ Low-level protobuf/wire, XML parser internals, validation implementation
 modules and compact-store representation modules are not part of this
 compatibility surface.
 
+### Post-v0.3 development surface
+
+The `develop` line after the v0.3.x freeze adds `import osm.api;` as the
+focused OSM Editing API 0.6 protocol facade. It is not retroactively part of the
+published v0.3.x compatibility promise.
+
+The facade exposes `EditingApiClient`, explicit `EditingApiServer`,
+`EditingApiStatus`, permission values and the owned OSM/Changeset/change values
+needed by its operations. The client depends only on the generic
+`transport.exchange.HttpExchange` seam; it does not expose or depend on a
+concrete curl backend.
+
+Authorization is request-scoped. Server configuration and the injected exchange
+may be retained by the client; supplied Authorization header values are not.
+Successful returned OSM values are owning semantic values. Non-success HTTP
+responses preserve the exact status, an OSM-oriented classification where
+known, and a bounded owned diagnostic prefix.
+
 ## Curated package root
 
 `import osm;` intentionally exports:
