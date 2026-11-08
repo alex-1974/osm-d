@@ -75,9 +75,14 @@ jobs:
           # repository's authored Markdown documentation.
           rm -rf release-source/docs
 
+          # DUB 1.40 does not forward application arguments from dub build.
+          # Configure DDox through DUB's documented recipe extension, but only
+          # in this disposable checkout.
+          printf '\\nx:ddoxFilterArgs "--unittest-examples" "--min-protection=Public"\\n' >> release-source/dub.sdl
+
           (
             cd release-source
-            dub build               --build=ddox               --compiler="$DC"               --force               --               --unittest-examples               --min-protection=Public
+            dub build --build=ddox --compiler="$DC" --force
           )
 
           test -f release-source/docs/index.html
