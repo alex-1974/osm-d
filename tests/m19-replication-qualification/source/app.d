@@ -19,6 +19,7 @@ import osm.view.element :
 import osm.view.location : LocationView;
 import std.base64 : Base64;
 import std.datetime.stopwatch : StopWatch;
+import std.format : format;
 import std.stdio : writefln;
 import transport.source : MemorySource;
 
@@ -246,7 +247,21 @@ private void measureIncrementalWorkflow(ref const FixtureSet fixtures)
                     result,
                     status,
                     options))
-                throw new Exception("M19 measured replication step failed");
+            {
+                throw new Exception(format(
+                    "M19 measured replication step failed: chain=%s step=%s candidate=%s checkpoint=%s ingest=%s transport=%s compression=%s osmChange=%s apply=%s compressed=%s decoded=%s",
+                    i,
+                    step,
+                    states[step].sequenceNumber,
+                    checkpoints[i].state.sequenceNumber,
+                    status.error,
+                    status.transportError,
+                    status.compressionError.code,
+                    status.osmChangeStatus.error,
+                    status.applyStatus.error,
+                    status.compressedBytesRead,
+                    status.decodedBytes));
+            }
 
             checkpoints[i] = result.checkpoint;
             ++summary.acceptedSequences;
