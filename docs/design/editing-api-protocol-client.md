@@ -1,8 +1,9 @@
 # Editing API protocol-client direction
 
-Status: accepted M17 design direction from ADR 0032. This document describes
-the intended consumer surface before transport-d#3 fixes the concrete generic
-HTTP exchange types.
+Status: implemented M17 design direction from ADR 0032. The concrete generic
+HTTP provider is transport-d 0.2.x through `transport.exchange.HttpExchange`.
+The public OSM facade remains `import osm.api;`; concrete HTTP execution stays
+replaceable and outside osm-d.
 
 ## Consumer goal
 
@@ -23,9 +24,9 @@ and the primary public type should be named around the domain, for example
 Conceptually:
 
 ```d
-auto api = EditingApiClient(
-    server: EditingApiServer("https://api.openstreetmap.org/api/0.6"),
-    exchange: exchange);
+auto api = new EditingApiClient(
+    EditingApiServer("https://api.openstreetmap.org/api/0.6"),
+    exchange);
 
 OwnedNode node;
 EditingApiStatus status;
@@ -37,25 +38,33 @@ if (!api.readNode(123, node, status))
 }
 ```
 
-The exact constructor and exchange parameter types are deliberately deferred
-until transport-d#3 is accepted. The OSM-domain names and operation semantics
-are not delegated to transport-d.
+The constructor accepts an explicit `EditingApiServer`, an injected
+`transport.exchange.HttpExchange`, and optional generic transport limits and
+options. OSM-domain names and operation semantics are not delegated to
+transport-d.
 
 Write/authenticated operations conceptually accept request-scoped authorization:
 
 ```d
-Changeset changeset = ...;
-long id;
+ChangesetTagRequest request = ...;
+ChangesetId id;
 
-if (!api.createChangeset(changeset, authorization, id, status))
+if (!api.createChangeset(
+        request,
+        authorizationHeader,
+        id,
+        status))
 {
-    // authorization is not retained by the client.
+    // authorizationHeader is not retained by the client.
 }
 ```
 
-The final API may use a provider/callback rather than a value if that better
-matches credentials-d and transport-d. In either case secret bytes must not be
-persisted or included in diagnostics.
+The current transport-d contract carries sensitive headers as request-scoped
+values. osm-d therefore accepts the complete Authorization header only on the
+individual authenticated operation, places it in
+`HttpRequest.sensitiveHeaders`, and does not retain it in the client or its
+status values. credentials-d remains the natural provider of that scoped
+credential in an application.
 
 ## Operation families
 
@@ -152,14 +161,16 @@ osm-d owns:
 - expected success statuses;
 - OSM semantic status interpretation.
 
-transport-d owns:
+transport-d 0.2.x owns:
 
-- generic request/response types;
-- actual HTTP execution;
+- `HttpRequest` / `HttpResponse` and `HttpExchange`;
+- caller-selected generic HTTP methods;
+- ordinary and sensitive request headers;
+- actual HTTP/TLS execution through a replaceable exchange;
 - timeout/redirect mechanics;
 - generic response headers/status;
-- body transfer and byte limits;
-- transport failures and secret-safe provenance.
+- segmented bounded request/response bodies;
+- transport/setup/resource-limit failures and secret-safe diagnostics.
 
 ## Error direction
 
@@ -179,9 +190,12 @@ response codec/parse failure
 Exact HTTP status remains available even when an OSM semantic classification is
 also provided.
 
-Representative semantic classes for qualification include authorization
-required/denied, not found/gone, version conflict, precondition/reference
-failure, payload/limit rejection and readonly/offline service state.
+Representative semantic classes qualified by M17 include authorization
+required/denied, not found/gone, conflict, precondition failure,
+payload rejection, rate limiting and service unavailability. Exact HTTP status
+is retained. Non-success responses also retain a small owned diagnostic-body
+prefix with an explicit truncation flag; request credentials are never copied
+into that diagnostic.
 
 ## Test seam
 
@@ -220,8 +234,8 @@ Consumers that only need codecs do not need the protocol client.
 
 ## Documentation rule for #141
 
-When the concrete transport contract is available, Ddoc for every public
-operation must state:
+The concrete transport contract is now available. Ddoc for every public
+operation states:
 
 - OSM operation and endpoint semantics;
 - whether authorization is required/optional;

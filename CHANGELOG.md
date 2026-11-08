@@ -8,6 +8,12 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.api` OSM Editing API 0.6 protocol client over the generic
+  `transport-d 0.2.x` `HttpExchange`: explicit server selection,
+  capabilities/permissions, Node/Way/Relation current/version/history/full,
+  Changeset create/read/update/close, bounded osmChange upload and diffResult
+  parsing, request-scoped Authorization, exact HTTP/OSM status classification,
+  bounded error diagnostics, and deterministic fake-exchange qualification.
 - Add focused `osm.area` structural area/multipolygon assembly: exact
   Node-ID Way joining, explicit outer/inner roles, reversible source-Way
   traversal with provenance, multiple rings, owning path results, and

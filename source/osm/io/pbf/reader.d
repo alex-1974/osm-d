@@ -73,6 +73,7 @@ version(unittest)
     import transport.source :
         ByteRange,
         MemorySource,
+        ReadFailure,
         ReadResult,
         SourceInfo;
 }
@@ -265,9 +266,10 @@ private SourceFrameReadResult readSourceFileBlock(
         prefix[],
         ReadLimits(prefix.length));
 
-    if (prefixRead.error == ReadError.endOfSource)
+    if (prefixRead.hasError &&
+        prefixRead.error.kind == ReadError.endOfSource)
     {
-        if (prefixRead.bytesRead == 0)
+        if (prefixRead.error.bytesRead == 0)
             return SourceFrameReadResult.endOfInput;
 
         pbfStatus = PbfStatus.failure(
@@ -276,15 +278,15 @@ private SourceFrameReadResult readSourceFileBlock(
         return SourceFrameReadResult.pbfError;
     }
 
-    if (!prefixRead.ok)
+    if (prefixRead.hasError)
     {
-        transportError = prefixRead.error;
+        transportError = prefixRead.error.kind;
         transportOffset = sourceOffset;
-        transportBytesRead = prefixRead.bytesRead;
+        transportBytesRead = prefixRead.error.bytesRead;
         return SourceFrameReadResult.transportError;
     }
 
-    if (prefixRead.bytesRead != prefix.length)
+    if (prefixRead.value.bytesRead != prefix.length)
     {
         pbfStatus = PbfStatus.failure(
             PbfError.truncatedHeaderLength,
@@ -322,8 +324,10 @@ private SourceFrameReadResult readSourceFileBlock(
             headerBytes,
             ReadLimits(headerSize));
 
-        if (headerRead.error == ReadError.endOfSource ||
-            (headerRead.ok && headerRead.bytesRead != headerSize))
+        if ((headerRead.hasError &&
+             headerRead.error.kind == ReadError.endOfSource) ||
+            (headerRead.hasValue &&
+             headerRead.value.bytesRead != headerSize))
         {
             pbfStatus = PbfStatus.failure(
                 PbfError.truncatedBlobHeader,
@@ -331,11 +335,11 @@ private SourceFrameReadResult readSourceFileBlock(
             return SourceFrameReadResult.pbfError;
         }
 
-        if (!headerRead.ok)
+        if (headerRead.hasError)
         {
-            transportError = headerRead.error;
+            transportError = headerRead.error.kind;
             transportOffset = headerOffset64;
-            transportBytesRead = headerRead.bytesRead;
+            transportBytesRead = headerRead.error.bytesRead;
             return SourceFrameReadResult.transportError;
         }
     }
@@ -360,8 +364,10 @@ private SourceFrameReadResult readSourceFileBlock(
             blobBytes,
             ReadLimits(blobSize));
 
-        if (blobRead.error == ReadError.endOfSource ||
-            (blobRead.ok && blobRead.bytesRead != blobSize))
+        if ((blobRead.hasError &&
+             blobRead.error.kind == ReadError.endOfSource) ||
+            (blobRead.hasValue &&
+             blobRead.value.bytesRead != blobSize))
         {
             pbfStatus = PbfStatus.failure(
                 PbfError.truncatedBlobData,
@@ -369,11 +375,11 @@ private SourceFrameReadResult readSourceFileBlock(
             return SourceFrameReadResult.pbfError;
         }
 
-        if (!blobRead.ok)
+        if (blobRead.hasError)
         {
-            transportError = blobRead.error;
+            transportError = blobRead.error.kind;
             transportOffset = blobOffset64;
-            transportBytesRead = blobRead.bytesRead;
+            transportBytesRead = blobRead.error.bytesRead;
             return SourceFrameReadResult.transportError;
         }
     }
@@ -2603,7 +2609,8 @@ version(unittest)
             ReadLimits = ReadLimits.init)
             @safe
         {
-            return ReadResult(ReadError.sourceFailure, 0);
+            return ReadResult.failure(
+                ReadFailure(ReadError.sourceFailure, 0));
         }
 
         ReadResult readSome(
@@ -2612,7 +2619,8 @@ version(unittest)
             ReadLimits = ReadLimits.init)
             @safe
         {
-            return ReadResult(ReadError.sourceFailure, 0);
+            return ReadResult.failure(
+                ReadFailure(ReadError.sourceFailure, 0));
         }
     }
 }

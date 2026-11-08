@@ -31,6 +31,8 @@ The current library scope includes:
 - osmChange;
 - OSM Editing API diff-upload response parsing;
 - Editing API capability discovery for target-aware upload validation;
+- a synchronous OSM Editing API 0.6 protocol client over injected
+  transport-d HTTP exchange;
 - structural and semantic validation;
 - loss-aware read/write round trips;
 - compact stores for larger editable datasets;
@@ -118,9 +120,9 @@ Editing API families use focused facades.
 v0.3 adds `osm.upload` for successful diff-upload responses and
 `osm.capabilities` for dynamic target-server upload limits. The released
 v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
-Post-v0.3 M17 now accepts OSM protocol ownership in osm-d (ADR 0032) while
-generic HTTP remains in transport-d and OAuth/account/retry policy stays
-outside the core. The exact v0.3.x
+Post-v0.3 M17 implements that OSM protocol boundary through `osm.api` over
+transport-d 0.2.x `HttpExchange`. Generic HTTP remains in transport-d and
+OAuth/account/retry policy stays outside the core. The exact v0.3.x
 promise is in `docs/API_STABILITY.md`; migration from v0.2 is in
 `docs/API_V0_3.md`.
 
@@ -739,6 +741,42 @@ Create/update XML deliberately uses the separate `ChangesetTagRequest` type.
 The server owns identity, timestamps, bounds, owner and counters; update tags
 are a complete replacement set. The codec performs no HTTP, authentication or
 policy decision about when an editor opens, reuses or closes a Changeset.
+
+## Editing API protocol client
+
+Post-v0.3 M17 adds the focused `osm.api` facade for consumers that want OSM
+operations rather than raw endpoint construction:
+
+```d
+import osm.api;
+import transport.exchange : CurlHttpExchange;
+
+auto api = new EditingApiClient(
+    EditingApiServer("https://api.openstreetmap.org/api/0.6"),
+    new CurlHttpExchange());
+
+OwnedNode node;
+EditingApiStatus status;
+if (!api.readNode(123, node, status))
+{
+    // status separates transport failure, completed HTTP/OSM status,
+    // response decoding, and local validation.
+}
+```
+
+The caller always selects the API server. There is no implicit production write
+target. Capabilities, permissions, current/version/history reads, Way/Relation
+`full`, Changeset create/read/update/close and osmChange diff upload all reuse
+the existing semantic/XML codecs.
+
+Authenticated operations accept the complete Authorization header only for the
+duration of that call. `EditingApiClient` does not retain tokens, perform OAuth,
+select accounts, refresh credentials, retry requests or own background
+execution. Those remain application/credentials-d concerns.
+
+The generic HTTP seam is `transport.exchange.HttpExchange`, so protocol tests
+and applications may inject a deterministic exchange without a network. The
+native transport-d `CurlHttpExchange` is only one implementation.
 
 ## Upload validation
 

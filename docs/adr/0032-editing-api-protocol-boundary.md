@@ -168,9 +168,10 @@ The intended focused facade is:
 import osm.api;
 ```
 
-with an `EditingApiClient`-style consumer surface. Exact transport adapter and
-constructor signatures are finalized only after transport-d#3 provides the
-generic exchange contract.
+with an `EditingApiClient` consumer surface. transport-d 0.2.0 now provides
+the required `HttpExchange` contract, so the concrete constructor injects that
+generic exchange together with explicit server configuration and optional
+generic limits/options.
 
 The public API should read in OSM domain terms: consumers ask for a Node,
 history, full Way, Changeset creation or an osmChange upload. They do not
@@ -217,9 +218,9 @@ Secret ownership remains outside osm-d.
 
 The protocol layer can be fully qualified without destructive live-server CI.
 
-M17 implementation of the client remains blocked on an accepted generic HTTP
-exchange in transport-d#3; the Changeset semantic/XML model in #140 is
-independent and may proceed first.
+transport-d 0.2.0 satisfies the generic HTTP provider dependency requested in
+transport-d#3. M17 therefore implements the protocol client directly over
+`HttpExchange`; osm-d contains no private curl/std.net.curl path.
 
 ## Historical v0.3 contract
 

@@ -95,6 +95,15 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M17 Editing API protocol qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m17-editing-api \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |

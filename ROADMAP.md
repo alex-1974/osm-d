@@ -286,14 +286,23 @@ Tracked by M17: #143.
 - [x] Revise the v0.3 Editing API boundary so osm-d owns OSM protocol semantics
   while generic network execution remains in `transport-d`. #139
 - [x] Add a first-class OSM Changeset semantic model and XML codecs. #140
-- [ ] Implement the Editing API protocol client over generic HTTP transport. #141
-- [ ] Qualify Changeset and Editing API protocol semantics. #142
+- [x] Implement the Editing API protocol client over generic HTTP transport. #141
+  - [x] `osm.api` exposes an explicit-server `EditingApiClient` over the
+    replaceable `transport-d 0.2.x` `HttpExchange` boundary.
+  - [x] capabilities/permissions, Node/Way/Relation current/version/history/full,
+    Changeset create/read/update/close and osmChange upload are covered.
+  - [x] Authorization remains request-scoped in sensitive transport headers;
+    osm-d does not persist credentials or own OAuth/account/retry policy.
+- [x] Qualify Changeset and Editing API protocol semantics. #142
   - [x] transport-independent semantic pipeline: Changeset -> store changes ->
     capability validation -> osmChange -> diffResult -> store reconciliation.
   - [x] current/version/history/full XML response shapes for Node/Way/Relation
     reuse the existing semantic OSM XML reader.
-  - [ ] protocol/mock-transport status qualification remains blocked on #141 /
-    transport-d#3.
+  - [x] deterministic fake-exchange qualification covers methods, paths,
+    headers, bounded request/response bodies, 409/412/429/503 HTTP semantics,
+    transport failure, response-decoding failure and local validation.
+  - [x] external DMD/LDC consumer compilation qualifies the focused
+    `import osm.api;` surface.
 
 Credential persistence remains in `credentials-d`; OAuth2/PKCE, account
 selection, retry/backoff and editor workflow remain outside the osm-d core.
