@@ -286,8 +286,9 @@ private void qualifyGzipIngestion() @safe
 private OsmStore baseIngestStore(out OsmHandle handle) @safe
 {
     auto store = new OsmStore();
+    auto base = node(1, 1, 10, "base");
     StoreStatus status;
-    assert(store.add(node(1, 1, 10, "base"), handle, status));
+    assert(store.add(base, handle, status));
     return store;
 }
 
