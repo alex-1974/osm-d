@@ -150,11 +150,15 @@ jobs:
             --compiler="$DC" \
             --build=release \
             --force
+          set +e
           /usr/bin/time -v \
             tests/m19-replication-qualification/osm-d-m19-replication-qualification \
             --measure \
             2> /tmp/m19-replication-time.txt
+          status=$?
+          set -e
           cat /tmp/m19-replication-time.txt
+          exit "$status"
 
       - name: Run DIP1000 negative tests
         shell: bash
