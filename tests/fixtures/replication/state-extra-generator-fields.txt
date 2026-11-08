@@ -1,0 +1,5 @@
+sequenceNumber=123457
+timestamp=2026-11-08T15\:41\:00Z
+txnMaxQueried=8000123
+txnMax=8000130
+txnActiveList=8000124,8000127
