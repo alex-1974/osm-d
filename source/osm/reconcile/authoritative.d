@@ -550,7 +550,11 @@ void applyPlan(
 
         case ReconcileAction.removed:
             assert(store.discardAuthoritative(
-                plan.handle, storeStatus));
+                plan.handle,
+                plan.remote.hasVersion
+                    ? plan.remote.versionNumber
+                    : 0,
+                storeStatus));
             ++result.removed;
             break;
 
@@ -601,7 +605,11 @@ void applyPlan(
 
         case ReconcileAction.removed:
             assert(store.discardAuthoritative(
-                plan.handle, storeStatus));
+                plan.handle,
+                plan.remote.hasVersion
+                    ? plan.remote.versionNumber
+                    : 0,
+                storeStatus));
             ++result.removed;
             break;
 
@@ -652,7 +660,11 @@ void applyPlan(
 
         case ReconcileAction.removed:
             assert(store.discardAuthoritative(
-                plan.handle, storeStatus));
+                plan.handle,
+                plan.remote.hasVersion
+                    ? plan.remote.versionNumber
+                    : 0,
+                storeStatus));
             ++result.removed;
             break;
 
