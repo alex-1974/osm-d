@@ -211,11 +211,11 @@ private ReplicationState makeState(
     return result;
 }
 
-private OwnedMetadata metadata(int version) @safe pure nothrow
+private OwnedMetadata metadata(int versionNumber) @safe pure nothrow
 {
     OwnedMetadata result;
     result.hasVersion = true;
-    result.versionNumber = version;
+    result.versionNumber = versionNumber;
     result.hasVisibility = true;
     result.visible = true;
     return result;
