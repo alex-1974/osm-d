@@ -364,7 +364,17 @@ Tracked by M19: #153.
     and local M18 conflicts abort before the first visible store change.
   - [x] only successful final reconciliation returns an advanced checkpoint;
     DMD/LDC runtime and external-consumer gates qualify the surface.
-- [ ] Compose bounded ByteSource + streaming GZIP + osmChange ingestion. #151
+- [x] Compose bounded ByteSource + streaming GZIP + osmChange ingestion. #151
+  - [x] `compression-d 0.3.x` provides the admitted caller-owned streaming
+    GZIP contract; osm-d does not duplicate DEFLATE/GZIP.
+  - [x] a bounded decoded `ByteSource` bridges GZIP output into the existing
+    dxml/osmChange ForwardRange contract, replaying from compressed offset zero
+    only when a saved parser cursor requests an older decoded block.
+  - [x] CRC/ISIZE, truncation, concatenated-member/trailing-garbage and
+    expansion-limit failures are distinguished from transport and osmChange
+    failures before any store mutation.
+  - [x] `applyGzipReplicationStep` retains the #150 complete-document staging
+    boundary and advances the checkpoint only after successful semantic apply.
 - [ ] Qualify continuity, replay, restart and incremental store updates. #152
 
 Generic resource retrieval stays in `transport-d`; GZIP belongs in

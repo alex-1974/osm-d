@@ -23,6 +23,8 @@ import transport.source : ByteSource;
     ReplicationCheckpoint checkpoint;
     ReplicationApplyResult result;
     ReplicationApplyStatus applyStatus;
+    ReplicationIngestOptions ingestOptions;
+    ReplicationIngestStatus ingestStatus;
     OsmChangeDocument document;
 
     if (false)
@@ -41,5 +43,14 @@ import transport.source : ByteSource;
             document,
             result,
             applyStatus);
+        applyGzipReplicationStep(
+            new OsmStore(),
+            source,
+            checkpoint,
+            feed,
+            state,
+            result,
+            ingestStatus,
+            ingestOptions);
     }
 }

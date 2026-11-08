@@ -1,5 +1,6 @@
 module app;
 
+import compression.core : ErrorCode;
 import osm.model.change :
     ChangeAction,
     OwnedChangeEntry,
@@ -21,6 +22,7 @@ import osm.view.element :
     ElementType;
 import osm.view.location :
     LocationView;
+import std.format : format;
 import transport.source :
     MemorySource;
 
@@ -28,6 +30,7 @@ import transport.source :
 {
     qualifyStateAndPaths();
     qualifyContinuity();
+    qualifyGzipIngestion();
     qualifyApplyAndRestartReplay();
     qualifyMultipleVersionsAndStaleInput();
     qualifyFailuresArePreflighted();
@@ -115,6 +118,201 @@ private void qualifyContinuity() @safe
         "2026-11-08T15:40:01Z";
     assert(classifyReplicationStep(checkpoint, feed, mismatchedSame) ==
         ReplicationStepRelation.stateMismatch);
+}
+
+
+private void qualifyGzipIngestion() @safe
+{
+    immutable ubyte[] gzipChange = [
+        0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xFF,
+        0x45, 0x8E, 0x41, 0x0A, 0x43, 0x21, 0x0C, 0x44, 0xAF, 0x22,
+        0xD9, 0xB7, 0xC6, 0xBF, 0xF8, 0x50, 0x50, 0x37, 0x3D, 0x89,
+        0x60, 0x6A, 0xA5, 0x35, 0x01, 0x0D, 0x85, 0xDE, 0xBE, 0x4A,
+        0xF9, 0xED, 0x6C, 0x02, 0x33, 0xBC, 0xC9, 0x78, 0x19, 0xED,
+        0x7A, 0x4F, 0x5C, 0xC8, 0xBC, 0xA8, 0x8F, 0x2A, 0x1C, 0x00,
+        0xCF, 0x3B, 0x98, 0x42, 0x4C, 0x3D, 0xA9, 0xF4, 0x00, 0xCD,
+        0x5D, 0x4E, 0x4A, 0x43, 0x21, 0xFA, 0x26, 0xB9, 0xDE, 0xDE,
+        0xD1, 0xB3, 0x64, 0x32, 0x35, 0x07, 0x70, 0xF0, 0xE7, 0x36,
+        0x30, 0xCF, 0xA4, 0x8B, 0xC7, 0xAF, 0x36, 0x9C, 0xCE, 0x4A,
+        0xDC, 0x7E, 0x58, 0x88, 0xB3, 0x45, 0x53, 0x31, 0x8F, 0x00,
+        0x9C, 0x1A, 0x4D, 0x3C, 0x40, 0xA7, 0x26, 0x4A, 0x60, 0xA3,
+        0xB7, 0xAB, 0x78, 0x9E, 0xE3, 0x8F, 0xFD, 0xCD, 0x8B, 0x1F,
+        0xD9, 0x76, 0xC6, 0x9B, 0xAA, 0x00, 0x00, 0x00
+    ];
+
+    auto feed = makeFeed(
+        "official-minute",
+        ReplicationGranularity.minute);
+    auto state50 = syntheticState(
+        50,
+        "2026-11-08T17:00:00Z",
+        1_762_621_200);
+    auto state51 = syntheticState(
+        51,
+        "2026-11-08T17:01:00Z",
+        1_762_621_260);
+    auto checkpoint = makeCheckpoint(feed, state50);
+
+    ReplicationIngestOptions options;
+    options.compressedBufferSize = 5;
+    options.maximumCompressedBytes = 1024;
+    options.maximumDecodedBytes = 1024;
+    options.maximumExpansionRatio = 64;
+    options.osmChange.bufferSize = 11;
+
+    OsmHandle handle;
+    auto store = baseIngestStore(handle);
+
+    ReplicationApplyResult result;
+    ReplicationIngestStatus status;
+    auto source = new MemorySource(gzipChange);
+    const accepted = applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        options);
+    assert(accepted, format(
+        "gzip ingest failed: stage=%s transport=%s compression=%s osmChange=%s apply=%s compressed=%s decoded=%s",
+        status.error,
+        status.transportError,
+        status.compressionError.code,
+        status.osmChangeStatus.error,
+        status.applyStatus.error,
+        status.compressedBytesRead,
+        status.decodedBytes));
+    assert(status.ok);
+    assert(result.checkpointAdvanced);
+    assert(result.checkpoint.state.sequenceNumber == 51);
+    assert(status.compressedBytesRead == gzipChange.length);
+    assert(status.decodedBytes == 170);
+
+    StoreStatus storeStatus;
+    OwnedNode current;
+    assert(store.copyNode(handle, current, storeStatus));
+    assert(current.metadata.versionNumber == 2);
+    assert(current.location.latitudeNanodegrees == 20);
+    assert(current.tags[0].value ==
+        cast(const(ubyte)[])"remote");
+
+    // CRC corruption is rejected before semantic application.
+    auto corrupted = gzipChange.dup;
+    corrupted[$ - 8] ^= 0x01;
+    store = baseIngestStore(handle);
+    source = new MemorySource(corrupted);
+    assert(!applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        options));
+    assert(status.error ==
+        ReplicationIngestError.compressionFailure);
+    assert(status.compressionError.code ==
+        ErrorCode.checksumMismatch);
+    assertStoreStillAtVersionOne(store, handle);
+
+    // Final input that ends inside the trailer is deterministic truncation.
+    store = baseIngestStore(handle);
+    source = new MemorySource(gzipChange[0 .. $ - 3]);
+    assert(!applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        options));
+    assert(status.error ==
+        ReplicationIngestError.compressionFailure);
+    assert(status.compressionError.code ==
+        ErrorCode.truncatedInput);
+    assertStoreStillAtVersionOne(store, handle);
+
+    // The decoded-output budget is enforced inside compression-d.
+    auto limited = options;
+    limited.maximumDecodedBytes = 64;
+    store = baseIngestStore(handle);
+    source = new MemorySource(gzipChange);
+    assert(!applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        limited));
+    assert(status.error ==
+        ReplicationIngestError.compressionFailure);
+    assert(status.compressionError.code ==
+        ErrorCode.outputLimitExceeded);
+    assertStoreStillAtVersionOne(store, handle);
+
+    // The compressed transport budget is independent of decoded expansion.
+    limited = options;
+    limited.maximumCompressedBytes = 32;
+    store = baseIngestStore(handle);
+    source = new MemorySource(gzipChange);
+    assert(!applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        limited));
+    assert(status.error ==
+        ReplicationIngestError.resourceLimit);
+    assertStoreStillAtVersionOne(store, handle);
+
+    // allMembers mode rejects arbitrary bytes after the valid member.
+    auto trailing = gzipChange.dup;
+    trailing ~= 0x00;
+    store = baseIngestStore(handle);
+    source = new MemorySource(trailing);
+    assert(!applyGzipReplicationStep(
+        store,
+        source,
+        checkpoint,
+        feed,
+        state51,
+        result,
+        status,
+        options));
+    assert(status.error ==
+        ReplicationIngestError.compressionFailure);
+    assertStoreStillAtVersionOne(store, handle);
+}
+
+private OsmStore baseIngestStore(out OsmHandle handle) @safe
+{
+    auto store = new OsmStore();
+    auto base = node(1, 1, 10, "base");
+    StoreStatus status;
+    assert(store.add(base, handle, status));
+    return store;
+}
+
+private void assertStoreStillAtVersionOne(
+    OsmStore store,
+    OsmHandle handle) @safe
+{
+    StoreStatus status;
+    OwnedNode current;
+    assert(store.copyNode(handle, current, status));
+    assert(current.metadata.versionNumber == 1);
+    assert(current.location.latitudeNanodegrees == 10);
+    assert(current.tags[0].value ==
+        cast(const(ubyte)[])"base");
 }
 
 private void qualifyApplyAndRestartReplay() @safe

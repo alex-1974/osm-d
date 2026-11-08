@@ -9,5 +9,6 @@ sourcePaths "source"
 toolchainRequirements dub=">=1.40.0" frontend=">=2.111"
 
 dependency "dxml" version="~>0.4.5"
+dependency "compression-d" version="~>0.3.0"
 dependency "transport-d" version="~>0.2.0"
 stringImportPaths "tests/fixtures"
