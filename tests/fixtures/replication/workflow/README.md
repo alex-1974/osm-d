@@ -14,7 +14,9 @@ The osmChange resources exercise:
 - sequence 102: two contiguous versions of one Node in reverse XML order;
 - sequence 103: create, delete and parent-reference replacement;
 - sequence 104: an exact already-known object version plus new authoritative
-  Node/Relation versions.
+  Node/Relation versions;
+- sequence 105 failure fixtures: one malformed osmChange document and one
+  otherwise valid document that jumps Node 1 from version 5 to version 7.
 
 The qualification runner converts the authored XML bytes to GZIP at runtime
 with compression-d only to exercise the released compressed ingestion boundary.
