@@ -34,6 +34,7 @@ The current library scope includes:
 - a synchronous OSM Editing API 0.6 protocol client over injected
   transport-d HTTP exchange;
 - authoritative OSM history, refresh and three-way conflict semantics;
+- OSM replication state/sequence and incremental store-apply semantics;
 - structural and semantic validation;
 - loss-aware read/write round trips;
 - compact stores for larger editable datasets;
@@ -123,9 +124,11 @@ v0.3 adds `osm.upload` for successful diff-upload responses and
 v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
 Post-v0.3 M17 implements that OSM protocol boundary through `osm.api` over
 transport-d 0.2.x `HttpExchange`. M18 adds the transport-independent
-`osm.sync` history/refresh/conflict foundation. Generic HTTP remains in
-transport-d and OAuth/account/retry/editor-resolution policy stays outside the
-core. The exact v0.3.x promise is in `docs/API_STABILITY.md`; migration from
+`osm.sync` history/refresh/conflict foundation. M19 adds the focused
+`osm.replication` state/sequence/replay and decoded-osmChange apply layer.
+Generic HTTP remains in transport-d; GZIP remains a compression-d concern; and
+OAuth/account/retry/editor-resolution/checkpoint-persistence policy stays
+outside the core. The exact v0.3.x promise is in `docs/API_STABILITY.md`; migration from
 v0.2 is in `docs/API_V0_3.md`.
 
 ## Reading an in-memory PBF
@@ -860,6 +863,93 @@ batch mutation. Resource exhaustion follows normal D allocation semantics; the
 library does not clone a city-scale store merely to promise rollback after an
 out-of-memory condition. See
 `docs/adr/0033-history-refresh-conflict-boundary.md`.
+
+## Replication state and incremental apply
+
+Post-v0.3 M19 provides `osm.replication` for consumers that maintain their own
+replication checkpoint and retrieval policy:
+
+```d
+import osm.osmchange;
+import osm.replication;
+import osm.store;
+import transport.source : ByteSource;
+
+ReplicationFeed feed;
+assert(ReplicationFeed.create(
+    "official-minute",
+    ReplicationGranularity.minute,
+    feed));
+
+ReplicationState remoteState;
+ReplicationStateReadStatus stateStatus;
+ByteSource stateSource = /* caller-selected local/remote source */ null;
+
+if (!readReplicationState(stateSource, remoteState, stateStatus))
+{
+    // bounded state.txt transport/parse failure
+}
+
+ReplicationResourcePaths paths;
+ReplicationPathStatus pathStatus;
+if (!replicationResourcePaths(
+        remoteState.sequenceNumber,
+        paths,
+        pathStatus))
+{
+    // unsupported sequence for the current official-style path layout
+}
+
+// The caller obtains/decompresses the .osc.gz resource separately and parses
+// it through the existing osmChange codec.
+OsmChangeDocument diff;
+
+ReplicationApplyResult applied;
+ReplicationApplyStatus applyStatus;
+if (applyReplicationStep(
+        store,
+        checkpoint,
+        feed,
+        remoteState,
+        diff,
+        applied,
+        applyStatus))
+{
+    if (applied.checkpointAdvanced)
+    {
+        // Persist applied.checkpoint only after the caller's durable store
+        // update is committed.
+    }
+}
+```
+
+The replication contract deliberately separates sequence and object continuity:
+
+- feed sequence numbers decide next/replay/stale/gap; timestamps are metadata,
+  not wall-clock sequence arithmetic;
+- OSM object versions decide replay/stale/gap for each identity;
+- several versions of one identity in an osmChange document are staged in
+  version order before the store changes;
+- same-version/equivalent payload is harmless replay; same-version/different
+  payload is an integrity failure;
+- older object versions are tolerated as stale feed overlap and never roll the
+  store back;
+- local M18 conflicts are collected before the first store mutation, so the
+  caller can resolve local work and replay the same sequence;
+- the returned checkpoint advances only after a successful final M18
+  reconciliation.
+
+`ReplicationTimestamp.fromUnixSeconds` lets a consumer construct checkpoint
+metadata from a PBF replication timestamp without round-tripping through
+`state.txt`.
+
+`replicationResourcePaths` returns only relative
+`AAA/BBB/CCC.osc.gz` / `AAA/BBB/CCC.state.txt` paths. URL joining, HTTP/file
+access, scheduling, retry and durable checkpoint storage remain caller concerns.
+Compressed ingestion is intentionally separate: M19 #151 will compose
+transport-d with a consumer-qualified compression-d GZIP stream rather than
+embedding DEFLATE/GZIP in osm-d. See
+`docs/adr/0034-replication-sequence-replay-contract.md`.
 
 ## Upload validation
 
