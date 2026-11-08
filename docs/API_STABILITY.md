@@ -85,6 +85,31 @@ Successful returned OSM values are owning semantic values. Non-success HTTP
 responses preserve the exact status, an OSM-oriented classification where
 known, and a bounded owned diagnostic prefix.
 
+M18 additionally adds the focused `import osm.sync;` development facade. It
+is likewise not retroactively part of the published v0.3.x compatibility
+promise. The facade exposes:
+
+- typed owning Node/Way/Relation authoritative histories with explicit complete
+  versus partial coverage;
+- explicit present/absent base/local/remote element states and deterministic
+  `ConflictReport` classification;
+- transport-independent `AuthoritativeBatch` /
+  `reconcileAuthoritative` store synchronization.
+
+The synchronization facade reports facts and conservative conflict boundaries;
+it does not expose editor undo/redo, a merged-object result, automatic
+conflict-resolution policy, networking or credential state. Successful clean
+refresh preserves existing live handles; authoritative deletion invalidates
+the old handle. Batch data/contract failures are preflighted before mutation.
+
+The M17 `EditingApiClient` historical reads use the M18 historical values:
+specific-version calls return `Historical*Version`, and /history calls return
+typed histories. Current-element calls continue to return live `Owned*`
+values. Historical Node location remains explicitly optional so a deleted
+`visible=false` response without lat/lon is never normalized to fake
+coordinates. Contiguous histories from version 1 are marked complete; valid
+gapped sequences are retained as partial.
+
 ## Curated package root
 
 `import osm;` intentionally exports:

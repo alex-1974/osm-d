@@ -1,0 +1,8 @@
+name "osm-d-m18-sync-performance"
+description "Pragmatic editor-scale performance evidence for M18 synchronization"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."

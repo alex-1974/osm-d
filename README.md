@@ -33,6 +33,7 @@ The current library scope includes:
 - Editing API capability discovery for target-aware upload validation;
 - a synchronous OSM Editing API 0.6 protocol client over injected
   transport-d HTTP exchange;
+- authoritative OSM history, refresh and three-way conflict semantics;
 - structural and semantic validation;
 - loss-aware read/write round trips;
 - compact stores for larger editable datasets;
@@ -121,10 +122,11 @@ v0.3 adds `osm.upload` for successful diff-upload responses and
 `osm.capabilities` for dynamic target-server upload limits. The released
 v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
 Post-v0.3 M17 implements that OSM protocol boundary through `osm.api` over
-transport-d 0.2.x `HttpExchange`. Generic HTTP remains in transport-d and
-OAuth/account/retry policy stays outside the core. The exact v0.3.x
-promise is in `docs/API_STABILITY.md`; migration from v0.2 is in
-`docs/API_V0_3.md`.
+transport-d 0.2.x `HttpExchange`. M18 adds the transport-independent
+`osm.sync` history/refresh/conflict foundation. Generic HTTP remains in
+transport-d and OAuth/account/retry/editor-resolution policy stays outside the
+core. The exact v0.3.x promise is in `docs/API_STABILITY.md`; migration from
+v0.2 is in `docs/API_V0_3.md`.
 
 ## Reading an in-memory PBF
 
@@ -777,6 +779,87 @@ execution. Those remain application/credentials-d concerns.
 The generic HTTP seam is `transport.exchange.HttpExchange`, so protocol tests
 and applications may inject a deterministic exchange without a network. The
 native transport-d `CurlHttpExchange` is only one implementation.
+
+Typed M18 histories are also available directly from the existing history
+operations:
+
+```d
+NodeHistory history;
+EditingApiStatus status;
+
+if (api.readNodeHistory(123, history, status))
+{
+    auto v2 = history.findVersion(2);
+}
+```
+
+Historical API reads use dedicated historical values rather than pretending
+every old version is a current live object. In particular, a deleted Node may
+carry `visible=false` without `lat`/`lon`; `HistoricalNodeVersion` preserves
+that missing location explicitly and `toOwned` refuses to invent coordinates.
+
+A /history response is classified as `HistoryCoverage.complete` when versions
+are contiguous from version 1. A valid strictly increasing sequence with gaps
+is retained as `HistoryCoverage.partial`; duplicates, reversed versions or
+ambiguous identity still fail instead of being sorted or repaired. Specific
+version reads likewise return `HistoricalNodeVersion`,
+`HistoricalWayVersion` or `HistoricalRelationVersion`, while current-element
+reads continue to return ordinary live `Owned*` values.
+
+## Authoritative refresh and conflicts
+
+Use the focused `osm.sync` facade when current server state must be compared
+with an editable store:
+
+```d
+import osm.store;
+import osm.sync;
+
+AuthoritativeBatch remote;
+remote.nodes ~= NodeState.present(freshNode);
+
+// An explicit authoritative absence can be represented as:
+// remote.nodes ~= NodeState.absent(nodeId, knownVersion);
+
+ReconcileResult result;
+ReconcileStatus status;
+
+if (!reconcileAuthoritative(store, remote, result, status))
+{
+    // The batch failed semantic/preflight validation; the store is unchanged.
+}
+
+foreach (entry; result.entries)
+{
+    if (entry.requiresResolution)
+    {
+        // entry.conflict contains base/local/remote facts for application UI
+        // or policy. osm-d does not silently choose a winner.
+    }
+}
+```
+
+M18 deliberately separates three concepts:
+
+- `NodeHistory`, `WayHistory` and `RelationHistory` represent authoritative
+  OSM server versions; they are not editor undo/redo history.
+- `classifyConflict` compares explicit base/local/remote states and reports
+  tag, Node-coordinate and ordered Way/Relation sequence facts without
+  producing a merged object.
+- `reconcileAuthoritative` applies only safe remote-only or identical
+  concurrent state, leaves local-only/conflicting objects untouched and reports
+  independent concurrent changes for application resolution.
+
+Clean refresh reuses the store's existing mutation machinery, so stable handles
+remain stable and primary/parent indexes update coherently. An authoritative
+deletion follows the established confirmed-delete lifecycle and invalidates the
+old handle; it is not emitted later as a new local deletion.
+
+All semantic/store-representation preflight completes before the first visible
+batch mutation. Resource exhaustion follows normal D allocation semantics; the
+library does not clone a city-scale store merely to promise rollback after an
+out-of-memory condition. See
+`docs/adr/0033-history-refresh-conflict-boundary.md`.
 
 ## Upload validation
 

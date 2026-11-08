@@ -390,6 +390,24 @@ bool parseSemanticXmlLong(string text, out long value)
     return parseLong(text, value);
 }
 
+bool parseSemanticXmlCoordinate(
+    string text,
+    long wholeLimit,
+    out long nanodegrees,
+    ref OsmXmlReadStatus status)
+    @safe pure nothrow @nogc
+{
+    return parseCoordinate(text, wholeLimit, nanodegrees, status);
+}
+
+bool parseSemanticXmlTag(R)(
+    ref R xml,
+    out OwnedTag tag,
+    ref OsmXmlReadStatus status)
+{
+    return parseTag(xml, tag, status);
+}
+
 private:
 
 void deliverNode(Handler)(ref Handler handler, OwnedNode value) @safe

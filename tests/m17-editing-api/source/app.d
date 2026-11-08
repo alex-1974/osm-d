@@ -138,17 +138,43 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
         "https://example.test/api/0.6/node/101");
 
     fake.succeed(200, import("editing-api/node-version.xml"));
-    assert(client.readNodeVersion(101, 2, node, status));
-    assert(node.metadata.versionNumber == 2);
+    HistoricalNodeVersion nodeVersion;
+    assert(client.readNodeVersion(101, 2, nodeVersion, status));
+    assert(nodeVersion.metadata.versionNumber == 2);
+    assert(nodeVersion.hasLocation);
     assert(fake.lastUrl ==
         "https://example.test/api/0.6/node/101/2");
 
+    fake.succeed(200, import("editing-api/node-version-deleted.xml"));
+    assert(client.readNodeVersion(403, 2, nodeVersion, status));
+    assert(nodeVersion.deleted);
+    assert(!nodeVersion.hasLocation);
+    OwnedNode deletedVersionNode;
+    assert(!nodeVersion.toOwned(deletedVersionNode));
+
     fake.succeed(200, import("editing-api/node-history.xml"));
-    OwnedNode[] nodes;
-    assert(client.readNodeHistory(101, nodes, status));
-    assert(nodes.length == 3);
-    assert(fake.lastUrl ==
-        "https://example.test/api/0.6/node/101/history");
+    NodeHistory nodeHistory;
+    assert(client.readNodeHistory(101, nodeHistory, status));
+    assert(nodeHistory.coverage == HistoryCoverage.complete);
+    assert(nodeHistory.length == 3);
+    assert(nodeHistory.findVersion(2).length == 1);
+
+    fake.succeed(200, import("editing-api/node-history-deleted.xml"));
+    assert(client.readNodeHistory(401, nodeHistory, status));
+    assert(nodeHistory.coverage == HistoryCoverage.complete);
+    assert(nodeHistory.visibility(2) == HistoricalVisibility.deleted);
+    auto deleted = nodeHistory.findVersion(2);
+    assert(deleted.length == 1);
+    assert(!deleted[0].hasLocation);
+    OwnedNode cannotMaterialize;
+    assert(!deleted[0].toOwned(cannotMaterialize));
+
+    fake.succeed(200, import("editing-api/node-history-gap.xml"));
+    assert(client.readNodeHistory(402, nodeHistory, status));
+    assert(nodeHistory.coverage == HistoryCoverage.partial);
+    assert(nodeHistory.hasGap);
+    assert(nodeHistory.findVersion(2).length == 0);
+    assert(nodeHistory.findVersion(3).length == 1);
 
     fake.succeed(200, import("editing-api/way-current.xml"));
     OwnedWay way;
@@ -156,13 +182,14 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     assert(way.id == 201);
 
     fake.succeed(200, import("editing-api/way-version.xml"));
-    assert(client.readWayVersion(201, 2, way, status));
-    assert(way.metadata.versionNumber == 2);
+    HistoricalWayVersion wayVersion;
+    assert(client.readWayVersion(201, 2, wayVersion, status));
+    assert(wayVersion.metadata.versionNumber == 2);
 
     fake.succeed(200, import("editing-api/way-history.xml"));
-    OwnedWay[] ways;
-    assert(client.readWayHistory(201, ways, status));
-    assert(ways.length == 3);
+    WayHistory wayHistory;
+    assert(client.readWayHistory(201, wayHistory, status));
+    assert(wayHistory.length == 3);
 
     fake.succeed(200, import("editing-api/way-full.xml"));
     OwnedDataset dataset;
@@ -178,13 +205,18 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     assert(relation.id == 301);
 
     fake.succeed(200, import("editing-api/relation-version.xml"));
-    assert(client.readRelationVersion(301, 3, relation, status));
-    assert(relation.metadata.versionNumber == 3);
+    HistoricalRelationVersion relationVersion;
+    assert(client.readRelationVersion(
+        301,
+        3,
+        relationVersion,
+        status));
+    assert(relationVersion.metadata.versionNumber == 3);
 
     fake.succeed(200, import("editing-api/relation-history.xml"));
-    OwnedRelation[] relations;
-    assert(client.readRelationHistory(301, relations, status));
-    assert(relations.length == 3);
+    RelationHistory relationHistory;
+    assert(client.readRelationHistory(301, relationHistory, status));
+    assert(relationHistory.length == 3);
 
     fake.succeed(200, import("editing-api/relation-full.xml"));
     assert(client.readRelationFull(301, dataset, status));

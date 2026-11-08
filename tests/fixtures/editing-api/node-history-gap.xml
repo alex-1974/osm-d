@@ -1,0 +1,8 @@
+<osm version="0.6" generator="OpenStreetMap server">
+  <node id="402" lat="48.2000000" lon="16.3000000"
+        version="1" changeset="20" visible="true"
+        timestamp="2026-01-01T00:00:00Z"/>
+  <node id="402" lat="48.2001000" lon="16.3000000"
+        version="3" changeset="22" visible="true"
+        timestamp="2026-01-03T00:00:00Z"/>
+</osm>
