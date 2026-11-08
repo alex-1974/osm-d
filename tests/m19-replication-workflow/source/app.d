@@ -218,20 +218,22 @@ private void qualifyLocalConflictHandoff() @safe
     ReplicationApplyResult result;
     ReplicationIngestStatus status;
 
-    foreach (state, fixture; [
-        state101, state102, state103
-    ], [
+    const states = [state101, state102, state103];
+    const fixtures = [
         import("replication/workflow/101.osc"),
         import("replication/workflow/102.osc"),
         import("replication/workflow/103.osc")
-    ])
+    ];
+
+    foreach (i; 0 .. states.length)
     {
+        auto state = states[i];
         assert(applyFixture(
             store,
             checkpoint,
             feed,
             state,
-            fixture,
+            fixtures[i],
             options,
             result,
             status));
@@ -440,7 +442,7 @@ private void verifyExpectedFinalSnapshot(OsmStore store) @safe
     StoreStatus status;
     StoreWayView way;
     assert(store.way(10, way, status));
-    assert(way.metadata.version == 4);
+    assert(way.metadata.versionNumber == 4);
     auto refs = way.nodes;
     assert(!refs.empty && refs.front.id == 3);
     refs.popFront();
@@ -450,7 +452,7 @@ private void verifyExpectedFinalSnapshot(OsmStore store) @safe
 
     StoreRelationView relation;
     assert(store.relation(20, relation, status));
-    assert(relation.metadata.version == 5);
+    assert(relation.metadata.versionNumber == 5);
     auto members = relation.members;
     assert(!members.empty);
     assert(members.front.type == ElementType.way);
@@ -499,7 +501,7 @@ private string semanticFingerprint(OsmStore store) @safe
         if (first)
             out.put(",");
         first = true;
-        out.put(format("%s@%s", nodes.front.id, nodes.front.metadata.version));
+        out.put(format("%s@%s", nodes.front.id, nodes.front.metadata.versionNumber));
         nodes.popFront();
     }
 
@@ -508,7 +510,7 @@ private string semanticFingerprint(OsmStore store) @safe
     while (!ways.empty)
     {
         auto way = ways.front;
-        out.put(format("%s@%s[", way.id, way.metadata.version));
+        out.put(format("%s@%s[", way.id, way.metadata.versionNumber));
         auto refs = way.nodes;
         bool refFirst;
         while (!refs.empty)
@@ -528,7 +530,7 @@ private string semanticFingerprint(OsmStore store) @safe
     while (!relations.empty)
     {
         auto relation = relations.front;
-        out.put(format("%s@%s[", relation.id, relation.metadata.version));
+        out.put(format("%s@%s[", relation.id, relation.metadata.versionNumber));
         auto members = relation.members;
         bool memberFirst;
         while (!members.empty)
@@ -559,7 +561,7 @@ private void assertNodeVersion(
     StoreStatus status;
     StoreNodeView node;
     assert(store.node(id, node, status));
-    assert(node.metadata.version == versionNumber);
+    assert(node.metadata.versionNumber == versionNumber);
 }
 
 private ReplicationFeed makeFeed() @safe
