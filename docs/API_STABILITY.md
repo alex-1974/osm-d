@@ -110,6 +110,22 @@ values. Historical Node location remains explicitly optional so a deleted
 coordinates. Contiguous histories from version 1 are marked complete; valid
 gapped sequences are retained as partial.
 
+M19 adds the focused `import osm.replication;` development facade. It is also
+outside the frozen v0.3.x compatibility promise. The initial #150 surface
+exposes:
+
+- `ReplicationFeed`, `ReplicationState`, `ReplicationTimestamp` and
+  caller-owned `ReplicationCheckpoint`;
+- bounded `readReplicationState` parsing of the semantic state.txt subset;
+- `replicationResourcePaths` for official-style relative sequence resources;
+- explicit `classifyReplicationStep` next/replay/stale/gap semantics;
+- `applyReplicationStep` for one already-decoded `OsmChangeDocument`.
+
+The apply path stages complete per-identity version chains and previews M18
+conflicts before store mutation. It does not perform HTTP/filesystem access,
+GZIP decompression, scheduling, retry/backoff or checkpoint persistence.
+Successful apply returns the only checkpoint the caller may newly persist.
+
 ## Curated package root
 
 `import osm;` intentionally exports:

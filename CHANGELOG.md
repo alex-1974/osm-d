@@ -8,6 +8,12 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.replication` M19 state/sequence application semantics:
+  bounded state.txt parsing, official-style relative sequence paths,
+  feed/checkpoint continuity classification, version-aware replay/stale/gap
+  handling, staged multi-version osmChange application, pre-mutation M18 local
+  conflict checks, and checkpoint advancement only after successful
+  reconciliation.
 - Add focused `osm.sync` M18 synchronization semantics: typed complete/partial
   Node/Way/Relation histories with dedicated historical version values,
   preservation of deleted Nodes whose API representation omits lat/lon, direct

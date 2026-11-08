@@ -353,7 +353,17 @@ Tracked by M19: #153.
   - [x] ADR 0034 fixes the M18 handoff, staged-apply transaction boundary and
     transport/compression ownership; independent state fixtures record the
     accepted state-file subset.
-- [ ] Implement state/path handling and transactional osmChange application. #150
+- [x] Implement state/path handling and transactional osmChange application. #150
+  - [x] bounded state.txt parsing retains only sequence/timestamp semantics and
+    ignores generator-internal properties.
+  - [x] canonical nine-digit relative resource paths and explicit
+    next/replay/stale/gap/feed-mismatch classification are public through
+    `osm.replication`.
+  - [x] decoded osmChange entries are staged per identity/version before
+    mutation; replay/stale data are idempotent, gaps/payload mismatches fail,
+    and local M18 conflicts abort before the first visible store change.
+  - [x] only successful final reconciliation returns an advanced checkpoint;
+    DMD/LDC runtime and external-consumer gates qualify the surface.
 - [ ] Compose bounded ByteSource + streaming GZIP + osmChange ingestion. #151
 - [ ] Qualify continuity, replay, restart and incremental store updates. #152
 

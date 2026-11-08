@@ -170,7 +170,7 @@ spatial filtering or infer membership of an arbitrary partial extract.
 
 ### 8. One sequence is staged before store mutation
 
-#150 should implement one replication sequence as a semantic transaction:
+#150 implements one replication sequence as a semantic transaction:
 
 1. validate feed/checkpoint/sequence continuity;
 2. parse/materialize or stream-stage the complete osmChange input under bounds;
@@ -202,9 +202,16 @@ classification and reconciliation rules:
 - replication does not silently choose remote-wins.
 
 A replication sequence may therefore be semantically valid while containing
-one or more locally conflicting objects. The checkpoint may advance only when
-the chosen M19 application contract has accounted for every input object;
-#150 must make that outcome explicit rather than hiding conflicts.
+one or more locally conflicting objects. #150 chooses the conservative
+transaction boundary: every final remote state is classified against M18 before
+the first store mutation. If any identity requires resolution, the step returns
+`localConflict`, exposes the conflict reports, leaves the store unchanged and
+does not advance the checkpoint. The caller may resolve local work and replay
+the same sequence.
+
+Only a conflict-free staged batch reaches `reconcileAuthoritative`. This keeps
+checkpoint progression and the store's retained authoritative version aligned
+without introducing a second pending-remote-state database inside osm-d.
 
 ### 10. Intermediate reference incompleteness is permitted
 

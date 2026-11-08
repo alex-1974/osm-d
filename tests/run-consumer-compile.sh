@@ -127,6 +127,14 @@ for compiler in "${compilers[@]}"; do
         --force
     echo "PASS: $compiler sync consumer compile"
 
+    echo "=== REPLICATION DUB CONSUMER: $compiler ==="
+    dub build \
+        --root="$ROOT/tests/compatibility/replication-consumer" \
+        --compiler="$compiler" \
+        --build=debug \
+        --force
+    echo "PASS: $compiler replication consumer compile"
+
     echo "=== RELEASE API DUB CONSUMER: $compiler ==="
     dub build \
         --root="$ROOT/tests/compatibility/release-consumer" \

@@ -123,6 +123,15 @@ jobs:
             --build=release \
             --force
 
+      - name: Run M19 replication state and apply qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m19-replication \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
