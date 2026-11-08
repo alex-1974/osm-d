@@ -397,9 +397,9 @@ private void qualifyCreateDeleteAndReferences() @safe
     w1.id = 31;
     w1.metadata.hasVersion = true;
     w1.metadata.versionNumber = 1;
-    OwnedNodeRef ref;
-    ref.id = 30;
-    w1.nodes ~= ref;
+    OwnedNodeRef nodeRef;
+    nodeRef.id = 30;
+    w1.nodes ~= nodeRef;
 
     OwnedRelation r1;
     r1.id = 32;
@@ -518,14 +518,14 @@ private ReplicationState syntheticState(
 
 private OwnedNode node(
     long id,
-    int version,
+    int versionNumber,
     long latitude,
     string value) @safe
 {
     OwnedNode result;
     result.id = id;
     result.metadata.hasVersion = true;
-    result.metadata.versionNumber = version;
+    result.metadata.versionNumber = versionNumber;
     result.metadata.hasVisibility = true;
     result.metadata.visible = true;
     result.location = LocationView(latitude, 16_000_000_000L);
