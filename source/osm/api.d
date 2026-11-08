@@ -29,7 +29,10 @@ public import osm.io.capabilities.document :
     EditingApiCapabilitiesDocument;
 
 public import osm.history :
+    HistoricalNodeVersion,
+    HistoricalRelationVersion,
     HistoricalVisibility,
+    HistoricalWayVersion,
     HistoryCoverage,
     NodeHistory,
     RelationHistory,
