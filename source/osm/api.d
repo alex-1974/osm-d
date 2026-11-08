@@ -29,6 +29,9 @@ public import osm.io.capabilities.document :
     EditingApiCapabilitiesDocument;
 
 public import osm.model.change :
+    ChangeAction,
+    ChangeObjectState,
+    OwnedChangeEntry,
     OwnedChangeSequence,
     UploadResult,
     UploadResultEntry,
