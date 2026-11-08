@@ -145,6 +145,13 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     assert(fake.lastUrl ==
         "https://example.test/api/0.6/node/101/2");
 
+    fake.succeed(200, import("editing-api/node-version-deleted.xml"));
+    assert(client.readNodeVersion(403, 2, nodeVersion, status));
+    assert(nodeVersion.deleted);
+    assert(!nodeVersion.hasLocation);
+    OwnedNode deletedVersionNode;
+    assert(!nodeVersion.toOwned(deletedVersionNode));
+
     fake.succeed(200, import("editing-api/node-history.xml"));
     NodeHistory nodeHistory;
     assert(client.readNodeHistory(101, nodeHistory, status));
