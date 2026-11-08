@@ -345,7 +345,14 @@ how to present or resolve them. See ADR 0033 for the synchronization boundary.
 
 Tracked by M19: #153.
 
-- [ ] Define replication state, sequence, continuity and replay semantics. #149
+- [x] Define replication state, sequence, continuity and replay semantics. #149
+  - [x] sequence continuity is sequence-number based; timestamps remain
+    synchronization metadata and do not imply wall-clock arithmetic.
+  - [x] replay/stale/gap and per-object version semantics are explicit, with an
+    application-owned feed identity/checkpoint boundary.
+  - [x] ADR 0034 fixes the M18 handoff, staged-apply transaction boundary and
+    transport/compression ownership; independent state fixtures record the
+    accepted state-file subset.
 - [ ] Implement state/path handling and transactional osmChange application. #150
 - [ ] Compose bounded ByteSource + streaming GZIP + osmChange ingestion. #151
 - [ ] Qualify continuity, replay, restart and incremental store updates. #152
