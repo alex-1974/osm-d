@@ -39,7 +39,8 @@ void main()
     initial.location =
         LocationView(48_000_000_000L, 16_000_000_000L);
     initial.tags ~= tag("name", "v1");
-    assert(store.add(initial, handle, storeStatus));
+    if (!store.add(initial, handle, storeStatus))
+        throw new Exception("failed to build M19 workload baseline");
 
     ReplicationIngestOptions options;
     options.compressedBufferSize = 257;
@@ -128,25 +129,31 @@ void main()
     const logicalAfter = store.memoryUsage.totalOwnedBytes;
     const elapsedUsecs = watch.peek.total!"usecs";
 
-    assert(checkpoint.state.sequenceNumber ==
-        firstSequence + sequenceCount);
-    assert(applied == sequenceCount);
-    assert(replayed == sequenceCount);
-    assert(stale == 0);
+    if (checkpoint.state.sequenceNumber !=
+            firstSequence + sequenceCount)
+        throw new Exception("unexpected final M19 sequence");
+    if (applied != sequenceCount ||
+        replayed != sequenceCount ||
+        stale != 0)
+        throw new Exception("unexpected M19 apply/replay counters");
 
     StoreNodeView finalNode;
-    assert(store.node(1000, finalNode, storeStatus));
-    assert(finalNode.metadata.versionNumber ==
-        cast(int)sequenceCount + 1);
+    if (!store.node(1000, finalNode, storeStatus))
+        throw new Exception("final M19 node missing");
+    if (finalNode.metadata.versionNumber !=
+            cast(int)sequenceCount + 1)
+        throw new Exception("unexpected final M19 node version");
 
     const counts = store.counts;
-    assert(counts.liveNodes == 1);
-    assert(counts.liveWays == 0);
-    assert(counts.liveRelations == 0);
+    if (counts.liveNodes != 1 ||
+        counts.liveWays != 0 ||
+        counts.liveRelations != 0)
+        throw new Exception("unexpected final M19 store counts");
 
     // Replacing one identity repeatedly may grow append-only pools, but memory
     // growth is bounded by the finite workload and remains observable.
-    assert(logicalAfter < 2 * 1024 * 1024);
+    if (logicalAfter >= 2 * 1024 * 1024)
+        throw new Exception("M19 logical store growth exceeded workload bound");
 
     const seconds = cast(double)elapsedUsecs / 1_000_000.0;
     const perSecond = seconds == 0
@@ -174,7 +181,8 @@ private ubyte[] gzip(string xml) @safe
     const input = cast(const(ubyte)[]) xml;
     auto encoded = new ubyte[gzipStoredSize(input.length)];
     auto result = encodeGzipStored(input, encoded);
-    assert(result.status == DecodeStatus.done);
+    if (result.status != DecodeStatus.done)
+        throw new Exception("failed to encode M19 workload fixture");
     encoded.length = result.produced;
     return encoded;
 }
@@ -182,10 +190,11 @@ private ubyte[] gzip(string xml) @safe
 private ReplicationFeed makeFeed() @safe
 {
     ReplicationFeed feed;
-    assert(ReplicationFeed.create(
-        "m19-workload",
-        ReplicationGranularity.minute,
-        feed));
+    if (!ReplicationFeed.create(
+            "m19-workload",
+            ReplicationGranularity.minute,
+            feed))
+        throw new Exception("failed to create M19 workload feed");
     return feed;
 }
 
@@ -196,7 +205,8 @@ private ReplicationCheckpoint makeCheckpoint(
     ReplicationCheckpoint result;
     result.feed = feed;
     result.state = state;
-    assert(result.valid);
+    if (!result.valid)
+        throw new Exception("invalid M19 workload checkpoint");
     return result;
 }
 
