@@ -1,9 +1,10 @@
 /**
- * Ordered OSM element version histories.
+ * Ordered authoritative OSM element histories.
  *
- * History here means authoritative OSM server history, not editor undo/redo.
- * Each history owns independent mutable child arrays while immutable byte
- * strings may be shared with the source values.
+ * Historical versions are deliberately distinct from live OwnedNode/Way/
+ * Relation values. In particular, current OSM API history may represent a
+ * deleted Node with visible=false and without lat/lon; the history model keeps
+ * that absence explicit instead of inventing a (0,0) location.
  *
  * Authors: Alexander Bernardi
  * Date: 2026-11-08
@@ -15,11 +16,13 @@ module osm.history;
 import osm.model.owned :
     OwnedMetadata,
     OwnedNode,
+    OwnedNodeRef,
     OwnedRelation,
+    OwnedRelationMember,
+    OwnedTag,
     OwnedWay;
-import osm.view.element :
-    ElementType,
-    OsmId;
+import osm.view.element : OsmId;
+import osm.view.location : LocationView;
 
 /** Whether a history intentionally covers every version from 1 to its tail. */
 enum HistoryCoverage : ubyte
@@ -28,7 +31,7 @@ enum HistoryCoverage : ubyte
     complete,
 }
 
-/** Visibility state of one historical version. */
+/** Visibility state encoded by one historical version. */
 enum HistoricalVisibility : ubyte
 {
     unknown,
@@ -46,13 +49,13 @@ enum HistoryError : ubyte
     mixedIdentity,
     nonIncreasingVersion,
     incompleteSequence,
+    missingNodeLocation,
 }
 
 /** Diagnostic for a rejected history sequence. */
 struct HistoryStatus
 {
     HistoryError error = HistoryError.none;
-    ElementType type;
     OsmId id;
     int versionNumber;
     size_t index;
@@ -63,18 +66,207 @@ struct HistoryStatus
     }
 }
 
+/** One authoritative historical Node version. */
+struct HistoricalNodeVersion
+{
+    OsmId id;
+    OwnedMetadata metadata;
+
+    /**
+     * Historical Nodes may omit location when deleted.
+     *
+     * location is meaningful only when hasLocation is true.
+     */
+    bool hasLocation;
+    LocationView location;
+
+    /** Exact tags supplied for this historical version, if any. */
+    OwnedTag[] tags;
+
+    @property HistoricalVisibility visibility() const
+        @safe pure nothrow @nogc
+    {
+        return visibilityOf(metadata);
+    }
+
+    @property bool deleted() const @safe pure nothrow @nogc
+    {
+        return visibility == HistoricalVisibility.deleted;
+    }
+
+    /** Create a fully located historical version from an ordinary owned Node. */
+    static HistoricalNodeVersion fromOwned(
+        scope ref const OwnedNode source) @safe
+    {
+        HistoricalNodeVersion result;
+        result.id = source.id;
+        result.metadata = source.metadata;
+        result.hasLocation = true;
+        result.location = LocationView(
+            source.location.latitudeNanodegrees,
+            source.location.longitudeNanodegrees);
+        result.tags = source.tags.dup;
+        return result;
+    }
+
+    /**
+     * Convert this historical version to a live semantic Node when possible.
+     *
+     * Deleted versions and versions without a location deliberately fail.
+     */
+    bool toOwned(out OwnedNode result) const @safe
+    {
+        result = OwnedNode.init;
+        if (deleted || !hasLocation)
+            return false;
+
+        result.id = id;
+        result.metadata = metadata;
+        result.location = LocationView(
+            location.latitudeNanodegrees,
+            location.longitudeNanodegrees);
+        result.tags = tags.dup;
+        return true;
+    }
+
+    HistoricalNodeVersion deepCopy() const @safe
+    {
+        HistoricalNodeVersion result;
+        result.id = id;
+        result.metadata = metadata;
+        result.hasLocation = hasLocation;
+        if (hasLocation)
+        {
+            result.location = LocationView(
+                location.latitudeNanodegrees,
+                location.longitudeNanodegrees);
+        }
+        result.tags = tags.dup;
+        return result;
+    }
+}
+
+/** One authoritative historical Way version. */
+struct HistoricalWayVersion
+{
+    OsmId id;
+    OwnedMetadata metadata;
+    OwnedTag[] tags;
+    OwnedNodeRef[] nodes;
+
+    @property HistoricalVisibility visibility() const
+        @safe pure nothrow @nogc
+    {
+        return visibilityOf(metadata);
+    }
+
+    @property bool deleted() const @safe pure nothrow @nogc
+    {
+        return visibility == HistoricalVisibility.deleted;
+    }
+
+    static HistoricalWayVersion fromOwned(
+        scope ref const OwnedWay source) @safe
+    {
+        HistoricalWayVersion result;
+        result.id = source.id;
+        result.metadata = source.metadata;
+        result.tags = source.tags.dup;
+        result.nodes = source.nodes.dup;
+        return result;
+    }
+
+    /** Convert a non-deleted historical version to an ordinary owned Way. */
+    bool toOwned(out OwnedWay result) const @safe
+    {
+        result = OwnedWay.init;
+        if (deleted)
+            return false;
+
+        result.id = id;
+        result.metadata = metadata;
+        result.tags = tags.dup;
+        result.nodes = nodes.dup;
+        return true;
+    }
+
+    HistoricalWayVersion deepCopy() const @safe
+    {
+        HistoricalWayVersion result;
+        result.id = id;
+        result.metadata = metadata;
+        result.tags = tags.dup;
+        result.nodes = nodes.dup;
+        return result;
+    }
+}
+
+/** One authoritative historical Relation version. */
+struct HistoricalRelationVersion
+{
+    OsmId id;
+    OwnedMetadata metadata;
+    OwnedTag[] tags;
+    OwnedRelationMember[] members;
+
+    @property HistoricalVisibility visibility() const
+        @safe pure nothrow @nogc
+    {
+        return visibilityOf(metadata);
+    }
+
+    @property bool deleted() const @safe pure nothrow @nogc
+    {
+        return visibility == HistoricalVisibility.deleted;
+    }
+
+    static HistoricalRelationVersion fromOwned(
+        scope ref const OwnedRelation source) @safe
+    {
+        HistoricalRelationVersion result;
+        result.id = source.id;
+        result.metadata = source.metadata;
+        result.tags = source.tags.dup;
+        result.members = source.members.dup;
+        return result;
+    }
+
+    /**
+     * Convert a non-deleted historical version to an ordinary owned Relation.
+     */
+    bool toOwned(out OwnedRelation result) const @safe
+    {
+        result = OwnedRelation.init;
+        if (deleted)
+            return false;
+
+        result.id = id;
+        result.metadata = metadata;
+        result.tags = tags.dup;
+        result.members = members.dup;
+        return true;
+    }
+
+    HistoricalRelationVersion deepCopy() const @safe
+    {
+        HistoricalRelationVersion result;
+        result.id = id;
+        result.metadata = metadata;
+        result.tags = tags.dup;
+        result.members = members.dup;
+        return result;
+    }
+}
+
 /**
- * Owning ordered version sequence for one OSM element.
+ * Owning ordered version sequence for one OSM element identity.
  *
- * T must be OwnedNode, OwnedWay or OwnedRelation. Entries are ordered by
- * strictly increasing OSM version number. Partial histories may contain gaps;
- * complete histories must start at version 1 and be contiguous.
- *
- * The sequence is separate from OsmStore because a store represents current
- * editable state while this type represents durable historical versions.
+ * T is one Historical*Version type. Entries are ordered by strictly increasing
+ * OSM version number. Partial histories may contain gaps; complete histories
+ * must start at version 1 and be contiguous.
  */
 struct ElementHistory(T)
-if (is(T == OwnedNode) || is(T == OwnedWay) || is(T == OwnedRelation))
+if (isHistoricalVersion!T)
 {
 private:
     T[] versions_;
@@ -84,7 +276,8 @@ public:
     /**
      * Validate and own an ordered history sequence.
      *
-     * On failure result is empty and no partially validated history escapes.
+     * No sorting or repair is performed. On failure result is empty and no
+     * partially validated history escapes.
      */
     static bool create(
         scope const(T)[] versions,
@@ -94,7 +287,6 @@ public:
     {
         result = ElementHistory.init;
         status = HistoryStatus.init;
-        status.type = elementType!T;
 
         if (versions.length == 0)
         {
@@ -152,6 +344,16 @@ public:
                 return false;
             }
 
+            static if (is(T == HistoricalNodeVersion))
+            {
+                if (value.visibility != HistoricalVisibility.deleted &&
+                    !value.hasLocation)
+                {
+                    status.error = HistoryError.missingNodeLocation;
+                    return false;
+                }
+            }
+
             owned[i] = value.deepCopy();
             previous = versionNumber;
         }
@@ -159,7 +361,6 @@ public:
         result.versions_ = owned;
         result.coverage_ = coverage;
         status = HistoryStatus.init;
-        status.type = elementType!T;
         status.id = firstId;
         return true;
     }
@@ -204,12 +405,7 @@ public:
             : versions_[$ - 1].metadata.versionNumber;
     }
 
-    /**
-     * Whether at least one version number is absent between retained entries.
-     *
-     * A partial history may legitimately have gaps. A complete history never
-     * does because create rejects that representation.
-     */
+    /** Whether at least one version number is absent between retained entries. */
     @property bool hasGap() const @safe pure nothrow @nogc
     {
         if (versions_.length < 2)
@@ -221,7 +417,7 @@ public:
                 versions_[i - 1].metadata.versionNumber + 1)
                 return true;
         }
-        return false;
+        return firstVersion != 1;
     }
 
     /**
@@ -239,8 +435,8 @@ public:
     /**
      * Lookup one exact version without allocation.
      *
-     * Returns a zero- or one-element const slice. This avoids exposing a raw
-     * pointer and prevents mutation of history-owned child arrays.
+     * Returns a zero- or one-element const slice. This avoids a raw pointer and
+     * prevents mutation of history-owned child arrays.
      */
     const(T)[] findVersion(int number) const return
         @safe pure nothrow @nogc
@@ -266,28 +462,17 @@ public:
         return null;
     }
 
-    /// Visibility/deletion state encoded by one retained version's metadata.
+    /// Visibility/deletion state of one retained version.
     HistoricalVisibility visibility(int number) const
         @safe pure nothrow @nogc
     {
         const found = findVersion(number);
-        if (found.length == 0)
-            return HistoricalVisibility.unknown;
-
-        const metadata = found[0].metadata;
-        if (!metadata.hasVisibility)
-            return HistoricalVisibility.unknown;
-
-        return metadata.visible
-            ? HistoricalVisibility.visible
-            : HistoricalVisibility.deleted;
+        return found.length == 0
+            ? HistoricalVisibility.unknown
+            : found[0].visibility;
     }
 
-    /**
-     * Create an independently mutable copy of this history.
-     *
-     * Immutable byte strings remain safely shared.
-     */
+    /** Create an independently mutable copy of this history. */
     ElementHistory deepCopy() const @safe
     {
         ElementHistory result;
@@ -300,27 +485,45 @@ public:
 }
 
 /// Typed consumer aliases.
-alias NodeHistory = ElementHistory!OwnedNode;
-alias WayHistory = ElementHistory!OwnedWay;
-alias RelationHistory = ElementHistory!OwnedRelation;
+alias NodeHistory = ElementHistory!HistoricalNodeVersion;
+alias WayHistory = ElementHistory!HistoricalWayVersion;
+alias RelationHistory = ElementHistory!HistoricalRelationVersion;
 
-private enum ElementType elementType(T) =
-    is(T == OwnedNode) ? ElementType.node :
-    is(T == OwnedWay) ? ElementType.way :
-    ElementType.relation;
+private:
+
+enum bool isHistoricalVersion(T) =
+    is(T == HistoricalNodeVersion) ||
+    is(T == HistoricalWayVersion) ||
+    is(T == HistoricalRelationVersion);
+
+HistoricalVisibility visibilityOf(scope ref const OwnedMetadata metadata)
+    @safe pure nothrow @nogc
+{
+    if (!metadata.hasVisibility)
+        return HistoricalVisibility.unknown;
+    return metadata.visible
+        ? HistoricalVisibility.visible
+        : HistoricalVisibility.deleted;
+}
 
 unittest
 {
-    OwnedNode v1;
-    v1.id = 42;
-    v1.metadata.hasVersion = true;
-    v1.metadata.versionNumber = 1;
-    v1.metadata.hasVisibility = true;
-    v1.metadata.visible = true;
+    OwnedNode live;
+    live.id = 42;
+    live.metadata.hasVersion = true;
+    live.metadata.versionNumber = 1;
+    live.metadata.hasVisibility = true;
+    live.metadata.visible = true;
+    live.location = LocationView(10, 20);
 
-    auto v2 = v1.deepCopy();
+    auto v1 = HistoricalNodeVersion.fromOwned(live);
+
+    HistoricalNodeVersion v2;
+    v2.id = 42;
+    v2.metadata = live.metadata;
     v2.metadata.versionNumber = 2;
     v2.metadata.visible = false;
+    assert(!v2.hasLocation);
 
     NodeHistory history;
     HistoryStatus status;
@@ -336,15 +539,19 @@ unittest
     assert(!history.hasGap);
     assert(history.findVersion(2).length == 1);
     assert(history.visibility(2) == HistoricalVisibility.deleted);
+
+    OwnedNode impossibleLive;
+    assert(!history.findVersion(2)[0].toOwned(impossibleLive));
 }
 
 unittest
 {
-    OwnedWay v2;
-    v2.id = 7;
-    v2.metadata.hasVersion = true;
-    v2.metadata.versionNumber = 2;
+    OwnedWay owned;
+    owned.id = 7;
+    owned.metadata.hasVersion = true;
+    owned.metadata.versionNumber = 2;
 
+    auto v2 = HistoricalWayVersion.fromOwned(owned);
     auto v4 = v2.deepCopy();
     v4.metadata.versionNumber = 4;
 
