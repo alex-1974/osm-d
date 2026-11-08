@@ -102,8 +102,13 @@ conflict-resolution policy, networking or credential state. Successful clean
 refresh preserves existing live handles; authoritative deletion invalidates
 the old handle. Batch data/contract failures are preflighted before mutation.
 
-The M17 `EditingApiClient` history methods also gain typed history overloads
-that project complete /history responses into these M18 models.
+The M17 `EditingApiClient` historical reads use the M18 historical values:
+specific-version calls return `Historical*Version`, and /history calls return
+typed histories. Current-element calls continue to return live `Owned*`
+values. Historical Node location remains explicitly optional so a deleted
+`visible=false` response without lat/lon is never normalized to fake
+coordinates. Contiguous histories from version 1 are marked complete; valid
+gapped sequences are retained as partial.
 
 ## Curated package root
 
