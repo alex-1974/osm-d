@@ -44,14 +44,20 @@ private struct QualificationSummary
 int main(string[] args)
 {
     auto fixtures = decodeFixtures();
-    qualifyCompleteWorkflow(fixtures);
+
+    if (args.length == 1)
+    {
+        qualifyCompleteWorkflow(fixtures);
+        return 0;
+    }
 
     if (args.length == 2 && args[1] == "--measure")
+    {
         measureIncrementalWorkflow(fixtures);
-    else if (args.length != 1)
-        return 2;
+        return 0;
+    }
 
-    return 0;
+    return 2;
 }
 
 private FixtureSet decodeFixtures()
