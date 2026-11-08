@@ -21,6 +21,7 @@ import osm.view.location : LocationView;
     qualifyReconciliation();
     qualifyConcurrentReconciliation();
     qualifyParentIndexRefresh();
+    qualifyAuthoritativeRevival();
     qualifyTransactionalPreflight();
 }
 
@@ -525,4 +526,61 @@ private void qualifyTransactionalPreflight() @safe
     StoreWayView inserted;
     assert(store.way(82, inserted, storeStatus));
     assert(inserted.nodes.length == 1);
+}
+
+
+private void qualifyAuthoritativeRevival() @safe
+{
+    OwnedNode node;
+    node.id = 90;
+    node.metadata.hasVersion = true;
+    node.metadata.versionNumber = 1;
+    node.location = LocationView(10, 10);
+
+    auto store = new OsmStore();
+    OsmHandle originalHandle;
+    StoreStatus storeStatus;
+    assert(store.add(node, originalHandle, storeStatus));
+
+    AuthoritativeBatch deletedBatch;
+    deletedBatch.nodes ~= NodeState.absent(90, 2);
+
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(reconcileAuthoritative(
+        store,
+        deletedBatch,
+        result,
+        status));
+    assert(result.removed == 1);
+
+    StoreElementState state;
+    assert(!store.state(originalHandle, state, storeStatus));
+
+    auto revived = node.deepCopy();
+    revived.metadata.versionNumber = 3;
+    revived.location = LocationView(11, 10);
+
+    AuthoritativeBatch revivedBatch;
+    revivedBatch.nodes ~= NodeState.present(revived);
+    assert(reconcileAuthoritative(
+        store,
+        revivedBatch,
+        result,
+        status));
+    assert(result.refreshed == 1);
+    assert(result.conflicts == 0);
+
+    OsmHandle revivedHandle;
+    assert(store.find(ElementType.node, 90, revivedHandle));
+    assert(revivedHandle != originalHandle);
+
+    OwnedNode current;
+    assert(store.copyNode(revivedHandle, current, storeStatus));
+    assert(current.metadata.versionNumber == 3);
+    assert(current.location.latitudeNanodegrees == 11);
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, storeStatus));
+    assert(changes.entries.length == 0);
 }
