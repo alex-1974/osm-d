@@ -28,13 +28,10 @@ private final class ConsumerExchange : HttpExchange
     EditingApiCapabilitiesDocument capabilities;
     EditingApiPermissions permissions;
     OwnedNode node;
-    OwnedNode[] nodes;
     NodeHistory nodeHistory;
     OwnedWay way;
-    OwnedWay[] ways;
     WayHistory wayHistory;
     OwnedRelation relation;
-    OwnedRelation[] relations;
     RelationHistory relationHistory;
     OwnedDataset dataset;
     ChangesetTagRequest changesetRequest;
@@ -49,16 +46,13 @@ private final class ConsumerExchange : HttpExchange
         client.readPermissions(permissions, status);
         client.readNode(1, node, status);
         client.readNodeVersion(1, 1, node, status);
-        client.readNodeHistory(1, nodes, status);
         client.readNodeHistory(1, nodeHistory, status);
         client.readWay(1, way, status);
         client.readWayVersion(1, 1, way, status);
-        client.readWayHistory(1, ways, status);
         client.readWayHistory(1, wayHistory, status);
         client.readWayFull(1, dataset, status);
         client.readRelation(1, relation, status);
         client.readRelationVersion(1, 1, relation, status);
-        client.readRelationHistory(1, relations, status);
         client.readRelationHistory(1, relationHistory, status);
         client.readRelationFull(1, dataset, status);
         client.createChangeset(
