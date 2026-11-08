@@ -793,9 +793,18 @@ if (api.readNodeHistory(123, history, status))
 }
 ```
 
-The typed overload treats the OSM /history response as a complete authoritative
-version sequence. A duplicate, reversed or gapped response fails instead of
-being repaired.
+Historical API reads use dedicated historical values rather than pretending
+every old version is a current live object. In particular, a deleted Node may
+carry `visible=false` without `lat`/`lon`; `HistoricalNodeVersion` preserves
+that missing location explicitly and `toOwned` refuses to invent coordinates.
+
+A /history response is classified as `HistoryCoverage.complete` when versions
+are contiguous from version 1. A valid strictly increasing sequence with gaps
+is retained as `HistoryCoverage.partial`; duplicates, reversed versions or
+ambiguous identity still fail instead of being sorted or repaired. Specific
+version reads likewise return `HistoricalNodeVersion`,
+`HistoricalWayVersion` or `HistoricalRelationVersion`, while current-element
+reads continue to return ordinary live `Owned*` values.
 
 ## Authoritative refresh and conflicts
 
