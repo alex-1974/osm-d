@@ -22,7 +22,7 @@ import compression.core :
     DecodeLimits,
     DecodeStatus,
     ErrorCode,
-    Result = Result;
+    Result;
 import compression.deflate :
     InflateWorkspace;
 import compression.gzip :
@@ -36,7 +36,8 @@ import transport.source :
     ReadLimits,
     ReadResult,
     ReadValue,
-    SourceInfo;
+    SourceInfo,
+    valid;
 
 package(osm):
 
@@ -229,7 +230,8 @@ public:
                         : success(written);
 
                 case DecodeStatus.error:
-                    setCompressionFailure(step.error);
+                    if (lastStatus.ok)
+                        setCompressionFailure(step.error);
                     return mappedFailure(written);
             }
         }
@@ -262,7 +264,8 @@ public:
                 return false;
 
             case DecodeStatus.error:
-                setCompressionFailure(step.error);
+                if (lastStatus.ok)
+                    setCompressionFailure(step.error);
                 return false;
 
             case DecodeStatus.needInput:
@@ -313,7 +316,8 @@ private:
                     break;
 
                 case DecodeStatus.error:
-                    setCompressionFailure(step.error);
+                    if (lastStatus.ok)
+                        setCompressionFailure(step.error);
                     return false;
 
                 case DecodeStatus.needInput:
