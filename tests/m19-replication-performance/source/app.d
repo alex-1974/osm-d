@@ -22,7 +22,7 @@ import transport.source : MemorySource;
 enum size_t sequenceCount = 256;
 enum ulong firstSequence = 20_000;
 
-@safe void main()
+void main()
 {
     auto feed = makeFeed();
     auto checkpoint = makeCheckpoint(
