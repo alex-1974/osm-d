@@ -2,13 +2,15 @@ module app;
 
 import osm.model.change :
     ChangeAction,
-    OwnedChangeEntry;
+    OwnedChangeEntry,
+    OwnedChangeSequence;
 import osm.model.owned :
     OwnedMetadata,
     OwnedNode,
     OwnedNodeRef,
     OwnedRelation,
     OwnedRelationMember,
+    OwnedTag,
     OwnedWay,
     ownBytes;
 import osm.osmchange :
