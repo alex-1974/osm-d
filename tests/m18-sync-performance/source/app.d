@@ -89,7 +89,8 @@ private void measureRefresh() @safe
         node.location = LocationView(
             48_000_000_000L + cast(long)i,
             16_000_000_000L + cast(long)i);
-        assert(store.add(node, handle, storeStatus));
+        if (!store.add(node, handle, storeStatus))
+            throw new Exception("failed to build refresh workload");
 
         auto remote = node.deepCopy();
         remote.metadata.versionNumber = 2;
@@ -104,11 +105,12 @@ private void measureRefresh() @safe
 
     ReconcileResult result;
     ReconcileStatus status;
-    assert(reconcileAuthoritative(
-        store,
-        batch,
-        result,
-        status));
+    if (!reconcileAuthoritative(
+            store,
+            batch,
+            result,
+            status))
+        throw new Exception("authoritative refresh failed");
 
     watch.stop();
 
