@@ -76,6 +76,7 @@ private:
     ByteSource source;
     DecodeLimits limits;
     ulong maximumCompressedBytes;
+    size_t readChunkSize;
     ubyte[] inputBuffer;
     ubyte[] discardBuffer;
 
@@ -102,12 +103,19 @@ public:
         this.maximumCompressedBytes = maximumCompressedBytes;
         this.limits = limits;
 
-        const size = compressedBufferSize == 0
+        readChunkSize = compressedBufferSize == 0
             ? 64 * 1024
             : compressedBufferSize;
 
-        inputBuffer = new ubyte[size];
-        discardBuffer = new ubyte[size];
+        // decodeGzip may retain a short unread suffix when it needs the next
+        // chunk. Keep append capacity independent of the caller-selected
+        // transport chunk size so even one-byte reads remain valid.
+        const inputCapacity = readChunkSize < 64
+            ? 64
+            : readChunkSize;
+
+        inputBuffer = new ubyte[inputCapacity];
+        discardBuffer = new ubyte[64 * 1024];
         resetDecoder();
     }
 
@@ -395,6 +403,8 @@ private:
         }
 
         size_t request = inputBuffer.length - inputEnd;
+        if (request > readChunkSize)
+            request = readChunkSize;
 
         if (maximumCompressedBytes != 0)
         {
