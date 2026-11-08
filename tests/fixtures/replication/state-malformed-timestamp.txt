@@ -1,0 +1,2 @@
+sequenceNumber=123457
+timestamp=2026-11-08 15:41 local
