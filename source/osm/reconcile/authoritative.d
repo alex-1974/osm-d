@@ -681,7 +681,7 @@ void appendResult(
     ElementType type,
     OsmId id,
     ReconcileAction action,
-    scope ref const ConflictReport conflict,
+    scope ref ConflictReport conflict,
     ref ReconcileResult result) @safe
 {
     ReconcileEntry entry;
