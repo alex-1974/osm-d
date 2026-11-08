@@ -17,7 +17,11 @@ import osm.view.location : LocationView;
 {
     qualifyHistory();
     qualifyConflictClassification();
+    qualifyConflictEdges();
     qualifyReconciliation();
+    qualifyConcurrentReconciliation();
+    qualifyParentIndexRefresh();
+    qualifyTransactionalPreflight();
 }
 
 private void qualifyHistory() @safe
@@ -244,4 +248,276 @@ private void qualifyReconciliation() @safe
     assert(changes.entries.length == 1);
     assert(changes.entries[0].type == ElementType.node);
     assert(changes.entries[0].id == 10);
+}
+
+
+private void qualifyConflictEdges() @safe
+{
+    OwnedNode base;
+    base.id = 50;
+    base.metadata.hasVersion = true;
+    base.metadata.versionNumber = 4;
+    base.location = LocationView(1, 2);
+    base.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"a"));
+    base.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"b"));
+
+    auto local = base.deepCopy();
+    local.tags[1].value =
+        ownBytes(cast(const(ubyte)[])"local");
+    auto remote = base.deepCopy();
+    remote.metadata.versionNumber = 5;
+    remote.tags[1].value =
+        ownBytes(cast(const(ubyte)[])"remote");
+
+    auto report = classifyConflict(
+        NodeState.present(base),
+        NodeState.present(local),
+        NodeState.present(remote));
+    assert(report.hasConflict);
+    assert(report.hasDuplicateTagKeys);
+    assert(report.tagChanges.length == 1);
+    assert(report.tagChanges[0].duplicateKey);
+
+    // Remote deletion versus a local payload edit is an explicit conflict.
+    report = classifyConflict(
+        NodeState.present(base),
+        NodeState.present(local),
+        NodeState.absent(50, 5));
+    assert(report.hasConflict);
+
+    // Local deletion versus a newer remote payload is also a conflict.
+    report = classifyConflict(
+        NodeState.present(base),
+        NodeState.absent(50, 4),
+        NodeState.present(remote));
+    assert(report.hasConflict);
+
+    // Identical concurrent payload produces a distinct, safe classification.
+    auto sameRemote = local.deepCopy();
+    sameRemote.metadata.versionNumber = 5;
+    report = classifyConflict(
+        NodeState.present(base),
+        NodeState.present(local),
+        NodeState.present(sameRemote));
+    assert(report.disposition ==
+        ConflictDisposition.identicalConcurrent);
+    assert(report.remoteRefreshSafe);
+}
+
+private void qualifyConcurrentReconciliation() @safe
+{
+    OwnedNode base;
+    base.id = 60;
+    base.metadata.hasVersion = true;
+    base.metadata.versionNumber = 1;
+    base.location = LocationView(5, 6);
+    base.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"base"));
+
+    auto store = new OsmStore();
+    OsmHandle handle;
+    StoreStatus storeStatus;
+    assert(store.add(base, handle, storeStatus));
+
+    auto local = base.deepCopy();
+    local.tags[0].value =
+        ownBytes(cast(const(ubyte)[])"same");
+    assert(store.replace(handle, local, storeStatus));
+
+    auto remote = local.deepCopy();
+    remote.metadata.versionNumber = 2;
+
+    AuthoritativeBatch batch;
+    batch.nodes ~= NodeState.present(remote);
+
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(reconcileAuthoritative(store, batch, result, status));
+    assert(result.refreshed == 1);
+    assert(result.conflicts == 0);
+    assert(result.deferred == 0);
+
+    StoreElementState state;
+    assert(store.state(handle, state, storeStatus));
+    assert(state == StoreElementState.clean);
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, storeStatus));
+    assert(changes.entries.length == 0);
+
+    // Local delete against a changed remote object remains a local tombstone.
+    OwnedNode deleteBase;
+    deleteBase.id = 61;
+    deleteBase.metadata.hasVersion = true;
+    deleteBase.metadata.versionNumber = 3;
+    deleteBase.location = LocationView(7, 8);
+    OsmHandle deletedHandle;
+    assert(store.add(deleteBase, deletedHandle, storeStatus));
+    assert(store.remove(deletedHandle, storeStatus));
+
+    auto changedRemote = deleteBase.deepCopy();
+    changedRemote.metadata.versionNumber = 4;
+    changedRemote.location = LocationView(9, 8);
+
+    AuthoritativeBatch deleteBatch;
+    deleteBatch.nodes ~= NodeState.present(changedRemote);
+    assert(reconcileAuthoritative(
+        store,
+        deleteBatch,
+        result,
+        status));
+    assert(result.conflicts == 1);
+    assert(store.state(deletedHandle, state, storeStatus));
+    assert(state == StoreElementState.deleted);
+}
+
+private void qualifyParentIndexRefresh() @safe
+{
+    OwnedWay way20;
+    way20.id = 20;
+    way20.metadata.hasVersion = true;
+    way20.metadata.versionNumber = 1;
+
+    OwnedWay way21;
+    way21.id = 21;
+    way21.metadata.hasVersion = true;
+    way21.metadata.versionNumber = 1;
+
+    OwnedRelation relation;
+    relation.id = 70;
+    relation.metadata.hasVersion = true;
+    relation.metadata.versionNumber = 1;
+    OwnedRelationMember member;
+    member.type = ElementType.way;
+    member.id = 20;
+    member.role = ownBytes(cast(const(ubyte)[])"outer");
+    relation.members ~= member;
+
+    auto store = new OsmStore();
+    OsmHandle ignored;
+    OsmHandle relationHandle;
+    StoreStatus storeStatus;
+    assert(store.add(way20, ignored, storeStatus));
+    assert(store.add(way21, ignored, storeStatus));
+    assert(store.add(relation, relationHandle, storeStatus));
+
+    size_t oldParents;
+    auto before = store.parentRelations(ElementType.way, 20);
+    while (!before.empty)
+    {
+        ++oldParents;
+        before.popFront();
+    }
+    assert(oldParents == 1);
+
+    auto remote = relation.deepCopy();
+    remote.metadata.versionNumber = 2;
+    remote.members[0].id = 21;
+
+    AuthoritativeBatch batch;
+    batch.relations ~= RelationState.present(remote);
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(reconcileAuthoritative(store, batch, result, status));
+    assert(result.refreshed == 1);
+
+    size_t parents20;
+    auto oldRange = store.parentRelations(ElementType.way, 20);
+    while (!oldRange.empty)
+    {
+        ++parents20;
+        oldRange.popFront();
+    }
+    assert(parents20 == 0);
+
+    size_t parents21;
+    auto newRange = store.parentRelations(ElementType.way, 21);
+    while (!newRange.empty)
+    {
+        ++parents21;
+        newRange.popFront();
+    }
+    assert(parents21 == 1);
+
+    StoreElementState state;
+    assert(store.state(relationHandle, state, storeStatus));
+    assert(state == StoreElementState.clean);
+}
+
+private void qualifyTransactionalPreflight() @safe
+{
+    OwnedNode first;
+    first.id = 80;
+    first.metadata.hasVersion = true;
+    first.metadata.versionNumber = 1;
+    first.location = LocationView(1, 1);
+
+    OwnedNode second;
+    second.id = 81;
+    second.metadata.hasVersion = true;
+    second.metadata.versionNumber = 1;
+    second.location = LocationView(2, 2);
+
+    auto store = new OsmStore();
+    OsmHandle firstHandle;
+    OsmHandle secondHandle;
+    StoreStatus storeStatus;
+    assert(store.add(first, firstHandle, storeStatus));
+    assert(store.add(second, secondHandle, storeStatus));
+
+    auto firstRemote = first.deepCopy();
+    firstRemote.metadata.versionNumber = 2;
+    firstRemote.location = LocationView(10, 1);
+
+    auto invalidRemote = second.deepCopy();
+    invalidRemote.metadata.versionNumber = 2;
+    invalidRemote.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"dup"),
+        ownBytes(cast(const(ubyte)[])"a"));
+    invalidRemote.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"dup"),
+        ownBytes(cast(const(ubyte)[])"b"));
+
+    AuthoritativeBatch batch;
+    batch.nodes ~= NodeState.present(firstRemote);
+    batch.nodes ~= NodeState.present(invalidRemote);
+
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(!reconcileAuthoritative(store, batch, result, status));
+    assert(status.error == ReconcileError.storePreflight);
+
+    // The first valid plan was not applied before the later preflight failure.
+    OwnedNode current;
+    assert(store.copyNode(firstHandle, current, storeStatus));
+    assert(current.metadata.versionNumber == 1);
+    assert(current.location.latitudeNanodegrees == 1);
+
+    // A new authoritative object may be inserted into a partial local dataset
+    // even when it refers only to positive identities not currently loaded.
+    OwnedWay remoteWay;
+    remoteWay.id = 82;
+    remoteWay.metadata.hasVersion = true;
+    remoteWay.metadata.versionNumber = 1;
+    OwnedNodeRef unresolvedPositive;
+    unresolvedPositive.id = 999;
+    remoteWay.nodes ~= unresolvedPositive;
+
+    AuthoritativeBatch insertBatch;
+    insertBatch.ways ~= WayState.present(remoteWay);
+    assert(reconcileAuthoritative(
+        store,
+        insertBatch,
+        result,
+        status));
+    assert(result.inserted == 1);
+
+    StoreWayView inserted;
+    assert(store.way(82, inserted, storeStatus));
+    assert(inserted.nodes.length == 1);
 }
