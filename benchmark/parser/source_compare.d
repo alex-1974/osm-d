@@ -80,9 +80,11 @@ public:
     {
         ++readSomeCalls;
         auto result = inner.readSome(offset, destination, limits);
-        totalBytesRead += result.bytesRead;
+        totalBytesRead += result.hasValue
+            ? result.value.bytesRead
+            : result.error.bytesRead;
 
-        if (result.ok)
+        if (result.hasValue)
         {
             final switch (phase)
             {
@@ -376,12 +378,18 @@ private int runFileRangeRead(string filename, size_t passes)
         const allocatedAfter = allocatedInCurrentThread();
         const collectionsAfter = GC.profileStats().numCollections;
 
-        if (!result.ok || result.bytesRead != buffer.length)
+        if (result.hasError || result.value.bytesRead != buffer.length)
         {
+            const error = result.hasError
+                ? result.error.kind
+                : ReadError.none;
+            const bytesRead = result.hasError
+                ? result.error.bytesRead
+                : result.value.bytesRead;
             stderr.writefln(
                 "FileSource full range read failed: error=%s bytes=%s",
-                result.error,
-                result.bytesRead);
+                error,
+                bytesRead);
             return 1;
         }
 
