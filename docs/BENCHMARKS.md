@@ -3674,3 +3674,99 @@ The current architecture is **KEEP**.
 M16 therefore closes with \`osm.complete\` and \`osm.area\` as the OSM semantic
 layers and leaves generic polygon validity/containment/metrics in the geometry
 libraries.
+
+
+## M19 replication continuity and incremental synchronization qualification
+
+M19 #152 qualifies the complete compressed replication path across connected
+sequences, restart/replay cases and editable-store index maintenance.
+
+### Correctness workload
+
+The committed `tests/m19-replication-qualification` harness uses five authored,
+deterministic GZIP osmChange fixtures. Their decoded SHA-256 identities are
+recorded beside the fixtures. The chain exercises:
+
+- consecutive sequence application with an overlapping timestamp;
+- create, modify and delete for Nodes, Ways and Relations;
+- repeated versions that must be classified as exact replay rather than
+  reapplied;
+- restart after store mutation but before durable checkpoint persistence;
+- same-sequence replay after checkpoint persistence;
+- an explicit sequence gap;
+- truncated compressed input followed by a successful retry;
+- an M18 local-dirty conflict followed by revert and deterministic retry;
+- Way and Relation reference changes with reverse parent-index assertions;
+- final object versions, membership, live counts and checkpoint state.
+
+The qualification runs through the real composition:
+
+```text
+transport-d MemorySource
+  -> compression-d streaming GZIP
+  -> osmChange reader
+  -> osm.replication
+  -> OsmStore authoritative reconciliation
+```
+
+The connected correctness workload passes under DMD 2.111.0 and LDC 1.41.0.
+
+### Release-build defect exposed by the qualification
+
+The first LDC release measurement found a real correctness defect in
+`osm.reconcile.authoritative`: the three `applyPlan` overloads placed
+`OsmStore.add`, `replaceAuthoritative` and `discardAuthoritative` calls
+inside `assert(...)`.
+
+D release builds remove assertion expressions. The reconciliation result and
+replication checkpoint could therefore report successful progress while the
+authoritative Store mutation had never executed. The following sequence then
+failed with a version gap.
+
+The fix executes each Store mutation unconditionally and uses `assert` only
+to verify its result after the fully validated/preflighted operation. A focused
+audit of `osm.reconcile.authoritative`, `osm.replication` and the compact
+Store found no second production mutation hidden inside an assertion. The M19
+release workload is retained in CI as the regression gate.
+
+### Pragmatic incremental workload
+
+The LDC 1.41.0 release-mode hosted gate runs 200 independent five-sequence
+chains, for 1,000 complete compressed replication resources. It includes the
+same GZIP -> osmChange -> replication -> Store path rather than timing an
+isolated transition helper.
+
+| Metric | Result |
+| --- | ---: |
+| chains | 200 |
+| compressed sequences | 1,000 |
+| staged Store transitions | 2,400 |
+| replayed object entries | 200 |
+| elapsed | 951,282 µs |
+| throughput | 1,051.21 sequences/s |
+| D-GC allocated bytes | 131,987,200 B |
+| D-GC allocation / sequence | ~131,987 B |
+| D-GC collections | 28 |
+| peak RSS | 10,016 KiB |
+
+The figures are decision evidence from a GitHub-hosted Ubuntu 24.04 runner, not
+release SLAs. The workload intentionally includes XML parsing, owning semantic
+documents, GZIP state and Store reconciliation, so its allocation figure is not
+a codec-only hot-path number.
+
+### M19 decision
+
+The current architecture is **KEEP**.
+
+- sequence/replay/restart behavior is deterministic across a connected chain;
+- failed transport/compression/semantic steps do not advance the checkpoint;
+- reverse Way/Relation indexes remain coherent after incremental updates;
+- the M18 local-conflict boundary composes correctly with replication;
+- the full compressed path exceeds 1,000 small replication sequences/s in the
+  hosted qualification while remaining near 10 MiB peak RSS;
+- the observed allocation volume does not justify another persistent patch
+  cache, shadow graph or bespoke replication store.
+
+M19 therefore closes with the existing `OsmStore` plus explicit replication
+checkpoint semantics. Scheduling, retry policy and durable checkpoint
+persistence remain application responsibilities.
