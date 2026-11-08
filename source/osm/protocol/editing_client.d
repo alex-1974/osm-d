@@ -21,11 +21,19 @@ import osm.protocol.editing_permissions :
     EditingApiPermissionsReadStatus,
     readEditingApiPermissions;
 import osm.history :
+    HistoricalNodeVersion,
+    HistoricalRelationVersion,
+    HistoricalWayVersion,
     HistoryCoverage,
+    HistoryError,
     HistoryStatus,
     NodeHistory,
     RelationHistory,
     WayHistory;
+import osm.io.history.reader :
+    readNodeHistoryXml,
+    readRelationHistoryXml,
+    readWayHistoryXml;
 import osm.io.capabilities.document : EditingApiCapabilitiesDocument;
 import osm.io.capabilities.reader :
     ApiCapabilitiesReadStatus,
@@ -396,48 +404,13 @@ public:
     }
 
     /**
-     * Read all available versions of one Node.
+     * Read the authoritative history of one Node.
      *
      * OSM operation: GET /node/{id}/history; no authorization is required.
-     * The bounded XML response is materialized into an owning array in server
-     * order. Every returned object is checked to have the requested Node ID.
-     */
-    bool readNodeHistory(
-        OsmId id,
-        out OwnedNode[] nodes,
-        out EditingApiStatus status)
-        @safe
-    {
-        nodes = null;
-        if (!prepareReadId(id, status))
-            return false;
-
-        OsmXmlDocument document;
-        if (!readElementDocument(
-                "/node/" ~ id.to!string ~ "/history",
-                document,
-                status))
-            return false;
-
-        if (document.data.nodes.length == 0 ||
-            document.data.ways.length != 0 ||
-            document.data.relations.length != 0)
-            return decodeFailure(status);
-
-        foreach (ref const node; document.data.nodes)
-            if (node.id != id)
-                return decodeFailure(status);
-
-        nodes = document.data.nodes;
-        return true;
-    }
-
-    /**
-     * Read all Node versions directly into the authoritative history model.
-     *
-     * The OSM /history endpoint is expected to return the complete version
-     * sequence from version 1 onward. Missing/duplicate/out-of-order versions
-     * are therefore treated as a response-decoding failure.
+     * Deleted versions are represented explicitly and may omit location when
+     * the server omits lat/lon for visible=false. The returned history is
+     * complete when versions are contiguous from 1, otherwise partial (for
+     * example when inaccessible/redacted versions create a gap).
      */
     bool readNodeHistory(
         OsmId id,
@@ -446,16 +419,29 @@ public:
         @safe
     {
         history = NodeHistory.init;
-        OwnedNode[] versions;
-        if (!readNodeHistory(id, versions, status))
+        if (!prepareReadId(id, status))
             return false;
 
-        HistoryStatus historyStatus;
-        if (!NodeHistory.create(
-                versions,
-                HistoryCoverage.complete,
-                history,
-                historyStatus))
+        HttpResponse response;
+        if (!get(
+                "/node/" ~ id.to!string ~ "/history",
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
+            return false;
+
+        auto source = new ResponseBodySource(response.body);
+        HistoricalNodeVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readNodeHistoryXml(source, versions, codec))
+            return decodeFailure(status);
+
+        foreach (ref const value; versions)
+            if (value.id != id)
+                return decodeFailure(status);
+
+        if (!buildServerHistory(versions, history))
             return decodeFailure(status);
 
         return true;
@@ -536,44 +522,10 @@ public:
     }
 
     /**
-     * Read all available versions of one Way.
+     * Read the authoritative history of one Way.
      *
      * OSM operation: GET /way/{id}/history; no authorization is required.
-     * The bounded XML response is materialized into an owning array in server
-     * order and every returned Way is checked against the requested ID.
-     */
-    bool readWayHistory(
-        OsmId id,
-        out OwnedWay[] ways,
-        out EditingApiStatus status)
-        @safe
-    {
-        ways = null;
-        if (!prepareReadId(id, status))
-            return false;
-
-        OsmXmlDocument document;
-        if (!readElementDocument(
-                "/way/" ~ id.to!string ~ "/history",
-                document,
-                status))
-            return false;
-
-        if (document.data.nodes.length != 0 ||
-            document.data.ways.length == 0 ||
-            document.data.relations.length != 0)
-            return decodeFailure(status);
-
-        foreach (ref const way; document.data.ways)
-            if (way.id != id)
-                return decodeFailure(status);
-
-        ways = document.data.ways;
-        return true;
-    }
-
-    /**
-     * Read all Way versions directly into the authoritative history model.
+     * Ordering, duplicates, visibility and any version gaps are preserved.
      */
     bool readWayHistory(
         OsmId id,
@@ -582,16 +534,29 @@ public:
         @safe
     {
         history = WayHistory.init;
-        OwnedWay[] versions;
-        if (!readWayHistory(id, versions, status))
+        if (!prepareReadId(id, status))
             return false;
 
-        HistoryStatus historyStatus;
-        if (!WayHistory.create(
-                versions,
-                HistoryCoverage.complete,
-                history,
-                historyStatus))
+        HttpResponse response;
+        if (!get(
+                "/way/" ~ id.to!string ~ "/history",
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
+            return false;
+
+        auto source = new ResponseBodySource(response.body);
+        HistoricalWayVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readWayHistoryXml(source, versions, codec))
+            return decodeFailure(status);
+
+        foreach (ref const value; versions)
+            if (value.id != id)
+                return decodeFailure(status);
+
+        if (!buildServerHistory(versions, history))
             return decodeFailure(status);
 
         return true;
@@ -705,44 +670,11 @@ public:
     }
 
     /**
-     * Read all available versions of one Relation.
+     * Read the authoritative history of one Relation.
      *
      * OSM operation: GET /relation/{id}/history; no authorization is required.
-     * The bounded XML response is materialized into an owning array in server
-     * order and every returned Relation is checked against the requested ID.
-     */
-    bool readRelationHistory(
-        OsmId id,
-        out OwnedRelation[] relations,
-        out EditingApiStatus status)
-        @safe
-    {
-        relations = null;
-        if (!prepareReadId(id, status))
-            return false;
-
-        OsmXmlDocument document;
-        if (!readElementDocument(
-                "/relation/" ~ id.to!string ~ "/history",
-                document,
-                status))
-            return false;
-
-        if (document.data.nodes.length != 0 ||
-            document.data.ways.length != 0 ||
-            document.data.relations.length == 0)
-            return decodeFailure(status);
-
-        foreach (ref const relation; document.data.relations)
-            if (relation.id != id)
-                return decodeFailure(status);
-
-        relations = document.data.relations;
-        return true;
-    }
-
-    /**
-     * Read all Relation versions directly into the authoritative history model.
+     * Ordered typed members, roles, tags, visibility and version gaps are
+     * preserved in the history model.
      */
     bool readRelationHistory(
         OsmId id,
@@ -751,16 +683,29 @@ public:
         @safe
     {
         history = RelationHistory.init;
-        OwnedRelation[] versions;
-        if (!readRelationHistory(id, versions, status))
+        if (!prepareReadId(id, status))
             return false;
 
-        HistoryStatus historyStatus;
-        if (!RelationHistory.create(
-                versions,
-                HistoryCoverage.complete,
-                history,
-                historyStatus))
+        HttpResponse response;
+        if (!get(
+                "/relation/" ~ id.to!string ~ "/history",
+                null,
+                response,
+                status) ||
+            !requireOk(response, status))
+            return false;
+
+        auto source = new ResponseBodySource(response.body);
+        HistoricalRelationVersion[] versions;
+        OsmXmlReadStatus codec;
+        if (!readRelationHistoryXml(source, versions, codec))
+            return decodeFailure(status);
+
+        foreach (ref const value; versions)
+            if (value.id != id)
+                return decodeFailure(status);
+
+        if (!buildServerHistory(versions, history))
             return decodeFailure(status);
 
         return true;
@@ -1251,6 +1196,28 @@ bool matchesVersion(bool present, int actual, int expected)
     @safe pure nothrow @nogc
 {
     return present && actual == expected;
+}
+
+bool buildServerHistory(H, V)(
+    scope const(V)[] versions,
+    out H history) @safe
+{
+    HistoryStatus historyStatus;
+    if (H.create(
+            versions,
+            HistoryCoverage.complete,
+            history,
+            historyStatus))
+        return true;
+
+    if (historyStatus.error != HistoryError.incompleteSequence)
+        return false;
+
+    return H.create(
+        versions,
+        HistoryCoverage.partial,
+        history,
+        historyStatus);
 }
 
 enum size_t maximumHttpDiagnosticBytes = 4 * 1024;
