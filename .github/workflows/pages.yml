@@ -1,0 +1,135 @@
+name: API Documentation
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - ".github/workflows/pages.yml"
+      - "site/**"
+      - "source/**"
+      - "dub.sdl"
+      - "dub.selections.json"
+      - "README.md"
+      - "docs/**"
+      - "RELEASE_VERSION"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - ".github/workflows/pages.yml"
+      - "site/**"
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build stable API documentation
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out documentation infrastructure
+        uses: actions/checkout@v7
+
+      - name: Check out released library source
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: release-source
+
+      - name: Install D compiler
+        id: setup-dlang
+        continue-on-error: true
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: dmd-2.111.0
+          dub: 1.40.0
+
+      - name: Fallback to official D installer
+        if: steps.setup-dlang.outcome == 'failure'
+        shell: bash
+        run: |
+          bash tools/setup-dmd-ci.sh dmd-2.111.0 1.40.0
+
+      - name: Install DDox runtime dependency
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libevent-dev
+
+      - name: Build DDox API reference from main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # DUB's built-in DDox mode writes into docs/. Build in the disposable
+          # secondary checkout so generated HTML can never overwrite the
+          # repository's authored Markdown documentation.
+          rm -rf release-source/docs
+
+          # DUB 1.40 does not forward application arguments from dub build.
+          # Configure DDox through DUB's documented recipe extension, but only
+          # in this disposable checkout.
+          printf '\nx:ddoxFilterArgs "--unittest-examples" "--min-protection=Public"\n' >> release-source/dub.sdl
+
+          (
+            cd release-source
+            dub build --build=ddox --compiler="$DC" --force
+          )
+
+          test -f release-source/docs/index.html
+
+      - name: Assemble Pages site
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < release-source/RELEASE_VERSION)"
+          test -n "$version"
+
+          rm -rf _site
+          mkdir -p _site/api
+          cp -R site/. _site/
+          cp -R release-source/docs/. _site/api/
+
+          sed -i "s/@VERSION@/$version/g" _site/index.html
+          touch _site/.nojekyll
+
+          test -f _site/index.html
+          test -f _site/api/index.html
+          grep -Fq "osm-d $version" _site/index.html
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

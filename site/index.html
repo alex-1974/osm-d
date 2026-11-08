@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Stable API documentation for osm-d, a high-performance OpenStreetMap data library for D.">
+  <title>osm-d @VERSION@ documentation</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    body {
+      margin: 0;
+      background: Canvas;
+      color: CanvasText;
+    }
+    main {
+      max-width: 62rem;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 5rem;
+    }
+    h1 {
+      font-size: clamp(2.5rem, 8vw, 5rem);
+      line-height: 1;
+      margin: 0 0 1rem;
+      letter-spacing: -0.04em;
+    }
+    .lede {
+      max-width: 48rem;
+      font-size: 1.2rem;
+      margin-bottom: 2rem;
+    }
+    .version {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.95rem;
+      opacity: 0.72;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 2rem 0 3rem;
+    }
+    a.button {
+      display: inline-block;
+      padding: 0.7rem 1rem;
+      border: 1px solid currentColor;
+      border-radius: 0.45rem;
+      text-decoration: none;
+      font-weight: 650;
+    }
+    section {
+      margin-top: 2.5rem;
+    }
+    ul {
+      padding-left: 1.2rem;
+    }
+    li {
+      margin: 0.55rem 0;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    footer {
+      margin-top: 4rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+      font-size: 0.9rem;
+      opacity: 0.72;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="version">Stable release · osm-d @VERSION@</p>
+    <h1>osm-d</h1>
+    <p class="lede">
+      Safe, loss-aware and high-performance OpenStreetMap data handling for D.
+      This site documents the public API of the current released <code>main</code>
+      branch, not the in-progress development surface.
+    </p>
+
+    <div class="actions">
+      <a class="button" href="api/">API reference</a>
+      <a class="button" href="https://github.com/alex-1974/osm-d/blob/main/docs/GETTING_STARTED.md">Getting started</a>
+      <a class="button" href="https://github.com/alex-1974/osm-d">GitHub repository</a>
+    </div>
+
+    <section>
+      <h2>Consumer documentation</h2>
+      <ul>
+        <li><a href="https://github.com/alex-1974/osm-d/blob/main/docs/API_STABILITY.md">API stability and compatibility contract</a></li>
+        <li><a href="https://github.com/alex-1974/osm-d/blob/main/docs/API_V0_4.md">v0.3 → v0.4 migration guide</a></li>
+        <li><a href="https://github.com/alex-1974/osm-d/blob/main/docs/releases/v0.4.0.md">v0.4.0 release notes</a></li>
+        <li><a href="https://code.dlang.org/packages/osm-d">DUB package registry</a></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Scope</h2>
+      <p>
+        osm-d covers OSM semantic data, PBF/XML/osmChange codecs, editable
+        stores, topology and complete-object resolution, area assembly,
+        Editing API protocol semantics, authoritative synchronization and
+        replication. Generic transport, credentials, geometry, spatial
+        indexing, rendering and application workflow remain separate concerns.
+      </p>
+    </section>
+
+    <footer>
+      Generated API reference: DDox · source: released <code>main</code> branch.
+    </footer>
+  </main>
+</body>
+</html>
