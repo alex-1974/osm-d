@@ -1197,12 +1197,6 @@ bool decodeFailure(ref EditingApiStatus status)
     return false;
 }
 
-bool matchesVersion(bool present, int actual, int expected)
-    @safe pure nothrow @nogc
-{
-    return present && actual == expected;
-}
-
 bool buildServerHistory(H, V)(
     scope const(V)[] versions,
     out H history) @safe
