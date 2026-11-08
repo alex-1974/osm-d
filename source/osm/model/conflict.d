@@ -65,7 +65,11 @@ if (is(T == OwnedNode) || is(T == OwnedWay) || is(T == OwnedRelation))
     /// Independently mutable copy.
     ElementState deepCopy() const @safe
     {
-        ElementState result = this;
+        ElementState result;
+        result.exists = exists;
+        result.id = id;
+        result.hasVersion = hasVersion;
+        result.versionNumber = versionNumber;
         if (exists)
             result.value = value.deepCopy();
         return result;
@@ -225,9 +229,9 @@ struct ConflictReport
 
 /** Classify a Node base/local/remote triple. */
 ConflictReport classifyConflict(
-    scope ref const NodeState base,
-    scope ref const NodeState local,
-    scope ref const NodeState remote) @safe
+    NodeState base,
+    NodeState local,
+    NodeState remote) @safe
 {
     auto result = initializeReport!OwnedNode(base, local, remote);
 
@@ -271,9 +275,9 @@ ConflictReport classifyConflict(
 
 /** Classify a Way base/local/remote triple. */
 ConflictReport classifyConflict(
-    scope ref const WayState base,
-    scope ref const WayState local,
-    scope ref const WayState remote) @safe
+    WayState base,
+    WayState local,
+    WayState remote) @safe
 {
     auto result = initializeReport!OwnedWay(base, local, remote);
 
@@ -313,9 +317,9 @@ ConflictReport classifyConflict(
 
 /** Classify a Relation base/local/remote triple. */
 ConflictReport classifyConflict(
-    scope ref const RelationState base,
-    scope ref const RelationState local,
-    scope ref const RelationState remote) @safe
+    RelationState base,
+    RelationState local,
+    RelationState remote) @safe
 {
     auto result = initializeReport!OwnedRelation(base, local, remote);
 
