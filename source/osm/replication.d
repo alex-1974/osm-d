@@ -326,7 +326,7 @@ bool readReplicationState(
         while (lineEnd < text.length && text[lineEnd] != '\n')
             ++lineEnd;
 
-        auto line = text[lineStart .. lineEnd];
+        const(char)[] line = text[lineStart .. lineEnd];
         if (line.length != 0 && line[$ - 1] == '\r')
             line = line[0 .. $ - 1];
 
