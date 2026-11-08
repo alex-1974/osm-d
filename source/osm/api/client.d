@@ -1062,7 +1062,7 @@ EditingApiServerError classifyServerError(ushort code)
 bool parseChangesetId(
     SegmentedByteBuffer body,
     out ChangesetId id)
-    @safe pure nothrow @nogc
+    @safe
 {
     id = ChangesetId.init;
     if (body is null)
