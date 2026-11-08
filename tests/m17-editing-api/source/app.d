@@ -150,6 +150,23 @@ private void qualifyElementReads(EditingApiClient client, FakeExchange fake) @sa
     assert(nodeHistory.length == 3);
     assert(nodeHistory.findVersion(2).length == 1);
 
+    fake.succeed(200, import("editing-api/node-history-deleted.xml"));
+    assert(client.readNodeHistory(401, nodeHistory, status));
+    assert(nodeHistory.coverage == HistoryCoverage.complete);
+    assert(nodeHistory.visibility(2) == HistoricalVisibility.deleted);
+    auto deleted = nodeHistory.findVersion(2);
+    assert(deleted.length == 1);
+    assert(!deleted[0].hasLocation);
+    OwnedNode cannotMaterialize;
+    assert(!deleted[0].toOwned(cannotMaterialize));
+
+    fake.succeed(200, import("editing-api/node-history-gap.xml"));
+    assert(client.readNodeHistory(402, nodeHistory, status));
+    assert(nodeHistory.coverage == HistoryCoverage.partial);
+    assert(nodeHistory.hasGap);
+    assert(nodeHistory.findVersion(2).length == 0);
+    assert(nodeHistory.findVersion(3).length == 1);
+
     fake.succeed(200, import("editing-api/way-current.xml"));
     OwnedWay way;
     assert(client.readWay(201, way, status));
