@@ -132,6 +132,30 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M19 multi-sequence replication qualification
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m19-replication-qualification \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Measure M19 incremental replication workload
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          dub build \
+            --root=tests/m19-replication-qualification \
+            --compiler="$DC" \
+            --build=release \
+            --force
+          /usr/bin/time -v \
+            tests/m19-replication-qualification/osm-d-m19-replication-qualification \
+            --measure \
+            2> /tmp/m19-replication-time.txt
+          cat /tmp/m19-replication-time.txt
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
