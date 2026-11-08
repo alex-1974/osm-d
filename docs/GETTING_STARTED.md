@@ -1,14 +1,14 @@
 # Getting started with osm-d
 
-This guide targets the v0.3.x consumer API. The v0.1 -> v0.2 and
-v0.2 -> v0.3 migrations are summarized in `API_V0_2.md` and
-`API_V0_3.md`; the supported v0.3.x compatibility contract is
+This guide targets the v0.4.x consumer API. Earlier migrations are summarized
+in `API_V0_2.md` and `API_V0_3.md`; the v0.3 -> v0.4 additions are in
+`API_V0_4.md`. The supported v0.4.x compatibility contract is
 `API_STABILITY.md`.
 
 ## Add the dependency
 
 ```sdl
-dependency "osm-d" version="~>0.3.0"
+dependency "osm-d" version="~>0.4.0"
 ```
 
 The current release floor is D frontend 2.111 and DUB 1.40.0.
@@ -276,9 +276,10 @@ wanted.
 A Way contains Node references. v0.2 introduced `NodeRefView` and
 `OwnedNodeRef` rather than the v0.1 `WayNodeView`/`OwnedWayNode` names.
 
-v0.3 adds `osm.upload` and `osm.capabilities` and removes the ambiguous
-v0.2-only `UploadResultEntry.action` compatibility property. Use
-`effectFor` with the matching uploaded request entry.
+v0.4 keeps the v0.3 upload/capability contracts and adds focused
+`osm.changeset`, `osm.api`, `osm.history`, `osm.sync` and
+`osm.replication` surfaces together with the topology/complete-object/area
+facades.
 
-See `API_V0_2.md` and `API_V0_3.md` for migration guidance.
-`API_STABILITY.md` defines the supported v0.3.x patch-line contract.
+See `API_V0_2.md`, `API_V0_3.md` and `API_V0_4.md` for migration
+guidance. `API_STABILITY.md` defines the supported v0.4.x patch-line contract.
