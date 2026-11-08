@@ -108,8 +108,11 @@ private void qualifyContinuity() @safe
         ReplicationStepRelation.stale);
 
     auto mismatchedSame = current;
-    mismatchedSame.timestamp.isoUtc = "2026-11-08T15:40:01Z";
-    ++mismatchedSame.timestamp.unixSeconds;
+    mismatchedSame.timestamp =
+        ReplicationTimestamp.fromUnixSeconds(
+            current.timestamp.unixSeconds + 1);
+    mismatchedSame.timestamp.isoUtc =
+        "2026-11-08T15:40:01Z";
     assert(classifyReplicationStep(checkpoint, feed, mismatchedSame) ==
         ReplicationStepRelation.stateMismatch);
 }
@@ -145,7 +148,7 @@ private void qualifyApplyAndRestartReplay() @safe
     assert(result.checkpointAdvanced);
     assert(result.checkpoint.state.sequenceNumber ==
         nextState.sequenceNumber);
-    assert(result.appliedTransitions == 1);
+    assert(result.stagedTransitions == 1);
     assert(result.replayedEntries == 0);
 
     OwnedNode current;
@@ -167,7 +170,7 @@ private void qualifyApplyAndRestartReplay() @safe
         status));
     assert(replay.checkpointAdvanced);
     assert(replay.replayedEntries == 1);
-    assert(replay.appliedTransitions == 0);
+    assert(replay.stagedTransitions == 0);
 
     assert(store.copyNode(handle, current, storeStatus));
     assert(current.metadata.versionNumber == 2);
@@ -221,7 +224,7 @@ private void qualifyMultipleVersionsAndStaleInput() @safe
         document,
         result,
         status));
-    assert(result.appliedTransitions == 2);
+    assert(result.stagedTransitions == 2);
 
     OwnedNode current;
     assert(store.copyNode(handle, current, storeStatus));
@@ -510,8 +513,8 @@ private ReplicationState syntheticState(
 {
     ReplicationState result;
     result.sequenceNumber = sequence;
+    result.timestamp = ReplicationTimestamp.fromUnixSeconds(unixSeconds);
     result.timestamp.isoUtc = isoUtc;
-    result.timestamp.unixSeconds = unixSeconds;
     assert(result.valid);
     return result;
 }
