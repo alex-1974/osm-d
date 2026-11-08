@@ -1,0 +1,9 @@
+name "osm-d-m17-editing-api"
+description "Deterministic OSM Editing API protocol and status qualification"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+stringImportPaths "../fixtures"
+
+dependency "osm-d" path="../.."
