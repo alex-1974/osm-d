@@ -17,7 +17,8 @@ import compression.core :
     DecodeLimits;
 import osm.io.gzip_source :
     GzipDecodedSource,
-    GzipSourceFailure;
+    GzipSourceFailure,
+    GzipSourceStatus;
 import osm.io.osmchange.document :
     OsmChangeDocument;
 import osm.io.osmchange.reader :
