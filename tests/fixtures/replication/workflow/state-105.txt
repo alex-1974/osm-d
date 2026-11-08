@@ -1,0 +1,2 @@
+sequenceNumber=105
+timestamp=2026-11-08T18\:05\:00Z
