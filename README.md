@@ -68,9 +68,11 @@ loops. See `ARCHITECTURE.md` and `docs/adr/0004-streaming-api.md`.
 - `docs/DATA_INTEGRITY.md` — integrity contract
 - `docs/PERFORMANCE.md` — performance contract and hot-path rules
 - `docs/RELEASE_BASELINE.md` — release qualification baseline/evidence
-- `docs/API_STABILITY.md` — supported v0.3.x API and compatibility policy
+- `docs/API_STABILITY.md` — supported v0.4.x API and compatibility policy
 - `docs/API_V0_2.md` — v0.1 → v0.2 API migration guide
 - `docs/API_V0_3.md` — v0.2 → v0.3 API migration guide
+- `docs/API_V0_4.md` — v0.3 → v0.4 API migration guide
+- `docs/RELEASE_PROCESS.md` — freeze, release-gate and tag-signing workflow
 - `docs/GETTING_STARTED.md` — consumer-oriented examples
 - `docs/BENCHMARKS.md` — benchmark methodology
 - `docs/SPEC_MATRIX.md` — specifications, real-world behavior and reference implementations
@@ -89,7 +91,7 @@ only `.workspace/`.
 Add the current standalone release line to a DUB package:
 
 ```sdl
-dependency "osm-d" version="~>0.3.0"
+dependency "osm-d" version="~>0.4.0"
 ```
 
 Then build normally:
@@ -114,15 +116,15 @@ LDC 1.41.0; release qualification spans DMD 2.111.0–2.113.0 and
 LDC 1.41.0–1.43.0. See `docs/DEVELOPMENT.md` for the compiler-support policy
 and canonical checks.
 
-The package remains pre-1.0. v0.3.x preserves the supported high-level
-consumer surface for the v0.3 patch line: `import osm;` stays focused on
+The package remains pre-1.0. v0.4.x preserves the supported high-level
+consumer surface for the v0.4 patch line: `import osm;` stays focused on
 common semantic/PBF-traversal/store workflows, while specialized format and
 Editing API families use focused facades.
 
 v0.3 adds `osm.upload` for successful diff-upload responses and
 `osm.capabilities` for dynamic target-server upload limits. The released
 v0.3.x line deliberately does not add HTTP/OAuth or changeset lifecycle.
-Post-v0.3 M17 implements that OSM protocol boundary through `osm.api` over
+v0.4 implements that OSM protocol boundary through `osm.api` over
 transport-d 0.2.x `HttpExchange`. M18 adds the transport-independent
 `osm.sync` history/refresh/conflict foundation. M19 adds the focused
 `osm.replication` state/sequence/replay and decoded-osmChange apply layer.
@@ -704,7 +706,7 @@ geometry/geodesy operations.
 
 ## Changesets
 
-Post-v0.3 M17 provides a focused Changeset semantic/XML facade:
+v0.4 provides a focused Changeset semantic/XML facade:
 
 ```d
 import osm.changeset;
@@ -749,7 +751,7 @@ policy decision about when an editor opens, reuses or closes a Changeset.
 
 ## Editing API protocol client
 
-Post-v0.3 M17 adds the focused `osm.api` facade for consumers that want OSM
+v0.4 adds the focused `osm.api` facade for consumers that want OSM
 operations rather than raw endpoint construction:
 
 ```d
@@ -866,7 +868,7 @@ out-of-memory condition. See
 
 ## Replication state and incremental apply
 
-Post-v0.3 M19 provides `osm.replication` for consumers that maintain their own
+v0.4 provides `osm.replication` for consumers that maintain their own
 replication checkpoint and retrieval policy:
 
 ```d
