@@ -14,7 +14,10 @@ module osm.sync;
 
 public import osm.history :
     ElementHistory,
+    HistoricalNodeVersion,
+    HistoricalRelationVersion,
     HistoricalVisibility,
+    HistoricalWayVersion,
     HistoryCoverage,
     HistoryError,
     HistoryStatus,
