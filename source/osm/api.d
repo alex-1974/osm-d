@@ -28,6 +28,11 @@ public import osm.io.capabilities.document :
     EditingApiCapabilities,
     EditingApiCapabilitiesDocument;
 
+public import osm.history :
+    NodeHistory,
+    RelationHistory,
+    WayHistory;
+
 public import osm.model.change :
     ChangeAction,
     ChangeObjectState,
