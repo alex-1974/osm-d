@@ -42,7 +42,7 @@ private void qualifyHistory() @safe
         history,
         status));
     assert(history.length == 2);
-    assert(history.version(2).length == 1);
+    assert(history.findVersion(2).length == 1);
     assert(history.visibility(2) == HistoricalVisibility.deleted);
 
     OwnedWay w2;
