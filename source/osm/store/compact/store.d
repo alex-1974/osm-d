@@ -2359,6 +2359,10 @@ public:
         final switch (handle.type)
         {
             case ElementType.node:
+                markAuthoritativeAbsent(
+                    _nodes,
+                    handle._slot,
+                    authoritativeVersion);
                 captureNodeBaseline(handle._slot);
                 _nodes.deletedFrom[handle._slot] = _nodes.states[handle._slot];
                 _nodes.states[handle._slot] = StoreElementState.deleted;
@@ -3404,6 +3408,10 @@ public:
 
         if (auto saved = slot in _nodeBaselines)
             base = NodeState.present(*saved);
+        else if (state == StoreElementState.deleted)
+            base = NodeState.absent(
+                id,
+                metadataVersion(_nodes, slot));
 
         if (state == StoreElementState.modified)
             local = NodeState.present(copyNodeAt(slot));
@@ -3464,6 +3472,10 @@ public:
 
         if (auto saved = slot in _wayBaselines)
             base = WayState.present(*saved);
+        else if (state == StoreElementState.deleted)
+            base = WayState.absent(
+                id,
+                metadataVersion(_ways, slot));
 
         if (state == StoreElementState.modified)
             local = WayState.present(copyWayAt(slot));
@@ -3525,6 +3537,10 @@ public:
 
         if (auto saved = slot in _relationBaselines)
             base = RelationState.present(*saved);
+        else if (state == StoreElementState.deleted)
+            base = RelationState.absent(
+                id,
+                metadataVersion(_relations, slot));
 
         if (state == StoreElementState.modified)
             local = RelationState.present(copyRelationAt(slot));
@@ -3790,6 +3806,7 @@ public:
      */
     package(osm) bool discardAuthoritative(
         OsmHandle handle,
+        int authoritativeVersion,
         out StoreStatus status) @safe
     {
         status = StoreStatus.init;
@@ -3822,6 +3839,10 @@ public:
                 break;
 
             case ElementType.way:
+                markAuthoritativeAbsent(
+                    _ways,
+                    handle._slot,
+                    authoritativeVersion);
                 if (currentState != StoreElementState.deleted)
                 {
                     deactivateWayParents(
@@ -3837,6 +3858,10 @@ public:
                 break;
 
             case ElementType.relation:
+                markAuthoritativeAbsent(
+                    _relations,
+                    handle._slot,
+                    authoritativeVersion);
                 if (currentState != StoreElementState.deleted)
                 {
                     deactivateRelationParents(
@@ -3858,6 +3883,30 @@ public:
     }
 
 private:
+    static int metadataVersion(
+        ref CommonColumns columns,
+        uint slot) @safe nothrow @nogc
+    {
+        return (columns.metadata.flags[slot] & (1 << 0)) != 0
+            ? columns.metadata.versions[slot]
+            : 0;
+    }
+
+    static void markAuthoritativeAbsent(
+        ref CommonColumns columns,
+        uint slot,
+        int authoritativeVersion) @safe nothrow @nogc
+    {
+        if (authoritativeVersion > 0)
+        {
+            columns.metadata.flags[slot] |= 1 << 0;
+            columns.metadata.versions[slot] = authoritativeVersion;
+        }
+
+        columns.metadata.flags[slot] |= 1 << 5;
+        columns.metadata.visible[slot] = 0;
+    }
+
     uint[] sortedNodeBaselineSlots() @safe
     {
         uint[] result;
