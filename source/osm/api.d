@@ -12,7 +12,7 @@
  */
 module osm.api;
 
-public import osm.api.client :
+public import osm.protocol.editing_client :
     EditingApiClient,
     EditingApiFailure,
     EditingApiResponseKind,
@@ -20,7 +20,7 @@ public import osm.api.client :
     EditingApiServerError,
     EditingApiStatus;
 
-public import osm.api.permissions :
+public import osm.protocol.editing_permissions :
     EditingApiPermissions;
 
 public import osm.io.capabilities.document :
