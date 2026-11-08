@@ -8,6 +8,11 @@ supported source-compatibility contract is defined in `docs/API_STABILITY.md`.
 ## Unreleased
 
 ### Added
+- Add focused `osm.sync` M18 synchronization semantics: typed complete/partial
+  Node/Way/Relation histories, direct M17 /history projections, explicit
+  base/local/remote conflict classification, conservative ordered Way/Relation
+  edit-span detection, and preflighted authoritative `OsmStore` reconciliation
+  that preserves local edits and existing index/handle contracts.
 - Add focused `osm.api` OSM Editing API 0.6 protocol client over the generic
   `transport-d 0.2.x` `HttpExchange`: explicit server selection,
   capabilities/permissions, Node/Way/Relation current/version/history/full,
