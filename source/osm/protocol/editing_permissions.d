@@ -416,7 +416,7 @@ void mapXmlFailure(
     status.line = xml.line;
     status.column = xml.column;
 
-    final switch (xml.error)
+    switch (xml.error)
     {
         case OsmXmlReadError.none:
             status.error = EditingApiPermissionsReadError.none;
