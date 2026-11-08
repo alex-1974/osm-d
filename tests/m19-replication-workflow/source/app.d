@@ -34,6 +34,7 @@ private void qualifyMultiSequenceWorkflow() @safe
     auto state102 = readState(import("replication/workflow/state-102.txt"));
     auto state103 = readState(import("replication/workflow/state-103.txt"));
     auto state104 = readState(import("replication/workflow/state-104.txt"));
+    auto state105 = readState(import("replication/workflow/state-105.txt"));
 
     // Sequence continuity is authoritative even when adjacent state timestamps
     // overlap exactly.
@@ -198,6 +199,39 @@ private void qualifyMultiSequenceWorkflow() @safe
     assert(checkpoint.state.sequenceNumber == 104);
     assert(result.replayedEntries == 1);
     assert(result.stagedTransitions == 2);
+
+    // A syntactically invalid osmChange inside a valid GZIP resource is an
+    // XML/osmChange failure and cannot advance sequence 104.
+    const before105Failure = semanticFingerprint(store);
+    assert(!applyFixture(
+        store,
+        checkpoint,
+        feed,
+        state105,
+        import("replication/workflow/105-malformed.osc"),
+        options,
+        result,
+        status));
+    assert(status.error == ReplicationIngestError.osmChangeFailure);
+    assert(!status.osmChangeStatus.ok);
+    assert(result.checkpoint.state.sequenceNumber == 104);
+    assert(semanticFingerprint(store) == before105Failure);
+
+    // A semantically valid next sequence with Node 1 jumping from v5 to v7
+    // proves the object-version gap path through the complete GZIP pipeline.
+    assert(!applyFixture(
+        store,
+        checkpoint,
+        feed,
+        state105,
+        import("replication/workflow/105-object-gap.osc"),
+        options,
+        result,
+        status));
+    assert(status.error == ReplicationIngestError.applyFailure);
+    assert(status.applyStatus.error == ReplicationApplyError.versionGap);
+    assert(result.checkpoint.state.sequenceNumber == 104);
+    assert(semanticFingerprint(store) == before105Failure);
 
     verifyExpectedFinalSnapshot(store);
 }
