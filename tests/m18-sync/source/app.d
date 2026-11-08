@@ -1,0 +1,247 @@
+module app;
+
+import osm.store;
+import osm.sync;
+import osm.model.owned :
+    OwnedNode,
+    OwnedNodeRef,
+    OwnedRelation,
+    OwnedRelationMember,
+    OwnedTag,
+    OwnedWay,
+    ownBytes;
+import osm.view.element : ElementType;
+import osm.view.location : LocationView;
+
+@safe void main()
+{
+    qualifyHistory();
+    qualifyConflictClassification();
+    qualifyReconciliation();
+}
+
+private void qualifyHistory() @safe
+{
+    OwnedNode v1;
+    v1.id = 100;
+    v1.metadata.hasVersion = true;
+    v1.metadata.versionNumber = 1;
+    v1.metadata.hasVisibility = true;
+    v1.metadata.visible = true;
+    v1.location = LocationView(48_200_000_000L, 16_300_000_000L);
+
+    auto v2 = v1.deepCopy();
+    v2.metadata.versionNumber = 2;
+    v2.metadata.visible = false;
+
+    NodeHistory history;
+    HistoryStatus status;
+    assert(NodeHistory.create(
+        [v1, v2],
+        HistoryCoverage.complete,
+        history,
+        status));
+    assert(history.length == 2);
+    assert(history.version(2).length == 1);
+    assert(history.visibility(2) == HistoricalVisibility.deleted);
+
+    OwnedWay w2;
+    w2.id = 200;
+    w2.metadata.hasVersion = true;
+    w2.metadata.versionNumber = 2;
+    auto w4 = w2.deepCopy();
+    w4.metadata.versionNumber = 4;
+
+    WayHistory partial;
+    assert(WayHistory.create(
+        [w2, w4],
+        HistoryCoverage.partial,
+        partial,
+        status));
+    assert(partial.hasGap);
+}
+
+private void qualifyConflictClassification() @safe
+{
+    OwnedNode base;
+    base.id = 1;
+    base.metadata.hasVersion = true;
+    base.metadata.versionNumber = 7;
+    base.location = LocationView(10, 20);
+    base.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"base"));
+
+    auto local = base.deepCopy();
+    local.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"surface"),
+        ownBytes(cast(const(ubyte)[])"paved"));
+
+    auto remote = base.deepCopy();
+    remote.metadata.versionNumber = 8;
+    remote.location = LocationView(11, 20);
+
+    auto report = classifyConflict(
+        NodeState.present(base),
+        NodeState.present(local),
+        NodeState.present(remote));
+    assert(report.disposition ==
+        ConflictDisposition.concurrentIndependent);
+    assert(report.tags == FieldChange.localOnly);
+    assert(report.location == FieldChange.remoteOnly);
+
+    OwnedWay baseWay;
+    baseWay.id = 2;
+    baseWay.metadata.hasVersion = true;
+    baseWay.metadata.versionNumber = 3;
+    OwnedNodeRef a;
+    a.id = 10;
+    OwnedNodeRef b;
+    b.id = 20;
+    OwnedNodeRef c;
+    c.id = 30;
+    baseWay.nodes = [a, b, c];
+
+    auto localWay = baseWay.deepCopy();
+    OwnedNodeRef x;
+    x.id = 15;
+    localWay.nodes = [a, x, b, c];
+
+    auto remoteWay = baseWay.deepCopy();
+    remoteWay.metadata.versionNumber = 4;
+    OwnedNodeRef y;
+    y.id = 40;
+    remoteWay.nodes = [a, b, c, y];
+
+    report = classifyConflict(
+        WayState.present(baseWay),
+        WayState.present(localWay),
+        WayState.present(remoteWay));
+    assert(report.sequence ==
+        SequenceChange.independentConcurrent);
+
+    OwnedRelation baseRelation;
+    baseRelation.id = 3;
+    baseRelation.metadata.hasVersion = true;
+    baseRelation.metadata.versionNumber = 1;
+    OwnedRelationMember member;
+    member.type = ElementType.way;
+    member.id = 2;
+    member.role = ownBytes(cast(const(ubyte)[])"outer");
+    baseRelation.members ~= member;
+
+    auto localRelation = baseRelation.deepCopy();
+    localRelation.members[0].role =
+        ownBytes(cast(const(ubyte)[])"inner");
+
+    auto remoteRelation = baseRelation.deepCopy();
+    remoteRelation.metadata.versionNumber = 2;
+    remoteRelation.members[0].role =
+        ownBytes(cast(const(ubyte)[])"platform");
+
+    report = classifyConflict(
+        RelationState.present(baseRelation),
+        RelationState.present(localRelation),
+        RelationState.present(remoteRelation));
+    assert(report.hasConflict);
+}
+
+private void qualifyReconciliation() @safe
+{
+    OwnedNode node;
+    node.id = 10;
+    node.metadata.hasVersion = true;
+    node.metadata.versionNumber = 1;
+    node.location = LocationView(100, 200);
+    node.tags ~= OwnedTag(
+        ownBytes(cast(const(ubyte)[])"name"),
+        ownBytes(cast(const(ubyte)[])"old"));
+
+    OwnedWay way;
+    way.id = 20;
+    way.metadata.hasVersion = true;
+    way.metadata.versionNumber = 1;
+    OwnedNodeRef nodeRef;
+    nodeRef.id = 10;
+    way.nodes ~= nodeRef;
+
+    OwnedRelation relation;
+    relation.id = 30;
+    relation.metadata.hasVersion = true;
+    relation.metadata.versionNumber = 1;
+    OwnedRelationMember member;
+    member.type = ElementType.way;
+    member.id = 20;
+    member.role = ownBytes(cast(const(ubyte)[])"outer");
+    relation.members ~= member;
+
+    auto store = new OsmStore();
+    OsmHandle nodeHandle;
+    OsmHandle wayHandle;
+    OsmHandle relationHandle;
+    StoreStatus storeStatus;
+    assert(store.add(node, nodeHandle, storeStatus));
+    assert(store.add(way, wayHandle, storeStatus));
+    assert(store.add(relation, relationHandle, storeStatus));
+
+    auto localNode = node.deepCopy();
+    localNode.tags[0].value =
+        ownBytes(cast(const(ubyte)[])"local");
+    assert(store.replace(nodeHandle, localNode, storeStatus));
+
+    auto remoteNode = node.deepCopy();
+    remoteNode.metadata.versionNumber = 2;
+    remoteNode.tags[0].value =
+        ownBytes(cast(const(ubyte)[])"remote");
+
+    auto remoteWay = way.deepCopy();
+    remoteWay.metadata.versionNumber = 2;
+    OwnedNodeRef secondRef;
+    secondRef.id = 11;
+    remoteWay.nodes ~= secondRef;
+
+    AuthoritativeBatch batch;
+    batch.nodes ~= NodeState.present(remoteNode);
+    batch.ways ~= WayState.present(remoteWay);
+    batch.relations ~= RelationState.absent(30, 2);
+
+    ReconcileResult result;
+    ReconcileStatus status;
+    assert(reconcileAuthoritative(store, batch, result, status));
+    assert(status.ok);
+    assert(result.conflicts == 1);
+    assert(result.refreshed == 1);
+    assert(result.removed == 1);
+
+    // Local conflict remains untouched.
+    OwnedNode currentNode;
+    assert(store.copyNode(nodeHandle, currentNode, storeStatus));
+    assert(currentNode.tags[0].value ==
+        cast(const(ubyte)[])"local");
+
+    // Clean Way was refreshed in place, including reverse-index contributions.
+    OwnedWay currentWay;
+    assert(store.copyWay(wayHandle, currentWay, storeStatus));
+    assert(currentWay.metadata.versionNumber == 2);
+    assert(currentWay.nodes.length == 2);
+
+    size_t parentsOf11;
+    auto parents = store.parentWays(11);
+    while (!parents.empty)
+    {
+        ++parentsOf11;
+        parents.popFront();
+    }
+    assert(parentsOf11 == 1);
+
+    // Authoritative deletion invalidates the old Relation handle and is not
+    // emitted as a local delete.
+    StoreElementState ignoredState;
+    assert(!store.state(relationHandle, ignoredState, storeStatus));
+
+    OwnedChangeSequence changes;
+    assert(store.collectChanges(changes, storeStatus));
+    assert(changes.entries.length == 1);
+    assert(changes.entries[0].type == ElementType.node);
+    assert(changes.entries[0].id == 10);
+}
