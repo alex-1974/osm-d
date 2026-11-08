@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="osm-d-m19-fixture">
+  <create>
+    <node id="3" version="1" visible="true" lat="48.1003000" lon="16.1003000">
+      <tag k="name" v="gamma"/>
+    </node>
+  </create>
+  <modify>
+    <node id="1" version="2" visible="true" lat="48.1001000" lon="16.1000000">
+      <tag k="name" v="alpha-2"/>
+    </node>
+    <way id="10" version="2" visible="true">
+      <nd ref="1"/>
+      <nd ref="3"/>
+      <tag k="highway" v="residential"/>
+    </way>
+    <relation id="20" version="2" visible="true">
+      <member type="way" ref="10" role="outer"/>
+      <member type="node" ref="3" role="label"/>
+      <tag k="type" v="multipolygon"/>
+    </relation>
+  </modify>
+</osmChange>
