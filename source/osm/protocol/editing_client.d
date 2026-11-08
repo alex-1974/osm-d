@@ -48,6 +48,7 @@ import osm.model.changeset :
     ChangesetTagRequest,
     OwnedChangeset;
 import osm.model.owned :
+    OwnedBytes,
     OwnedDataset,
     OwnedNode,
     OwnedRelation,
@@ -175,6 +176,25 @@ struct EditingApiStatus
     bool hasHttpStatus;
     ushort httpStatus;
     EditingApiServerError serverError = EditingApiServerError.none;
+
+    /**
+     * Non-secret HTTP reason phrase retained for a completed response.
+     *
+     * It is empty when no HTTP response was received.
+     */
+    string httpReason;
+
+    /**
+     * Bounded prefix of a non-success response body.
+     *
+     * The prefix is copied into owned immutable storage only for HTTP
+     * responses that fail the OSM operation. It is never populated from
+     * request headers or request bodies.
+     */
+    OwnedBytes diagnosticBody;
+
+    /// True when diagnosticBody is only a prefix of a larger response body.
+    bool diagnosticBodyTruncated;
 
     @property bool ok() const @safe pure nothrow @nogc
     {
@@ -936,13 +956,15 @@ private:
     bool requireOk(
         ref const HttpResponse response,
         ref EditingApiStatus status)
-        @safe pure nothrow @nogc
+        @safe
     {
         if (response.statusCode == 200)
             return true;
 
         status.failure = EditingApiFailure.http;
         status.serverError = classifyServerError(response.statusCode);
+        status.httpReason = response.reason.idup;
+        captureHttpDiagnostic(response.body, status);
         return false;
     }
 
@@ -1036,6 +1058,44 @@ bool matchesVersion(bool present, int actual, int expected)
     @safe pure nothrow @nogc
 {
     return present && actual == expected;
+}
+
+enum size_t maximumHttpDiagnosticBytes = 4 * 1024;
+
+void captureHttpDiagnostic(
+    SegmentedByteBuffer body,
+    ref EditingApiStatus status)
+    @safe
+{
+    status.diagnosticBody = null;
+    status.diagnosticBodyTruncated = false;
+
+    if (body is null || body.length == 0)
+        return;
+
+    size_t retained = body.length;
+    if (retained > maximumHttpDiagnosticBytes)
+    {
+        retained = maximumHttpDiagnosticBytes;
+        status.diagnosticBodyTruncated = true;
+    }
+
+    auto scratch = new ubyte[retained];
+    size_t written;
+    foreach (chunk; body.chunks)
+    {
+        if (written == retained)
+            break;
+
+        size_t count = chunk.length;
+        if (count > retained - written)
+            count = retained - written;
+
+        scratch[written .. written + count] = chunk[0 .. count];
+        written += count;
+    }
+
+    status.diagnosticBody = scratch.idup;
 }
 
 EditingApiServerError classifyServerError(ushort code)
