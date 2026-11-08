@@ -132,6 +132,28 @@ jobs:
             --build=debug \
             --force
 
+      - name: Run M19 multi-sequence replication workflow
+        shell: bash
+        run: |
+          dub run \
+            --root=tests/m19-replication-workflow \
+            --compiler="$DC" \
+            --build=debug \
+            --force
+
+      - name: Measure M19 incremental replication workload
+        if: matrix.compiler == 'ldc-1.41.0'
+        shell: bash
+        run: |
+          /usr/bin/time -v -o /tmp/m19-replication-time.txt \
+            dub run \
+              --root=tests/m19-replication-performance \
+              --compiler="$DC" \
+              --build=release \
+              --force \
+            | tee /tmp/m19-replication-workload.txt
+          cat /tmp/m19-replication-time.txt
+
       - name: Run DIP1000 negative tests
         shell: bash
         run: |
