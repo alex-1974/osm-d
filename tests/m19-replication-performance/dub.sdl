@@ -1,0 +1,8 @@
+name "osm-d-m19-replication-performance"
+description "M19 bounded multi-sequence replication workload"
+authors "osm-d CI"
+license "MIT"
+targetType "executable"
+sourcePaths "source"
+
+dependency "osm-d" path="../.."
